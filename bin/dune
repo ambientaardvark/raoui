@@ -1,0 +1,5 @@
+(executable
+ (public_name raoui)
+ (name repl)
+ (libraries raoui lwt lambda-term zed lwt_ppx sedlex)
+ (modules_without_implementation r_backend))

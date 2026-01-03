@@ -1,0 +1,45 @@
+# dune build
+# OCAMLPARAM: unset
+# Shared cache: enabled-except-user-rules
+# Shared cache location: /Users/alanlee/.cache/dune/db
+# Workspace root: /Users/alanlee/Documents/Programs/raoui
+# Auto-detected concurrency: 8
+# Dune context:
+#  { name = "default"
+#  ; kind = "default"
+#  ; profile = Dev
+#  ; merlin = true
+#  ; fdo_target_exe = None
+#  ; build_dir = In_build_dir "default"
+#  ; instrument_with = []
+#  }
+$ /Users/alanlee/.opam/default/bin/ocamlc.opt -config > /var/folders/vn/_tndfjd526971cdrx1fcnwy80000gn/T/dune_84798a_output
+$ (cd _build/default && /Users/alanlee/.opam/default/bin/ocamldep.opt -modules -impl bin/highlighter.ml) > _build/default/bin/.repl.eobjs/dune__exe__Highlighter.impl.d
+$ (cd _build/default && /Users/alanlee/.opam/default/bin/ocamlc.opt -w @1..3@5..28@31..39@43@46..47@49..57@61..62@67@69-40 -strict-sequence -strict-formats -short-paths -keep-locs -g -bin-annot -bin-annot-occurrences -I bin/.repl.eobjs/byte -I /Users/alanlee/.opam/default/lib/bytes -I /Users/alanlee/.opam/default/lib/gen -I /Users/alanlee/.opam/default/lib/lambda-term -I /Users/alanlee/.opam/default/lib/logs -I /Users/alanlee/.opam/default/lib/logs/lwt -I /Users/alanlee/.opam/default/lib/lwt -I /Users/alanlee/.opam/default/lib/lwt/unix -I /Users/alanlee/.opam/default/lib/lwt_ppx -I /Users/alanlee/.opam/default/lib/lwt_react -I /Users/alanlee/.opam/default/lib/mew -I /Users/alanlee/.opam/default/lib/mew_vi -I /Users/alanlee/.opam/default/lib/ocaml-compiler-libs/common -I /Users/alanlee/.opam/default/lib/ocaml-compiler-libs/shadow -I /Users/alanlee/.opam/default/lib/ocaml/compiler-libs -I /Users/alanlee/.opam/default/lib/ocaml/threads -I /Users/alanlee/.opam/default/lib/ocaml/unix -I /Users/alanlee/.opam/default/lib/ocplib-endian -I /Users/alanlee/.opam/default/lib/ocplib-endian/bigstring -I /Users/alanlee/.opam/default/lib/ppx_derivers -I /Users/alanlee/.opam/default/lib/ppxlib -I /Users/alanlee/.opam/default/lib/ppxlib/ast -I /Users/alanlee/.opam/default/lib/ppxlib/astlib -I /Users/alanlee/.opam/default/lib/ppxlib/print_diff -I /Users/alanlee/.opam/default/lib/ppxlib/stdppx -I /Users/alanlee/.opam/default/lib/ppxlib/traverse_builtins -I /Users/alanlee/.opam/default/lib/react -I /Users/alanlee/.opam/default/lib/result -I /Users/alanlee/.opam/default/lib/sedlex -I /Users/alanlee/.opam/default/lib/seq -I /Users/alanlee/.opam/default/lib/sexplib0 -I /Users/alanlee/.opam/default/lib/stdlib-shims -I /Users/alanlee/.opam/default/lib/trie -I /Users/alanlee/.opam/default/lib/uchar -I /Users/alanlee/.opam/default/lib/uucp -I /Users/alanlee/.opam/default/lib/uuseg -I /Users/alanlee/.opam/default/lib/uutf -I /Users/alanlee/.opam/default/lib/zed -I lib/.raoui.objs/byte -no-alias-deps -opaque -open Dune__exe -o bin/.repl.eobjs/byte/dune__exe__Highlighter.cmo -c -impl bin/highlighter.ml)
+$ (cd _build/default && /Users/alanlee/.opam/default/bin/ocamlc.opt -w @1..3@5..28@31..39@43@46..47@49..57@61..62@67@69-40 -strict-sequence -strict-formats -short-paths -keep-locs -g -bin-annot -bin-annot-occurrences -I bin/.repl.eobjs/byte -I /Users/alanlee/.opam/default/lib/bytes -I /Users/alanlee/.opam/default/lib/gen -I /Users/alanlee/.opam/default/lib/lambda-term -I /Users/alanlee/.opam/default/lib/logs -I /Users/alanlee/.opam/default/lib/logs/lwt -I /Users/alanlee/.opam/default/lib/lwt -I /Users/alanlee/.opam/default/lib/lwt/unix -I /Users/alanlee/.opam/default/lib/lwt_ppx -I /Users/alanlee/.opam/default/lib/lwt_react -I /Users/alanlee/.opam/default/lib/mew -I /Users/alanlee/.opam/default/lib/mew_vi -I /Users/alanlee/.opam/default/lib/ocaml-compiler-libs/common -I /Users/alanlee/.opam/default/lib/ocaml-compiler-libs/shadow -I /Users/alanlee/.opam/default/lib/ocaml/compiler-libs -I /Users/alanlee/.opam/default/lib/ocaml/threads -I /Users/alanlee/.opam/default/lib/ocaml/unix -I /Users/alanlee/.opam/default/lib/ocplib-endian -I /Users/alanlee/.opam/default/lib/ocplib-endian/bigstring -I /Users/alanlee/.opam/default/lib/ppx_derivers -I /Users/alanlee/.opam/default/lib/ppxlib -I /Users/alanlee/.opam/default/lib/ppxlib/ast -I /Users/alanlee/.opam/default/lib/ppxlib/astlib -I /Users/alanlee/.opam/default/lib/ppxlib/print_diff -I /Users/alanlee/.opam/default/lib/ppxlib/stdppx -I /Users/alanlee/.opam/default/lib/ppxlib/traverse_builtins -I /Users/alanlee/.opam/default/lib/react -I /Users/alanlee/.opam/default/lib/result -I /Users/alanlee/.opam/default/lib/sedlex -I /Users/alanlee/.opam/default/lib/seq -I /Users/alanlee/.opam/default/lib/sexplib0 -I /Users/alanlee/.opam/default/lib/stdlib-shims -I /Users/alanlee/.opam/default/lib/trie -I /Users/alanlee/.opam/default/lib/uchar -I /Users/alanlee/.opam/default/lib/uucp -I /Users/alanlee/.opam/default/lib/uuseg -I /Users/alanlee/.opam/default/lib/uutf -I /Users/alanlee/.opam/default/lib/zed -I lib/.raoui.objs/byte -no-alias-deps -opaque -open Dune__exe -o bin/.repl.eobjs/byte/dune__exe__Subprocess_backend.cmo -c -impl bin/subprocess_backend.ml)
+> File "bin/subprocess_backend.ml", lines 119-127, characters 47-3:
+> 119 | ...............................................struct
+> 120 |   type nonrec t = t
+> 121 |   let start = start
+> 122 |   let eval = eval
+> 123 |   let complete = complete
+> 124 |   let is_complete = is_complete
+> 125 |   let shutdown = shutdown
+> 126 |   let get_value = get_value
+> 127 | end
+> Error: Signature mismatch:
+>        ...
+>        Values do not match:
+>          val eval : t -> string -> eval_result Lwt.t
+>        is not included in
+>          val eval : t -> string -> R_backend.eval_result Lwt.t
+>        The type t -> string -> eval_result Lwt.t
+>        is not compatible with the type
+>          t -> string -> R_backend.eval_result Lwt.t
+>        Type eval_result is not compatible with type R_backend.eval_result
+>        File "bin/r_backend.mli", line 23, characters 2-45:
+>          Expected declaration
+>        File "bin/subprocess_backend.ml", line 122, characters 6-10:
+>          Actual declaration
+[2]
+$ (cd _build/default && /Users/alanlee/.opam/default/bin/ocamlopt.opt -w @1..3@5..28@31..39@43@46..47@49..57@61..62@67@69-40 -strict-sequence -strict-formats -short-paths -keep-locs -g -I bin/.repl.eobjs/byte -I bin/.repl.eobjs/native -I /Users/alanlee/.opam/default/lib/bytes -I /Users/alanlee/.opam/default/lib/gen -I /Users/alanlee/.opam/default/lib/lambda-term -I /Users/alanlee/.opam/default/lib/logs -I /Users/alanlee/.opam/default/lib/logs/lwt -I /Users/alanlee/.opam/default/lib/lwt -I /Users/alanlee/.opam/default/lib/lwt/unix -I /Users/alanlee/.opam/default/lib/lwt_ppx -I /Users/alanlee/.opam/default/lib/lwt_react -I /Users/alanlee/.opam/default/lib/mew -I /Users/alanlee/.opam/default/lib/mew_vi -I /Users/alanlee/.opam/default/lib/ocaml-compiler-libs/common -I /Users/alanlee/.opam/default/lib/ocaml-compiler-libs/shadow -I /Users/alanlee/.opam/default/lib/ocaml/compiler-libs -I /Users/alanlee/.opam/default/lib/ocaml/threads -I /Users/alanlee/.opam/default/lib/ocaml/unix -I /Users/alanlee/.opam/default/lib/ocplib-endian -I /Users/alanlee/.opam/default/lib/ocplib-endian/bigstring -I /Users/alanlee/.opam/default/lib/ppx_derivers -I /Users/alanlee/.opam/default/lib/ppxlib -I /Users/alanlee/.opam/default/lib/ppxlib/ast -I /Users/alanlee/.opam/default/lib/ppxlib/astlib -I /Users/alanlee/.opam/default/lib/ppxlib/print_diff -I /Users/alanlee/.opam/default/lib/ppxlib/stdppx -I /Users/alanlee/.opam/default/lib/ppxlib/traverse_builtins -I /Users/alanlee/.opam/default/lib/react -I /Users/alanlee/.opam/default/lib/result -I /Users/alanlee/.opam/default/lib/sedlex -I /Users/alanlee/.opam/default/lib/seq -I /Users/alanlee/.opam/default/lib/sexplib0 -I /Users/alanlee/.opam/default/lib/stdlib-shims -I /Users/alanlee/.opam/default/lib/trie -I /Users/alanlee/.opam/default/lib/uchar -I /Users/alanlee/.opam/default/lib/uucp -I /Users/alanlee/.opam/default/lib/uuseg -I /Users/alanlee/.opam/default/lib/uutf -I /Users/alanlee/.opam/default/lib/zed -I lib/.raoui.objs/byte -I lib/.raoui.objs/native -cmi-file bin/.repl.eobjs/byte/dune__exe__Highlighter.cmi -no-alias-deps -opaque -open Dune__exe -o bin/.repl.eobjs/native/dune__exe__Highlighter.cmx -c -impl bin/highlighter.ml)
