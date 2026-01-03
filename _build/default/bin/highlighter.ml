@@ -40,7 +40,6 @@ let highlight code =
         (text, style))
   in
   (* Build a LTerm_text.t *)
-  (* let open LTerm_text in *)
   let result = ref [] in
   List.iter (fun (text, style) ->
     String.iter (fun c ->

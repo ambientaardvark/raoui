@@ -5,19 +5,20 @@ open Lwt.Infix
 module Backend = Subprocess_backend.Backend
 
 (** Custom read-line class with R syntax highlighting and completion *)
-class read_line ~term ~history ~backend = object(self)
+class read_line ~term ~history ~backend ~prompt = object(self)
   inherit LTerm_read_line.read_line ~history ()
   inherit [Zed_string.t] LTerm_read_line.term term
 
   method! show_box = false
 
+  method! prompt = prompt
+
   (* Syntax highlighting *)
-  method! stylise last =
+  method! stylise _last =
     let code = Zed_string.to_utf8 (Zed_rope.to_string self#input_prev) ^
                Zed_string.to_utf8 (Zed_rope.to_string self#input_next) in
     let styled = Highlighter.highlight code in
-    if Array.length styled > 0 then
-      LTerm_text.Zed_string.stylise_array styled
+    (styled, 0)
 
   (* Tab completion *)
   method! completion =
@@ -33,12 +34,17 @@ class read_line ~term ~history ~backend = object(self)
     in
     let word_start = find_word_start (String.length code) in
     let prefix = String.sub code word_start (String.length code - word_start) in
-    Backend.complete backend ~prefix >>= fun completions ->
-    let completions =
-      completions
-      |> List.map (fun s -> Zed_string.of_utf8 s)
-    in
-    Lwt.return (word_start, completions)
+    Lwt.async (fun () ->
+      Backend.complete backend ~prefix >>= fun completions ->
+      let completions =
+        completions
+        |> List.map (fun s ->
+            let zs = Zed_string.of_utf8 s in
+            (zs, zs))
+      in
+      self#set_completion word_start completions;
+      Lwt.return ()
+    )
 end
 
 (** The main prompt *)
@@ -48,9 +54,10 @@ let continue_prompt = LTerm_text.(eval [S "R+ "])
 (** Main REPL loop *)
 let rec repl_loop term history backend accumulated =
   let prompt_text = if accumulated = "" then prompt else continue_prompt in
+  let prompt_signal = React.S.const prompt_text in
   Lwt.catch
     (fun () ->
-      let rl = new read_line ~term ~history:(LTerm_history.contents history) ~backend in
+      let rl = new read_line ~term ~history:(LTerm_history.contents history) ~backend ~prompt:prompt_signal in
       rl#run >|= fun line -> Some (Zed_string.to_utf8 line))
     (function
       | LTerm_read_line.Interrupt ->
@@ -82,7 +89,7 @@ let rec repl_loop term history backend accumulated =
        | R_backend.Output s when s <> "" ->
          LTerm.fprintl term s
        | R_backend.Error s ->
-         LTerm.fprintls term (LTerm_text.(eval [B_fg lred; S "Error: "; S s; E_fg]))
+         LTerm.fprintls term (LTerm_text.(eval [B_fg LTerm_style.lred; S "Error: "; S s; E_fg]))
        | _ -> Lwt.return ())
       >>= fun () ->
       repl_loop term history backend ""
