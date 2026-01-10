@@ -16,16 +16,17 @@ type t = {
   mutable buffer : string;
 }
 
-let r_init_commands = {|
-  options(prompt = "")
-  options(continue = "")
-  options(warn = 1)
-  .rocaml_output_end <- function() cat("\n##ROCAML_OUTPUT_END##\n")
-  .rocaml_error_end <- function() cat("\n##ROCAML_ERROR_END##\n", file = stderr())
+let r_init_commands = {|options(prompt = "")
+options(continue = "")
+options(warn = 1)
+options(crayon.enabled = FALSE)
+options(cli.num_colors = 1)
+.rocaml_output_end <- function() cat("##ROCAML_OUTPUT_END##\n")
+.rocaml_error_end <- function() cat("##ROCAML_ERROR_END##\n", file = stderr())
 |}
 
 let start () =
-  let cmd = ("R", [| "R"; "--interactive"; "--no-save"; "--no-restore"; "-q" |]) in
+  let cmd = ("/usr/local/bin/R", [| "/usr/local/bin/R"; "--vanilla"; "--interactive" |]) in
   let process = Lwt_process.open_process cmd in
   let t = { process; buffer = "" } in
   (* Send initialization commands *)
@@ -53,19 +54,39 @@ let send_command t cmd =
 
 let read_until_sentinel t sentinel =
   let rec loop acc =
+    Printf.eprintf "DEBUG: Waiting to read line...\n%!";
     Lwt_io.read_line_opt t.process#stdout >>= function
-    | None -> Lwt.return (String.concat "\n" (List.rev acc))
+    | None -> 
+      Printf.eprintf "DEBUG: EOF reached\n%!";
+      Lwt.return (String.concat "\n" (List.rev acc))
     | Some line ->
-      if String.trim line = sentinel then
+      Printf.eprintf "DEBUG: Read line: %S\n%!" line;
+      (* Strip ANSI codes and carriage returns *)
+      let clean_line = 
+        line 
+        |> Str.global_replace (Str.regexp "\027\\[[0-9;]*m") ""
+        |> Str.global_replace (Str.regexp "\r") ""
+        |> String.trim
+      in
+      Printf.eprintf "DEBUG: Cleaned line: %S\n%!" clean_line;
+      if clean_line = sentinel then begin
+        Printf.eprintf "DEBUG: Found sentinel!\n%!";
         Lwt.return (String.concat "\n" (List.rev acc))
-      else
-        loop (line :: acc)
+      end else if String.length clean_line > 0 && clean_line.[0] = '>' then begin
+        (* Skip echo lines that start with > *)
+        Printf.eprintf "DEBUG: Skipping echo line\n%!";
+        loop acc
+      end else
+        loop (clean_line :: acc)
   in
   loop []
 
 let eval t expr =
+  Printf.eprintf "DEBUG: Sending command: %s\n%!" expr;
   send_command t expr >>= fun () ->
+  Printf.eprintf "DEBUG: Command sent, waiting for output...\n%!";
   read_until_sentinel t output_sentinel >>= fun output ->
+  Printf.eprintf "DEBUG: Got output: %s\n%!" output;
   let trimmed = String.trim output in
   if trimmed = "" then
     Lwt.return (R_backend.Output "")
@@ -75,7 +96,10 @@ let eval t expr =
 let complete t ~prefix =
   (* Use R's built-in completion *)
   let cmd = Printf.sprintf
-    {|utils:::.getCompletions("%s", %d)|}
+    {|{ utils:::.assignLinebuffer("%s")
+utils:::.assignEnd(%d)
+utils:::.completeToken()
+utils:::.retrieveCompletions() }|}
     (String.escaped prefix)
     (String.length prefix)
   in
