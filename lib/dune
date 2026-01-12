@@ -1,2 +1,3 @@
 (library
- (name raoui))
+ (name raoui)
+ (libraries unix))

@@ -6,3 +6,6 @@ lib: [
 bin: [
   "_build/install/default/bin/raoui"
 ]
+doc: [
+  "_build/install/default/doc/raoui/LICENSE.txt"
+]

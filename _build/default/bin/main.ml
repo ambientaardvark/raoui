@@ -1,36 +1,79 @@
-let csi = "\x1b["
-let escape code () = Printf.printf "%s%s%!" csi code
-let alt_screen_seq = escape "?1049h"
-let exit_alt_screen_seq = escape "?1049l"
-let _cursor_up_seq x = escape (Printf.sprintf "%dA" x)
-let print_flush s = Printf.printf "%s%!" s
-
-
 let set_raw_mode () =
   let termio = Unix.tcgetattr Unix.stdin in
   let raw_termio = { termio with
-      Unix.c_icanon = false;
-      Unix.c_echo = false;
-      Unix.c_vmin = 1;
-      Unix.c_vtime = 0;
+    Unix.c_icanon = false;
+    Unix.c_echo = false;
+    Unix.c_vmin = 1;
+    Unix.c_vtime = 0;
   } in
   Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH raw_termio;
   termio
 
+let restore_mode termio =
+  Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH termio
 
-let hello_world () =
-  alt_screen_seq ();
-  let orig_termio = set_raw_mode () in
-  print_flush "Hello, world!";
+(* Model *)
+type state = {
+  text : string;
+  cursor : int;
+  output : string option;  (* lines to print above prompt *)
+}
 
-  let rec wait_for_q () =
-    let char_buf = Bytes.create 1 in
-    let _ = Unix.read Unix.stdin char_buf 0 1 in
-    if char_buf = String.to_bytes "q" then () else wait_for_q ()
+let init = { text = ""; cursor = 0; output = None }
+
+(* Update *)
+let insert_char state c =
+  let before = String.sub state.text 0 state.cursor in
+  let after = String.sub state.text state.cursor (String.length state.text - state.cursor) in
+  { state with text = before ^ String.make 1 c ^ after; cursor = state.cursor + 1 }
+
+let delete_char state =
+  if state.cursor = 0 then state
+  else
+    let before = String.sub state.text 0 (state.cursor - 1) in
+    let after = String.sub state.text state.cursor (String.length state.text - state.cursor) in
+    { state with text = before ^ after; cursor = state.cursor - 1 }
+
+let move_left state =
+  { state with cursor = max 0 (state.cursor - 1) }
+
+let move_right state =
+  { state with cursor = min (String.length state.text) (state.cursor + 1) }
+
+let submit state =
+  { text = ""; cursor = 0; output = Some state.text }
+
+let update key state =
+  let open Raoui.Tty_listener in
+  let state = { state with output = None } in
+  match key with
+  | Ctrl 'd' -> None
+  | Enter -> Some (submit state)
+  | Char c -> Some (insert_char state c)
+  | Backspace -> Some (delete_char state)
+  | Left -> Some (move_left state)
+  | Right -> Some (move_right state)
+  | _ -> Some state
+
+(* View *)
+let view state =
+  (match state.output with
+   | Some line -> Printf.printf "\n%s\n" line
+   | None -> ());
+  let prompt = "> " in
+  let cursor_col = String.length prompt + state.cursor + 1 in
+  Printf.printf "\r\x1b[K%s%s\x1b[%dG%!" prompt state.text cursor_col
+
+(* Main loop *)
+let run () =
+  let rec loop state =
+    view state;
+    match update (Raoui.Tty_listener.await_input ()) state with
+    | None -> ()
+    | Some state -> loop state
   in
-  wait_for_q ();
-  Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH orig_termio;
-  exit_alt_screen_seq ()
+  loop init
 
-
-let () = hello_world ()
+let () =
+  let orig = set_raw_mode () in
+  Fun.protect ~finally:(fun () -> print_newline (); restore_mode orig) run
