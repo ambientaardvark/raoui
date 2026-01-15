@@ -17,8 +17,8 @@ let restore_mode termio =
 (* Model *)
 type state = {
   lines : string list;
-  cursor_row : int;       (* relative to prompt box, 0 = top *)
-  cursor_col : int;       (* relative to after prompt, 0 = first char *)
+  cursor_row : int;       (* row within prompt box, 0 = first row *)
+  cursor_col : int;       (* col within line, 0 = first char after prompt *)
   output : string option;
   prompt_top_row : int;   (* absolute terminal row of prompt box top, 1-indexed *)
   term_width : int;
@@ -228,12 +228,6 @@ let update key state =
 let clear_line = "\x1b[K"
 let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
 
-let print_output state text total_rows =
-  (* Print output below prompt box *)
-  let output_row = state.prompt_top_row + total_rows in
-  print_string (cursor_to output_row 1);
-  print_endline text
-
 let view state =
   let prompt_width = String.length prompt in
   let width = effective_width state in
@@ -253,21 +247,16 @@ let view state =
     )
     else state
   in
-  (* Adjust prompt_top_row if cursor would be above visible area *)
-  (* cursor is at terminal row (prompt_top_row + cursor_row), needs to be >= 1 *)
-  let state =
-    if state.prompt_top_row + state.cursor_row < 1 then
-      { state with prompt_top_row = 1 - state.cursor_row }
-    else state
-  in
-  (* Compute viewport: where we actually start rendering *)
-  (* viewport_start is at least 1 (top of terminal) *)
+  (* Compute viewport *)
   let viewport_start = max 1 state.prompt_top_row in
-  (* skip_rows: how many rows of prompt are above viewport_start *)
   let skip_rows = viewport_start - state.prompt_top_row in
   let visible_rows = List.filteri (fun i _ -> i >= skip_rows) wrapped in
+  (* Handle output *)
   (match state.output with
-   | Some text -> print_output state text total_rows
+   | Some text ->
+     let output_row = state.prompt_top_row + total_rows in
+     print_string (cursor_to output_row 1);
+     print_endline text
    | None -> ());
   (* Move to top of visible area *)
   print_string (cursor_to viewport_start 1);
@@ -279,7 +268,7 @@ let view state =
     print_string line;
     if i < List.length visible_rows - 1 then print_string "\n"
   ) visible_rows;
-  (* Position cursor using absolute positioning *)
+  (* Position cursor *)
   let cursor_abs_row = state.prompt_top_row + state.cursor_row in
   let cursor_abs_col = prompt_width + state.cursor_col + 1 in
   print_string (cursor_to cursor_abs_row cursor_abs_col);
