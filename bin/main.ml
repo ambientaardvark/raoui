@@ -186,16 +186,24 @@ let move_right state =
     state
 
 let move_up state =
+  let wrapped_lines = wrap_lines (effective_width state) state.lines in
   if state.cursor_row > 0 then
-    { state with cursor_row = state.cursor_row - 1 }
+    { state with
+      cursor_row = state.cursor_row - 1 ;
+      cursor_col = min state.cursor_col (List.nth wrapped_lines (state.cursor_row - 1) |> String.length)
+    }
   else
     state
 
 let move_down state =
   let width = effective_width state in
-  let total_rows = List.length (wrap_lines width state.lines) in
+  let wrapped_lines = wrap_lines width state.lines in
+  let total_rows = List.length wrapped_lines in
   if state.cursor_row < total_rows - 1 then
-    { state with cursor_row = state.cursor_row + 1 }
+    { state with
+      cursor_row = state.cursor_row + 1;
+      cursor_col = min state.cursor_col (List.nth wrapped_lines (state.cursor_row + 1) |> String.length)
+    }
   else
     state
 
