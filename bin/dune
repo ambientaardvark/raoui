@@ -1,4 +1,4 @@
 (executable
  (public_name raoui)
  (name main)
- (libraries raoui unix))
+ (libraries raoui unix terminal_size))
