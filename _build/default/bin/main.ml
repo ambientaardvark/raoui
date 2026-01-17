@@ -289,49 +289,60 @@ let clear_line = "\x1b[K"
 let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
 
 
-let scroll_up n = Printf.printf "\x1b[%dS" n
-let scroll_down n = Printf.printf "\x1b[%dT" n
+let scroll_up buf n = Printf.bprintf buf "\x1b[%dS" n
+let scroll_down buf n = Printf.bprintf buf "\x1b[%dT" n
 
-let scroll_terminal n = if n = 0 then () else if n < 0 then scroll_up (-n) else scroll_down n
+let scroll_terminal buf n = if n = 0 then () else if n < 0 then scroll_up buf (-n) else scroll_down buf n
 
 let view state =
-  log ((string_of_int state.cursor_row) ^ ", " ^ (string_of_int state.term_height) ^ ", " ^ (string_of_int state.viewport_start));
+  (* log (Printf.sprintf "%d\n" state.prompt_box_height); *)
+  let buf = Buffer.create 1024 in
   let prompt_width = String.length prompt in
   let width = effective_width state in
   let wrapped = wrap_lines width state.lines in
   let total_rows = List.length wrapped in
 
-  scroll_terminal (state.viewport_start - state.previous_viewport_start);
+  scroll_terminal buf (state.viewport_start - state.previous_viewport_start);
 
   (* Handle output *)
   (match state.output with
    | Some text ->
      let output_row = state.prompt_top_row + total_rows in
-     print_string (cursor_to output_row 1);
-     print_endline text
+     Buffer.add_string buf (cursor_to output_row 1);
+     Buffer.add_string buf text;
+     Buffer.add_char buf '\n'
    | None -> ());
 
-  print_string (cursor_to state.viewport_start 1);
+  Buffer.add_string buf (cursor_to state.viewport_start 1);
   let skip_rows = state.viewport_start - state.prompt_top_row in
   List.iteri(fun i line ->
     if i >= skip_rows && i < skip_rows + state.term_height then
-      print_string clear_line;
-      (if i = 0 then print_string prompt else print_string continued_prompt);
-      print_string line;
-      if i < skip_rows + state.term_height - 1 && i < total_rows - 1 then print_string "\n"
+      Buffer.add_string buf clear_line;
+      (if i = 0 then Buffer.add_string buf prompt else Buffer.add_string buf continued_prompt);
+      Buffer.add_string buf line;
+      if i < skip_rows + state.term_height - 1 && i < total_rows - 1 then Buffer.add_char buf '\n'
   ) wrapped;
+
+  let extra_lines = state.prompt_box_height - (total_rows - skip_rows) in
+  let possible_space = state.term_height - state.viewport_start in
+  let rows_to_clear = min extra_lines possible_space in
+  List.init rows_to_clear (fun _ -> "\n" ^ clear_line)
+  |> String.concat ""
+  |> Buffer.add_string buf;
+
 
   (* Position cursor *)
   let cursor_abs_row = state.prompt_top_row + state.cursor_row in
   let cursor_abs_col = prompt_width + state.cursor_col + 1 in
-  print_string (cursor_to cursor_abs_row cursor_abs_col);
-  flush stdout;
-  state
+  Buffer.add_string buf (cursor_to cursor_abs_row cursor_abs_col);
+
+  Buffer.contents buf
 
 (* Main loop *)
 let run () =
   let rec loop state =
-    let state = view state in
+    print_string (view state);
+    flush stdout;
     match update (Raoui.Tty_listener.await_input ()) state with
     | None -> ()
     | Some state -> loop state
