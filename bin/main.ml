@@ -16,7 +16,7 @@ let restore_mode termio =
   Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH termio
 
 
-let log message =
+let _log message =
   let oc = open_out_gen [Open_append; Open_creat] 0o666 "debug_log.txt" in
   Fun.protect
     ~finally:(fun () -> close_out oc)
@@ -234,10 +234,10 @@ let handle_vertical_cursor_movement state width =
   in
   let scrolls_from_expansion =
     if new_height > state.prompt_box_height && state.term_height < new_height + state.viewport_start
-    then (log "expanding"; (-1)) (* scroll up to accomodate extra row of prompt box *)
+    then (-1)
     else 0
   in
-  let viewport_start_after_expansion = state.viewport_start + scrolls_from_expansion in
+  let viewport_start_after_expansion = max 1 (state.viewport_start + scrolls_from_expansion) in
   let cursor_term_row = state.cursor_row + viewport_start_after_expansion in
   let scrolls_from_cursor_movement =
     if cursor_term_row > state.term_height
@@ -247,10 +247,11 @@ let handle_vertical_cursor_movement state width =
     else 0
   in
   let scrolls = scrolls_from_expansion + scrolls_from_cursor_movement in
+  let viewport_start_new = max 1 (state.viewport_start + scrolls) in
   { state with
     prompt_box_height = new_height;
     prompt_top_row = state.prompt_top_row + scrolls;
-    viewport_start = state.viewport_start + scrolls;
+    viewport_start = viewport_start_new;
     previous_viewport_start = state.viewport_start;
   }
 
