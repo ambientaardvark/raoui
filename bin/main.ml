@@ -1,4 +1,5 @@
-let prompt = "raoui> "
+let prompt = "> "
+let continued_prompt = ". "
 
 let set_raw_mode () =
   let termio = Unix.tcgetattr Unix.stdin in
@@ -14,6 +15,13 @@ let set_raw_mode () =
 let restore_mode termio =
   Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH termio
 
+
+let log message =
+  let oc = open_out_gen [Open_append; Open_creat] 0o666 "debug_log.txt" in
+  Fun.protect
+    ~finally:(fun () -> close_out oc)
+    (fun () -> Printf.fprintf oc "%s\n" message)
+
 (* Model *)
 type state = {
   lines : string list;
@@ -23,7 +31,11 @@ type state = {
   prompt_top_row : int;   (* absolute terminal row of prompt box top, 1-indexed *)
   term_width : int;
   term_height : int;
+  prompt_box_height : int;
+  viewport_start : int;
+  previous_viewport_start : int;
 }
+[@@deriving show]
 
 (* Query cursor position using ANSI escape sequence *)
 let get_cursor_position () =
@@ -52,7 +64,8 @@ let make_init () =
     | None -> failwith "can't get terminal width"
   in
   { lines = [""]; cursor_row = 0; cursor_col = 0; output = None;
-    prompt_top_row = row; term_width; term_height }
+    prompt_top_row = row; term_width; term_height; prompt_box_height = 1;
+    viewport_start = row; previous_viewport_start = row}
 
 (* Wrapping and coordinate mapping *)
 let wrap_line width line =
@@ -158,10 +171,14 @@ let insert_newline state =
 
 let move_left state =
   let width = effective_width state in
+  let wrapped_lines = wrap_lines width state.lines in
   if state.cursor_col > 0 then
     { state with cursor_col = state.cursor_col - 1 }
   else if state.cursor_row > 0 then
-    { state with cursor_row = state.cursor_row - 1; cursor_col = width - 1 }
+    { state with
+      cursor_row = state.cursor_row - 1;
+      cursor_col = (List.nth wrapped_lines (state.cursor_row - 1) |> String.length)
+    }
   else
     state
 
@@ -207,6 +224,36 @@ let move_down state =
   else
     state
 
+
+let handle_vertical_cursor_movement state width =
+  let new_height =
+    state.lines
+    |> wrap_lines width
+    |> List.length
+    |> max state.prompt_box_height
+  in
+  let scrolls_from_expansion =
+    if new_height > state.prompt_box_height && state.term_height < new_height + state.viewport_start
+    then (log "expanding"; (-1)) (* scroll up to accomodate extra row of prompt box *)
+    else 0
+  in
+  let viewport_start_after_expansion = state.viewport_start + scrolls_from_expansion in
+  let cursor_term_row = state.cursor_row + viewport_start_after_expansion in
+  let scrolls_from_cursor_movement =
+    if cursor_term_row > state.term_height
+    then state.term_height - cursor_term_row
+    else if cursor_term_row < 1
+    then 1 - cursor_term_row
+    else 0
+  in
+  let scrolls = scrolls_from_expansion + scrolls_from_cursor_movement in
+  { state with
+    prompt_box_height = new_height;
+    prompt_top_row = state.prompt_top_row + scrolls;
+    viewport_start = state.viewport_start + scrolls;
+    previous_viewport_start = state.viewport_start;
+  }
+
 let submit state =
   let text = String.concat "\n" state.lines in
   let init = make_init () in
@@ -220,7 +267,7 @@ let update key state =
     | None -> failwith "can't get width"
   in
   let state = { state with output = None; term_width = width } in
-  match key with
+  let new_state = match key with
   | Ctrl 'd' -> None
   | Ctrl 'j' -> Some (submit state)  (* Ctrl+Enter to submit *)
   | Enter -> Some (insert_newline state)
@@ -231,34 +278,31 @@ let update key state =
   | Up -> Some (move_up state)
   | Down -> Some (move_down state)
   | _ -> Some state
+  in
+  match new_state with
+  | None -> None
+  | Some s -> Some (handle_vertical_cursor_movement s width)
+
 
 (* View *)
 let clear_line = "\x1b[K"
 let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
 
+
+let scroll_up n = Printf.printf "\x1b[%dS" n
+let scroll_down n = Printf.printf "\x1b[%dT" n
+
+let scroll_terminal n = if n = 0 then () else if n < 0 then scroll_up (-n) else scroll_down n
+
 let view state =
+  log ((string_of_int state.cursor_row) ^ ", " ^ (string_of_int state.term_height) ^ ", " ^ (string_of_int state.viewport_start));
   let prompt_width = String.length prompt in
   let width = effective_width state in
   let wrapped = wrap_lines width state.lines in
   let total_rows = List.length wrapped in
-  (* Check if prompt would overflow terminal bottom, scroll if needed *)
-  let prompt_bottom = state.prompt_top_row + total_rows - 1 in
-  let overflow = prompt_bottom - state.term_height in
-  let state =
-    if overflow > 0 then (
-      (* Scroll terminal by printing newlines at bottom *)
-      print_string (cursor_to state.term_height 1);
-      for _ = 1 to overflow do
-        print_string "\n"
-      done;
-      { state with prompt_top_row = state.prompt_top_row - overflow }
-    )
-    else state
-  in
-  (* Compute viewport *)
-  let viewport_start = max 1 state.prompt_top_row in
-  let skip_rows = viewport_start - state.prompt_top_row in
-  let visible_rows = List.filteri (fun i _ -> i >= skip_rows) wrapped in
+
+  scroll_terminal (state.viewport_start - state.previous_viewport_start);
+
   (* Handle output *)
   (match state.output with
    | Some text ->
@@ -266,16 +310,17 @@ let view state =
      print_string (cursor_to output_row 1);
      print_endline text
    | None -> ());
-  (* Move to top of visible area *)
-  print_string (cursor_to viewport_start 1);
-  (* Print each visible wrapped line *)
-  List.iteri (fun i line ->
-    print_string clear_line;
-    if i + skip_rows = 0 then print_string prompt
-    else print_string (String.make prompt_width ' ');
-    print_string line;
-    if i < List.length visible_rows - 1 then print_string "\n"
-  ) visible_rows;
+
+  print_string (cursor_to state.viewport_start 1);
+  let skip_rows = state.viewport_start - state.prompt_top_row in
+  List.iteri(fun i line ->
+    if i >= skip_rows && i < skip_rows + state.term_height then
+      print_string clear_line;
+      (if i = 0 then print_string prompt else print_string continued_prompt);
+      print_string line;
+      if i < skip_rows + state.term_height - 1 && i < total_rows - 1 then print_string "\n"
+  ) wrapped;
+
   (* Position cursor *)
   let cursor_abs_row = state.prompt_top_row + state.cursor_row in
   let cursor_abs_col = prompt_width + state.cursor_col + 1 in
