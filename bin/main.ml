@@ -311,19 +311,18 @@ let scroll_down buf n = Printf.bprintf buf "\x1b[%dT" n
 
 let scroll_terminal buf n = if n = 0 then () else if n < 0 then scroll_up buf (-n) else scroll_down buf n
 
-let receive_response state total_rows =
-  let prompt_start = 
-    match state.output with
-    | Some text ->
-      let output_row = state.prompt_top_row + total_rows - 1 in
-      print_string (cursor_to output_row 1);
-      Printf.printf "\n%s\n" text;
-      let (row, _) = get_cursor_position () in
-      row
-    | None -> 
-      state.prompt_top_row
-  in
-  { state with prompt_top_row = prompt_start; previous_prompt_top_row = prompt_start }
+let receive_response state =
+  match state.output with
+  | None -> state
+  | Some text ->
+    let width = effective_width state in
+    let wrapped = wrap_lines width state.lines in
+    let total_rows = List.length wrapped in
+    let output_row = state.prompt_top_row + total_rows - 1 in
+    print_string (cursor_to output_row 1);
+    Printf.printf "\n%s\n" text;
+    let (row, _) = get_cursor_position () in
+    {state with prompt_top_row = row; previous_prompt_top_row = row }
 
 
 let view state =
@@ -334,8 +333,6 @@ let view state =
   let width = effective_width state in
   let wrapped = wrap_lines width state.lines in
   let total_rows = List.length wrapped in
-
-  let state = receive_response state total_rows in
 
   scroll_terminal buf (state.prompt_top_row - state.previous_prompt_top_row);
 
@@ -379,7 +376,9 @@ let run () =
     flush stdout;
     match update (Raoui.Tty_listener.await_input ()) state with
     | None -> ()
-    | Some state -> loop state
+    | Some state -> 
+      let state_after_response = receive_response state in
+      loop state_after_response
   in
   loop (make_init ())
 
