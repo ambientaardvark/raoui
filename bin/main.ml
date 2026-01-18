@@ -16,11 +16,13 @@ let restore_mode termio =
   Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH termio
 
 
-let _log message =
+let log message =
   let oc = open_out_gen [Open_append; Open_creat] 0o666 "debug_log.txt" in
   Fun.protect
     ~finally:(fun () -> close_out oc)
     (fun () -> Printf.fprintf oc "%s\n" message)
+
+let clear_log () = let oc = open_out "debug_log.txt" in Printf.fprintf oc ""
 
 (* Model *)
 type state = {
@@ -32,8 +34,7 @@ type state = {
   term_width : int;
   term_height : int;
   prompt_box_height : int;
-  viewport_start : int;
-  previous_viewport_start : int;
+  previous_prompt_top_row : int;
 }
 [@@deriving show]
 
@@ -65,7 +66,7 @@ let make_init () =
   in
   { lines = [""]; cursor_row = 0; cursor_col = 0; output = None;
     prompt_top_row = row; term_width; term_height; prompt_box_height = 1;
-    viewport_start = row; previous_viewport_start = row}
+    previous_prompt_top_row = row}
 
 (* Wrapping and coordinate mapping *)
 let wrap_line width line =
@@ -233,26 +234,24 @@ let handle_vertical_cursor_movement state width =
     |> max state.prompt_box_height
   in
   let scrolls_from_expansion =
-    if new_height > state.prompt_box_height && state.term_height < new_height + state.viewport_start
+    if new_height > state.prompt_box_height && state.term_height < new_height + state.prompt_top_row - 1
     then (-1)
     else 0
   in
-  let viewport_start_after_expansion = max 1 (state.viewport_start + scrolls_from_expansion) in
-  let cursor_term_row = state.cursor_row + viewport_start_after_expansion in
+  let prompt_top_after_expansion = state.prompt_top_row + scrolls_from_expansion in
+  let cursor_term_row = state.cursor_row + prompt_top_after_expansion in
   let scrolls_from_cursor_movement =
     if cursor_term_row > state.term_height
     then state.term_height - cursor_term_row
     else if cursor_term_row < 1
-    then 1 - cursor_term_row
+    then (log "scrolling with val 1"; 1 - cursor_term_row)
     else 0
   in
   let scrolls = scrolls_from_expansion + scrolls_from_cursor_movement in
-  let viewport_start_new = max 1 (state.viewport_start + scrolls) in
   { state with
     prompt_box_height = new_height;
     prompt_top_row = state.prompt_top_row + scrolls;
-    viewport_start = viewport_start_new;
-    previous_viewport_start = state.viewport_start;
+    previous_prompt_top_row = state.prompt_top_row;
   }
 
 let submit state =
@@ -303,7 +302,7 @@ let view state =
   let wrapped = wrap_lines width state.lines in
   let total_rows = List.length wrapped in
 
-  scroll_terminal buf (state.viewport_start - state.previous_viewport_start);
+  scroll_terminal buf (state.prompt_top_row - state.previous_prompt_top_row);
 
   (* Handle output *)
   (match state.output with
@@ -314,19 +313,28 @@ let view state =
      Buffer.add_char buf '\n'
    | None -> ());
 
-  Buffer.add_string buf (cursor_to state.viewport_start 1);
-  let skip_rows = state.viewport_start - state.prompt_top_row in
+
+  let viewport_start = max 1 state.prompt_top_row in
+  Buffer.add_string buf (cursor_to viewport_start 1);
+  let skip_rows = viewport_start - state.prompt_top_row in
   List.iteri(fun i line ->
-    if i >= skip_rows && i < skip_rows + state.term_height then
+    if i >= skip_rows && i < skip_rows + state.term_height then begin
       Buffer.add_string buf clear_line;
       (if i = 0 then Buffer.add_string buf prompt else Buffer.add_string buf continued_prompt);
       Buffer.add_string buf line;
       if i < skip_rows + state.term_height - 1 && i < total_rows - 1 then Buffer.add_char buf '\n'
+    end
   ) wrapped;
 
-  let extra_lines = state.prompt_box_height - (total_rows - skip_rows) in
-  let possible_space = state.term_height - state.viewport_start in
-  let rows_to_clear = min extra_lines possible_space in
+  log (Printf.sprintf "skip rows: %d, viewport_start: %d, prompt_top_row: %d, total_rows: %d"
+    skip_rows viewport_start state.prompt_top_row total_rows);
+
+  let visible_rows = min (total_rows - skip_rows) state.term_height in
+  let old_visible_rows = min state.prompt_box_height state.term_height in
+  let extra_lines = old_visible_rows - visible_rows in
+  let cursor_after_render = viewport_start + visible_rows - 1 in
+  let possible_space = max 0 (state.term_height - cursor_after_render) in
+  let rows_to_clear = max 0 (min extra_lines possible_space) in
   List.init rows_to_clear (fun _ -> "\n" ^ clear_line)
   |> String.concat ""
   |> Buffer.add_string buf;
@@ -351,5 +359,6 @@ let run () =
   loop (make_init ())
 
 let () =
+  clear_log ();
   let orig = set_raw_mode () in
   Fun.protect ~finally:(fun () -> print_newline (); restore_mode orig) run
