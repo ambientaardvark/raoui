@@ -1,2 +1,5 @@
 _build
 .zed
+.vscode
+.claude
+_DS_Store
