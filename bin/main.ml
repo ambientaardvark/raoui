@@ -35,6 +35,8 @@ type state = {
   term_height : int;
   prompt_box_height : int;
   previous_prompt_top_row : int;
+  previous_key : Raoui.Tty_listener.key option;
+  persistent_col : int;
 }
 [@@deriving show]
 
@@ -66,7 +68,7 @@ let make_init () =
   in
   { lines = [""]; cursor_row = 0; cursor_col = 0; output = None;
     prompt_top_row = row; term_width; term_height; prompt_box_height = 1;
-    previous_prompt_top_row = row}
+    previous_prompt_top_row = row; previous_key = None; persistent_col = 0}
 
 (* Wrapping and coordinate mapping *)
 let wrap_line width line =
@@ -206,9 +208,15 @@ let move_right state =
 let move_up state =
   let wrapped_lines = wrap_lines (effective_width state) state.lines in
   if state.cursor_row > 0 then
+    let target_col = match state.previous_key with
+      | Some Up | Some Down -> state.persistent_col
+      | _ -> state.cursor_col
+    in
+    let line_length = List.nth wrapped_lines (state.cursor_row - 1) |> String.length in
     { state with
-      cursor_row = state.cursor_row - 1 ;
-      cursor_col = min state.cursor_col (List.nth wrapped_lines (state.cursor_row - 1) |> String.length)
+      cursor_row = state.cursor_row - 1;
+      cursor_col = min target_col line_length;
+      persistent_col = target_col;
     }
   else
     state
@@ -218,9 +226,15 @@ let move_down state =
   let wrapped_lines = wrap_lines width state.lines in
   let total_rows = List.length wrapped_lines in
   if state.cursor_row < total_rows - 1 then
+    let target_col = match state.previous_key with
+      | Some Up | Some Down -> state.persistent_col
+      | _ -> state.cursor_col
+    in
+    let line_length = List.nth wrapped_lines (state.cursor_row + 1) |> String.length in
     { state with
       cursor_row = state.cursor_row + 1;
-      cursor_col = min state.cursor_col (List.nth wrapped_lines (state.cursor_row + 1) |> String.length)
+      cursor_col = min target_col line_length;
+      persistent_col = target_col;
     }
   else
     state
@@ -244,7 +258,7 @@ let handle_vertical_cursor_movement state width =
     if cursor_term_row > state.term_height
     then state.term_height - cursor_term_row
     else if cursor_term_row < 1
-    then (log "scrolling with val 1"; 1 - cursor_term_row)
+    then 1 - cursor_term_row
     else 0
   in
   let scrolls = scrolls_from_expansion + scrolls_from_cursor_movement in
@@ -255,6 +269,7 @@ let handle_vertical_cursor_movement state width =
   }
 
 let submit state =
+  log "submitting";
   let text = String.concat "\n" state.lines in
   let init = make_init () in
   { init with output = Some text }
@@ -281,7 +296,9 @@ let update key state =
   in
   match new_state with
   | None -> None
-  | Some s -> Some (handle_vertical_cursor_movement s width)
+  | Some s ->
+    let s = handle_vertical_cursor_movement s width in
+    Some { s with previous_key = Some key }
 
 
 (* View *)
