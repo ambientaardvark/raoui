@@ -2,3 +2,7 @@
  (public_name raoui)
  (name main)
  (libraries raoui unix terminal_size))
+
+(executable
+ (name listener_test)
+ (libraries raoui unix))

@@ -284,7 +284,7 @@ let update key state =
   let state = { state with output = None; term_width = width } in
   let new_state = match key with
   | Ctrl 'd' -> None
-  | Ctrl 'j' -> Some (submit state)  (* Ctrl+Enter to submit *)
+  | Ctrl 'p' -> Some (submit state)  (* Ctrl+Enter to submit *)
   | Enter -> Some (insert_newline state)
   | Char c -> Some (insert_char state c)
   | Backspace -> Some (delete_char state)
@@ -311,25 +311,33 @@ let scroll_down buf n = Printf.bprintf buf "\x1b[%dT" n
 
 let scroll_terminal buf n = if n = 0 then () else if n < 0 then scroll_up buf (-n) else scroll_down buf n
 
+let receive_response state total_rows =
+  let prompt_start = 
+    match state.output with
+    | Some text ->
+      let output_row = state.prompt_top_row + total_rows - 1 in
+      print_string (cursor_to output_row 1);
+      Printf.printf "\n%s\n" text;
+      let (row, _) = get_cursor_position () in
+      row
+    | None -> 
+      state.prompt_top_row
+  in
+  { state with prompt_top_row = prompt_start; previous_prompt_top_row = prompt_start }
+
+
 let view state =
   (* log (Printf.sprintf "%d\n" state.prompt_box_height); *)
+
   let buf = Buffer.create 1024 in
   let prompt_width = String.length prompt in
   let width = effective_width state in
   let wrapped = wrap_lines width state.lines in
   let total_rows = List.length wrapped in
 
+  let state = receive_response state total_rows in
+
   scroll_terminal buf (state.prompt_top_row - state.previous_prompt_top_row);
-
-  (* Handle output *)
-  (match state.output with
-   | Some text ->
-     let output_row = state.prompt_top_row + total_rows in
-     Buffer.add_string buf (cursor_to output_row 1);
-     Buffer.add_string buf text;
-     Buffer.add_char buf '\n'
-   | None -> ());
-
 
   let viewport_start = max 1 state.prompt_top_row in
   Buffer.add_string buf (cursor_to viewport_start 1);
