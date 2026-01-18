@@ -3,3 +3,4 @@ _build
 .vscode
 .claude
 _DS_Store
+debug_log.txt
