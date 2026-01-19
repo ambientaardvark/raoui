@@ -8,4 +8,4 @@ type key =
   | Paste of string
   | Unknown of string
 
-val await_input : unit -> key
+val await_input : clock:_ Eio.Time.clock -> stdin:_ Eio.Flow.source -> key
