@@ -5,6 +5,7 @@ let set_raw_mode () =
   let raw_termio = { termio with
     Unix.c_icanon = false;
     Unix.c_echo = false;
+    Unix.c_isig = false;
     Unix.c_vmin = 1;
     Unix.c_vtime = 0;
   } in
@@ -62,30 +63,49 @@ let receive_response state text =
   flush stdout;
   make_init ()
 
-let run () =
-  let backend = Backend.create () in
-  let rec loop state =
+let run env =
+  let clock = Eio.Stdenv.clock env in
+  let stdin = Eio.Stdenv.stdin env in
+  let backend = Backend.create clock in
+  let rec loop state pending =
     print_string (View.view state);
     flush stdout;
     let (term_width, _) = get_term_dimensions () in
-    let key = Tty_listener.await_input () in
-    match Update.update key ~term_width state with
-    | Frontend_types.Exit -> ()
-    | Frontend_types.Submit text ->
-      Backend.submit backend text;
-      let response = match Backend.await_response backend with
-        | Backend.Complete s -> s
-        | Backend.Partial s -> s
-        | Backend.Error s -> "Error: " ^ s
-      in
-      let new_state = receive_response state response in
-      loop new_state
-    | Frontend_types.Continue new_state ->
-      loop new_state
+
+    if pending then
+      match Eio.Fiber.first
+        (fun () -> `Key (Tty_listener.await_input ~clock ~stdin))
+        (fun () -> `Response (Backend.await_response backend))
+      with
+      | `Key (Tty_listener.Ctrl 'c') ->
+        Backend.cancel backend;
+        loop state false
+      | `Key _other_key ->
+        loop state true
+      | `Response r ->
+        let resp_string = match r with
+          | Backend.Complete s -> s
+          | Backend.Partial s -> s
+          | Backend.Error s -> "Error: " ^ s
+        in
+        let new_state = receive_response state resp_string in
+        loop new_state false
+    else
+      let key = Tty_listener.await_input ~clock ~stdin in
+      match Update.update key ~term_width state with
+      | Frontend_types.Exit -> ()
+      | Frontend_types.Submit text ->
+        Backend.submit backend text;
+        loop state true
+      | Frontend_types.Continue new_state ->
+        loop new_state false
   in
-  loop (make_init ())
+  loop (make_init ()) false
 
 let () =
   clear_log ();
-  let orig = set_raw_mode () in
-  Fun.protect ~finally:(fun () -> print_newline (); restore_mode orig) run
+  Eio_main.run @@ fun env ->
+    let orig = set_raw_mode () in
+    Fun.protect 
+      ~finally:(fun () -> print_newline (); restore_mode orig) 
+      (fun () -> run env)

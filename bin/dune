@@ -1,8 +1,8 @@
 (executable
  (public_name raoui)
  (name main)
- (libraries raoui unix terminal_size))
+ (libraries raoui unix terminal_size eio_main eio))
 
 (executable
  (name listener_test)
- (libraries raoui unix))
+ (libraries raoui unix eio_main eio))

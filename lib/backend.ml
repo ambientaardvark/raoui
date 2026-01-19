@@ -6,10 +6,11 @@ type response_chunk =
 type completion = string
 
 type t = {
+  sleep: float -> unit;
   mutable pending_input: string option;
 }
 
-let create () = { pending_input = None }
+let create clock = { pending_input = None; sleep = Eio.Time.sleep clock; }
 
 let submit t input =
   t.pending_input <- Some input
@@ -18,6 +19,7 @@ let await_response t =
   match t.pending_input with
   | None -> Error "No pending request"
   | Some input ->
+    t.sleep 2.0;
     t.pending_input <- None;
     Complete input
 

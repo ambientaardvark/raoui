@@ -7,7 +7,7 @@ type response_chunk =
 
 type completion = string
 
-val create : unit -> t
+val create : _ Eio.Time.clock -> t
 
 (** Send input to the backend. Returns immediately. *)
 val submit : t -> string -> unit

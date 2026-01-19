@@ -14,8 +14,8 @@ let set_raw_mode () =
 let restore_mode termio =
   Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH termio
 
-let examine () =
-  let desc = match await_input () with
+let examine ~clock ~stdin =
+  let desc = match await_input ~clock ~stdin with
     | Char key -> Printf.sprintf "Char '%c' (0x%02x)" key (Char.code key)
     | Ctrl key -> Printf.sprintf "Ctrl-%c" (Char.uppercase_ascii key)
     | Up -> "Up"
@@ -35,11 +35,14 @@ let examine () =
   Printf.printf "%s\n%!" desc
 
 let () =
+  Eio_main.run @@ fun env ->
+  let clock = Eio.Stdenv.clock env in
+  let stdin = Eio.Stdenv.stdin env in
   Printf.printf "Starting listener test...\n%!";
   let original_termio = set_raw_mode () in
   Printf.printf "Raw mode set. Press keys (Ctrl-C to exit):\n%!";
   Fun.protect
     ~finally:(fun () -> restore_mode original_termio)
     (fun () ->
-      let rec loop () = examine (); loop () in
+      let rec loop () = examine ~clock ~stdin; loop () in
       loop ())
