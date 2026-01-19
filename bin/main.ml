@@ -15,6 +15,8 @@ let set_raw_mode () =
 let restore_mode termio =
   Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH termio
 
+let set_solid_cursor () = print_string "\x1b[2 q"; flush stdout
+
 let clear_log () =
   let oc = open_out "debug_log.txt" in
   Printf.fprintf oc "";
@@ -108,6 +110,7 @@ let () =
   clear_log ();
   Eio_main.run @@ fun env ->
     let orig = set_raw_mode () in
+    set_solid_cursor ();
     Fun.protect 
       ~finally:(fun () -> print_newline (); restore_mode orig) 
       (fun () -> run env)
