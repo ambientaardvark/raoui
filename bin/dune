@@ -1,6 +1,7 @@
 (executable
  (public_name raoui)
  (name main)
+ (modes byte exe)
  (libraries raoui unix terminal_size eio_main eio))
 
 (executable

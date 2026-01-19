@@ -24,6 +24,14 @@ let view state =
   let wrapped = wrap_lines width state.lines in
   let total_rows = List.length wrapped in
 
+  let _log_string_list li  = 
+    let rec loop b li = 
+      match li with | [] -> b | hd::tl -> loop (b ^ ", " ^ hd) tl 
+    in
+    log (loop "" li)
+  in
+  (* log_string_list wrapped; *)
+
   scroll_terminal buf (state.prompt_top_row - state.previous_prompt_top_row);
 
   let viewport_start = max 1 state.prompt_top_row in

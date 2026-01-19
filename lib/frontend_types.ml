@@ -22,7 +22,7 @@ type update_result =
 (* Line wrapping utilities *)
 let wrap_line width line =
   let rec loop acc remaining =
-    if String.length remaining <= width then List.rev (remaining :: acc)
+    if String.length remaining < width then List.rev (remaining :: acc)
     else
       let chunk = String.sub remaining 0 width in
       let rest = String.sub remaining width (String.length remaining - width) in
@@ -46,19 +46,27 @@ let internal_to_terminal width lines (line_idx, col) =
   (rows_before + row_in_line, col_in_line)
 
 let terminal_to_internal width lines (row, col) =
-  let rec find_line line_idx rows_consumed remaining_lines =
-    match remaining_lines with
+  let rec loop internal_row lines current_terminal_row =
+    match lines with
     | [] -> failwith "terminal_to_internal: row out of bounds"
     | line :: rest ->
-      let wrapped_count = List.length (wrap_line width line) in
-      if row < rows_consumed + wrapped_count then
-        let row_within_line = row - rows_consumed in
-        let col_within_line = row_within_line * width + col in
-        (line_idx, col_within_line)
+      let wrapped = wrap_line width line in
+      let num_rows = List.length wrapped in
+      let is_last_line = rest = [] in
+      if row < current_terminal_row + num_rows || (is_last_line && row = current_terminal_row + num_rows) then
+        let row_offset = row - current_terminal_row in
+        let rec sum_lengths acc idx l =
+          if idx = 0 then acc
+          else match l with
+            | [] -> acc
+            | h :: t -> sum_lengths (acc + String.length h) (idx - 1) t
+        in
+        let chars_before = sum_lengths 0 row_offset wrapped in
+        (internal_row, chars_before + col)
       else
-        find_line (line_idx + 1) (rows_consumed + wrapped_count) rest
+        loop (internal_row + 1) rest (current_terminal_row + num_rows)
   in
-  find_line 0 0 lines
+  loop 0 lines 0
 
 (* List helpers *)
 let get_line lines line_idx = List.nth lines line_idx
