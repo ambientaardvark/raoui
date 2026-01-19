@@ -79,7 +79,9 @@ let run env =
       with
       | `Key (Tty_listener.Ctrl 'c') ->
         Backend.cancel backend;
-        loop state false
+        print_string "\n";
+        flush stdout;
+        loop (make_init ()) false
       | `Key _other_key ->
         loop state true
       | `Response r ->
