@@ -63,6 +63,7 @@ let receive_response state text =
   make_init ()
 
 let run () =
+  let backend = Backend.create () in
   let rec loop state =
     print_string (View.view state);
     flush stdout;
@@ -71,7 +72,13 @@ let run () =
     match Update.update key ~term_width state with
     | Frontend_types.Exit -> ()
     | Frontend_types.Submit text ->
-      let new_state = receive_response state text in
+      Backend.submit backend text;
+      let response = match Backend.await_response backend with
+        | Backend.Complete s -> s
+        | Backend.Partial s -> s
+        | Backend.Error s -> "Error: " ^ s
+      in
+      let new_state = receive_response state response in
       loop new_state
     | Frontend_types.Continue new_state ->
       loop new_state
