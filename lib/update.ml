@@ -113,6 +113,19 @@ let move_down state =
   else
     state
 
+let delete_before_cursor state =
+  let width = effective_width state in
+  let (line_idx, col) = terminal_to_internal width state.lines (state.cursor_row, state.cursor_col) in
+  let line_str = List.nth state.lines line_idx in
+  let new_line_str = String.sub line_str col (String.length line_str - col) in
+  let new_lines = update_line state.lines line_idx new_line_str in
+  let (new_row, new_col) = internal_to_terminal width new_lines (line_idx, 0) in
+  { state with
+    lines = new_lines;
+    cursor_row = new_row;
+    cursor_col = new_col;
+  }
+
 let handle_vertical_cursor_movement state =
   let width = effective_width state in
   let new_height =
@@ -145,10 +158,12 @@ let handle_vertical_cursor_movement state =
 let update key ~term_width state =
   let state = { state with term_width } in
   let new_state = match key with
-    | Tty_listener.Ctrl 'd' -> Exit
+    | Tty_listener.Ctrl 'd' ->
+      if state.lines = [""] then Exit else Continue state
     | Tty_listener.Ctrl 'p' ->
       let text = String.concat "\n" state.lines in
       Submit text
+    | Tty_listener.Ctrl 'u' -> Continue (delete_before_cursor state)
     | Tty_listener.Enter -> Continue (insert_newline state)
     | Tty_listener.Char c -> Continue (insert_char state c)
     | Tty_listener.Backspace -> Continue (delete_char state)
