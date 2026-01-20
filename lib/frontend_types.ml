@@ -1,7 +1,7 @@
 let prompt = "> "
 let continued_prompt = ". "
 
-type state = 
+type state =
   { lines : string list
   ; cursor_row : int
   ; cursor_col : int
@@ -12,12 +12,18 @@ type state =
   ; previous_prompt_top_row : int
   ; previous_key : Tty_listener.key option
   ; persistent_col : int
+  ; awaiting_response : bool
+  ; backend_response : Backend.response_chunk option
+  ; repl_output : string option
+  ; repl_cursor : int * int
+  ; scroll_amount : int
   }
 
 type update_result =
   | Continue of state
-  | Submit of string
+  | Submit of string * state
   | Exit
+  | Cancel
 
 (* Line wrapping utilities *)
 let wrap_line width line =

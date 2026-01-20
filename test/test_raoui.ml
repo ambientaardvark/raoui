@@ -12,6 +12,11 @@ let initial_state width = {
   previous_prompt_top_row = 0;
   previous_key = None;
   persistent_col = 0;
+  awaiting_response = false;
+  backend_response = None;
+  repl_output = None;
+  repl_cursor = (0, 1);
+  scroll_amount = 0;
 }
 
 let insert_many state width n =
@@ -97,6 +102,109 @@ let test_resize_narrower_crash () =
   with Invalid_argument s ->
     Alcotest.fail ("Crashed with Invalid_argument on narrowing: " ^ s)
 
+let test_submit_basic () =
+  let width = 10 in
+  let state = initial_state width in
+  let state = insert_many state width 5 in
+
+  Alcotest.(check string) "lines before submit" "aaaaa" (List.hd state.lines);
+
+  match Update.submit state with
+  | Submit (text, new_state) ->
+    Alcotest.(check string) "submitted text" "aaaaa" text;
+    Alcotest.(check bool) "awaiting_response" true new_state.awaiting_response;
+    Alcotest.(check string) "lines reset" "" (List.hd new_state.lines);
+    Alcotest.(check int) "cursor_row reset" 0 new_state.cursor_row;
+    Alcotest.(check int) "cursor_col reset" 0 new_state.cursor_col
+  | _ -> Alcotest.fail "Expected Submit result"
+
+let test_submit_prompt_position () =
+  let width = 10 in
+  let state = { (initial_state width) with prompt_top_row = 5 } in
+  let state = insert_many state width 5 in
+
+  (* Single line of 5 chars, so 1 row *)
+  match Update.submit state with
+  | Submit (_, new_state) ->
+    (* repl_cursor should be at row after the prompt box *)
+    let (repl_row, _) = new_state.repl_cursor in
+    Alcotest.(check int) "repl_cursor row" 6 repl_row;
+    (* prompt_top_row should be one below repl_cursor to leave room for output *)
+    Alcotest.(check int) "prompt_top_row" 7 new_state.prompt_top_row
+  | _ -> Alcotest.fail "Expected Submit result"
+
+let test_process_response_complete () =
+  let width = 10 in
+  let state = { (initial_state width) with
+    backend_response = Some (Backend.Complete "hello");
+    awaiting_response = true;
+  } in
+
+  let new_state = Update.process_response state in
+
+  Alcotest.(check (option string)) "repl_output" (Some "hello") new_state.repl_output;
+  Alcotest.(check bool) "awaiting_response" false new_state.awaiting_response;
+  Alcotest.(check bool) "backend_response cleared" true (new_state.backend_response = None)
+
+let test_process_response_partial () =
+  let width = 10 in
+  let state = { (initial_state width) with
+    backend_response = Some (Backend.Partial "partial");
+    awaiting_response = true;
+  } in
+
+  let new_state = Update.process_response state in
+
+  Alcotest.(check (option string)) "repl_output" (Some "partial") new_state.repl_output;
+  Alcotest.(check bool) "awaiting_response stays true" true new_state.awaiting_response
+
+let test_scroll_when_cursor_below_screen () =
+  let width = 10 in
+  (* term_height = 10, but prompt starts at row 15 (below screen) *)
+  let state = { (initial_state width) with
+    prompt_top_row = 15;
+    term_height = 10;
+  } in
+
+  (* Send any key to trigger universal_corrections *)
+  match Update.update (Tty_listener.Char 'a') ~term_width:width state with
+  | Continue new_state ->
+    (* scroll_amount should be negative (scroll up) to bring cursor into view *)
+    (* cursor is at row 15, need to scroll up by 5 to get to row 10 *)
+    Alcotest.(check int) "scroll_amount" (-5) new_state.scroll_amount;
+    Alcotest.(check int) "prompt_top_row adjusted" 10 new_state.prompt_top_row
+  | _ -> Alcotest.fail "Expected Continue result"
+
+let test_submit_scrolls_when_at_bottom () =
+  let width = 10 in
+  (* prompt at row 10, term_height = 10, single line of text *)
+  let state = { (initial_state width) with
+    prompt_top_row = 10;
+    term_height = 10;
+  } in
+  let state = insert_many state width 3 in
+
+  match Update.submit state with
+  | Submit (_, new_state) ->
+    (* output_row would be 11, new_prompt_top would be 12 *)
+    (* need to scroll up by 2 to fit *)
+    Alcotest.(check int) "scroll_amount" (-2) new_state.scroll_amount;
+    Alcotest.(check int) "prompt_top_row" 10 new_state.prompt_top_row;
+    let (repl_row, _) = new_state.repl_cursor in
+    Alcotest.(check int) "repl_cursor row" 9 repl_row
+  | _ -> Alcotest.fail "Expected Submit result"
+
+let test_process_response_clears_scroll () =
+  let width = 10 in
+  let state = { (initial_state width) with
+    backend_response = Some (Backend.Complete "hello");
+    scroll_amount = (-5);
+  } in
+
+  let new_state = Update.process_response state in
+
+  Alcotest.(check int) "scroll_amount cleared" 0 new_state.scroll_amount
+
 let () =
   let open Alcotest in
   run "Raoui" [
@@ -105,5 +213,18 @@ let () =
       test_case "Exact width wrap" `Quick test_exact_width_wrap;
       test_case "Resize crash" `Quick test_resize_crash;
       test_case "Resize narrow crash" `Quick test_resize_narrower_crash;
+    ];
+    "submit", [
+      test_case "Basic submit" `Quick test_submit_basic;
+      test_case "Prompt position after submit" `Quick test_submit_prompt_position;
+    ];
+    "process_response", [
+      test_case "Complete response" `Quick test_process_response_complete;
+      test_case "Partial response" `Quick test_process_response_partial;
+    ];
+    "scrolling", [
+      test_case "Scroll when cursor below screen" `Quick test_scroll_when_cursor_below_screen;
+      test_case "Submit scrolls when at bottom" `Quick test_submit_scrolls_when_at_bottom;
+      test_case "Process response clears scroll" `Quick test_process_response_clears_scroll;
     ];
   ]

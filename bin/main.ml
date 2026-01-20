@@ -1,4 +1,5 @@
 open Raoui
+open Frontend_types
 
 let set_raw_mode () =
   let termio = Unix.tcgetattr Unix.stdin in
@@ -51,19 +52,30 @@ let make_init () : Frontend_types.state =
   let (term_width, term_height) = get_term_dimensions () in
   { lines = [""]; cursor_row = 0; cursor_col = 0;
     prompt_top_row = row; term_width; term_height; prompt_box_height = 1;
-    previous_prompt_top_row = row; previous_key = None; persistent_col = 0 }
+    previous_prompt_top_row = row; previous_key = None; persistent_col = 0;
+    awaiting_response = false; backend_response = None; repl_output = None;
+    repl_cursor = (row, 1); scroll_amount = 0 }
 
 let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
 
-let receive_response state text =
-  let width = Frontend_types.effective_width state in
-  let wrapped = Frontend_types.wrap_lines width state.lines in
-  let total_rows = List.length wrapped in
-  let output_row = state.prompt_top_row + total_rows - 1 in
-  print_string (cursor_to output_row 1);
-  Printf.printf "\n%s\n" text;
-  flush stdout;
-  make_init ()
+let print_repl_output state =
+  match state.repl_output with
+  | None -> state
+  | Some text ->
+    let (row, col) = state.repl_cursor in
+    print_string (cursor_to row col);
+    print_string text;
+    flush stdout;
+    let (new_row, _) = get_cursor_position () in
+    { state with
+      repl_output = None;
+      repl_cursor = (new_row, 1);
+      prompt_top_row = max state.prompt_top_row (new_row + 1);
+      lines = [""];
+      cursor_row = 0;
+      cursor_col = 0;
+      prompt_box_height = 1;
+    }
 
 let run env =
   let clock = Eio.Stdenv.clock env in
@@ -79,30 +91,34 @@ let run env =
         (fun () -> `Key (Tty_listener.await_input ~clock ~stdin))
         (fun () -> `Response (Backend.await_response backend))
       with
-      | `Key (Tty_listener.Ctrl 'c') ->
-        Backend.cancel backend;
-        print_string "\n";
-        flush stdout;
-        loop (make_init ()) false
-      | `Key _other_key ->
-        loop state true
+      | `Key key -> (
+        match Update.update key ~term_width state with
+        | Frontend_types.Cancel ->
+          Backend.cancel backend;
+          flush stdout;
+          loop (make_init ()) false
+        | Frontend_types.Continue new_state ->
+          loop new_state true
+        | Frontend_types.Exit | Frontend_types.Submit _ ->
+          loop state true)
       | `Response r ->
-        let resp_string = match r with
-          | Backend.Complete s -> s
-          | Backend.Partial s -> s
-          | Backend.Error s -> "Error: " ^ s
+        let new_state =
+          { state with backend_response = Some r }
+          |> Update.process_response
+          |> print_repl_output
         in
-        let new_state = receive_response state resp_string in
-        loop new_state false
+        loop new_state new_state.awaiting_response
     else
       let key = Tty_listener.await_input ~clock ~stdin in
       match Update.update key ~term_width state with
       | Frontend_types.Exit -> ()
-      | Frontend_types.Submit text ->
+      | Frontend_types.Submit (text, new_state) ->
         Backend.submit backend text;
-        loop state true
+        loop new_state true
       | Frontend_types.Continue new_state ->
         loop new_state false
+      | Frontend_types.Cancel ->
+        loop state false
   in
   loop (make_init ()) false
 

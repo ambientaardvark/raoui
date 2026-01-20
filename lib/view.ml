@@ -32,7 +32,7 @@ let view state =
   in
   (* log_string_list wrapped; *)
 
-  scroll_terminal buf (state.prompt_top_row - state.previous_prompt_top_row);
+  scroll_terminal buf state.scroll_amount;
 
   let viewport_start = max 1 state.prompt_top_row in
   Buffer.add_string buf (cursor_to viewport_start 1);

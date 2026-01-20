@@ -135,6 +135,33 @@ let delete_char_after_cursor state =
   then state
   else delete_char after_move_right
 
+let submit state =
+  let text = String.concat "\n" state.lines in
+  let width = effective_width state in
+  let wrapped = wrap_lines width state.lines in
+  let total_rows = List.length wrapped in
+  let output_row = state.prompt_top_row + total_rows in
+  let new_prompt_top = output_row + 1 in
+  let scroll_amount =
+    if new_prompt_top > state.term_height
+    then state.term_height - new_prompt_top
+    else 0
+  in
+  let new_state =
+    { state with
+      awaiting_response = true
+    ; repl_cursor = (output_row + scroll_amount, 1)
+    ; prompt_top_row = new_prompt_top + scroll_amount
+    ; previous_prompt_top_row = new_prompt_top + scroll_amount
+    ; lines = [""]
+    ; cursor_row = 0
+    ; cursor_col = 0
+    ; prompt_box_height = 1
+    ; scroll_amount
+    }
+  in
+  Submit (text, new_state)
+
 let handle_vertical_cursor_movement state =
   let width = effective_width state in
   let new_height =
@@ -161,7 +188,7 @@ let handle_vertical_cursor_movement state =
   { state with
     prompt_box_height = new_height;
     prompt_top_row = state.prompt_top_row + scrolls;
-    previous_prompt_top_row = state.prompt_top_row;
+    scroll_amount = scrolls;
   }
 
 let handle_resize new_width state =
@@ -176,23 +203,26 @@ let handle_resize new_width state =
 
 let apply_key key state =
   let open Tty_listener in
-  match key with
-  | Ctrl 'd' ->
-    if state.lines = [""] 
-    then Exit 
-    else Continue (delete_char_after_cursor state)
-  | Ctrl 'p' ->
-    let text = String.concat "\n" state.lines in
-    Submit text
-  | Ctrl 'u' -> Continue (delete_before_cursor state)
-  | Enter -> Continue (insert_newline state)
-  | Char c -> Continue (insert_char state c)
-  | Backspace -> Continue (delete_char state)
-  | Left -> Continue (move_left state)
-  | Right -> Continue (move_right state)
-  | Up -> Continue (move_up state)
-  | Down -> Continue (move_down state)
-  | _ -> Continue state
+  if state.awaiting_response then
+    match key with
+    | Ctrl 'c' -> Cancel
+    | _ -> Continue state
+  else
+    match key with
+    | Ctrl 'd' ->
+      if state.lines = [""]
+      then Exit
+      else Continue (delete_char_after_cursor state)
+    | Ctrl 'p' -> submit state
+    | Ctrl 'u' -> Continue (delete_before_cursor state)
+    | Enter -> Continue (insert_newline state)
+    | Char c -> Continue (insert_char state c)
+    | Backspace -> Continue (delete_char state)
+    | Left -> Continue (move_left state)
+    | Right -> Continue (move_right state)
+    | Up -> Continue (move_up state)
+    | Down -> Continue (move_down state)
+    | _ -> Continue state
 
 let universal_corrections key state =
   state
@@ -200,9 +230,29 @@ let universal_corrections key state =
   |> (fun s -> { s with previous_key = Some key })
 
 let update key ~term_width state =
-  state
+  { state with scroll_amount = 0 }
   |> handle_resize term_width
   |> apply_key key
   |> function
     | Continue s -> Continue (universal_corrections key s)
     | other -> other
+
+let process_response state =
+  match state.backend_response with
+  | None -> failwith "process_response called with no backend_response"
+  | Some response ->
+    let repl_output = match response with
+      | Backend.Complete s -> s
+      | Backend.Partial s -> s
+      | Backend.Error s -> "Error: " ^ s
+    in
+    let awaiting_response = match response with
+      | Backend.Partial _ -> true
+      | Backend.Complete _ | Backend.Error _ -> false
+    in
+    { state with
+      backend_response = None
+    ; repl_output = Some repl_output
+    ; awaiting_response
+    ; scroll_amount = 0
+    }
