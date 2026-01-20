@@ -5,10 +5,10 @@ type response_chunk =
 
 type completion = string
 
-type t = {
-  sleep: float -> unit;
-  mutable pending_input: string option;
-}
+type t = 
+  { sleep: float -> unit
+  ; mutable pending_input: string option
+  }
 
 let create clock = { pending_input = None; sleep = Eio.Time.sleep clock; }
 

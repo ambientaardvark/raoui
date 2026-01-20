@@ -165,23 +165,24 @@ let handle_vertical_cursor_movement state =
   }
 
 let update key ~term_width state =
+  let open Tty_listener in
   let state = { state with term_width } in
   let new_state = match key with
-    | Tty_listener.Ctrl 'd' ->
+    | Ctrl 'd' ->
       if state.lines = [""] 
       then Exit 
       else Continue (delete_char_after_cursor state)
-    | Tty_listener.Ctrl 'p' ->
+    | Ctrl 'p' ->
       let text = String.concat "\n" state.lines in
       Submit text
-    | Tty_listener.Ctrl 'u' -> Continue (delete_before_cursor state)
-    | Tty_listener.Enter -> Continue (insert_newline state)
-    | Tty_listener.Char c -> Continue (insert_char state c)
-    | Tty_listener.Backspace -> Continue (delete_char state)
-    | Tty_listener.Left -> Continue (move_left state)
-    | Tty_listener.Right -> Continue (move_right state)
-    | Tty_listener.Up -> Continue (move_up state)
-    | Tty_listener.Down -> Continue (move_down state)
+    | Ctrl 'u' -> Continue (delete_before_cursor state)
+    | Enter -> Continue (insert_newline state)
+    | Char c -> Continue (insert_char state c)
+    | Backspace -> Continue (delete_char state)
+    | Left -> Continue (move_left state)
+    | Right -> Continue (move_right state)
+    | Up -> Continue (move_up state)
+    | Down -> Continue (move_down state)
     | _ -> Continue state
   in
   match new_state with

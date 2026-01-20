@@ -1,18 +1,18 @@
 let prompt = "> "
 let continued_prompt = ". "
 
-type state = {
-  lines : string list;
-  cursor_row : int;
-  cursor_col : int;
-  prompt_top_row : int;
-  term_width : int;
-  term_height : int;
-  prompt_box_height : int;
-  previous_prompt_top_row : int;
-  previous_key : Tty_listener.key option;
-  persistent_col : int;
-}
+type state = 
+  { lines : string list
+  ; cursor_row : int
+  ; cursor_col : int
+  ; prompt_top_row : int
+  ; term_width : int
+  ; term_height : int
+  ; prompt_box_height : int
+  ; previous_prompt_top_row : int
+  ; previous_key : Tty_listener.key option
+  ; persistent_col : int
+  }
 
 type update_result =
   | Continue of state
