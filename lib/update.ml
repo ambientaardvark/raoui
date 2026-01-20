@@ -164,29 +164,45 @@ let handle_vertical_cursor_movement state =
     previous_prompt_top_row = state.prompt_top_row;
   }
 
-let update key ~term_width state =
+let handle_resize new_width state =
+  if state.term_width = new_width then state
+  else
+    let old_eff_width = effective_width state in
+    let (line_idx, col) = terminal_to_internal old_eff_width state.lines (state.cursor_row, state.cursor_col) in
+    let state = { state with term_width = new_width } in
+    let new_eff_width = effective_width state in
+    let (new_row, new_col) = internal_to_terminal new_eff_width state.lines (line_idx, col) in
+    { state with cursor_row = new_row; cursor_col = new_col }
+
+let apply_key key state =
   let open Tty_listener in
-  let state = { state with term_width } in
-  let new_state = match key with
-    | Ctrl 'd' ->
-      if state.lines = [""] 
-      then Exit 
-      else Continue (delete_char_after_cursor state)
-    | Ctrl 'p' ->
-      let text = String.concat "\n" state.lines in
-      Submit text
-    | Ctrl 'u' -> Continue (delete_before_cursor state)
-    | Enter -> Continue (insert_newline state)
-    | Char c -> Continue (insert_char state c)
-    | Backspace -> Continue (delete_char state)
-    | Left -> Continue (move_left state)
-    | Right -> Continue (move_right state)
-    | Up -> Continue (move_up state)
-    | Down -> Continue (move_down state)
-    | _ -> Continue state
-  in
-  match new_state with
-  | Continue s ->
-    let s = handle_vertical_cursor_movement s in
-    Continue { s with previous_key = Some key }
-  | other -> other
+  match key with
+  | Ctrl 'd' ->
+    if state.lines = [""] 
+    then Exit 
+    else Continue (delete_char_after_cursor state)
+  | Ctrl 'p' ->
+    let text = String.concat "\n" state.lines in
+    Submit text
+  | Ctrl 'u' -> Continue (delete_before_cursor state)
+  | Enter -> Continue (insert_newline state)
+  | Char c -> Continue (insert_char state c)
+  | Backspace -> Continue (delete_char state)
+  | Left -> Continue (move_left state)
+  | Right -> Continue (move_right state)
+  | Up -> Continue (move_up state)
+  | Down -> Continue (move_down state)
+  | _ -> Continue state
+
+let universal_corrections key state =
+  state
+  |> handle_vertical_cursor_movement
+  |> (fun s -> { s with previous_key = Some key })
+
+let update key ~term_width state =
+  state
+  |> handle_resize term_width
+  |> apply_key key
+  |> function
+    | Continue s -> Continue (universal_corrections key s)
+    | other -> other
