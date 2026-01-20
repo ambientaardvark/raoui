@@ -11,6 +11,8 @@ let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
 
 let scroll_up buf n = Printf.bprintf buf "\x1b[%dS" n
 let scroll_down buf n = Printf.bprintf buf "\x1b[%dT" n
+let show_cursor = "\x1b[?25h"
+let hide_cursor = "\x1b[?25l"
 
 let scroll_terminal buf n =
   if n = 0 then ()
@@ -23,6 +25,9 @@ let view state =
   let width = effective_width state in
   let wrapped = wrap_lines width state.lines in
   let total_rows = List.length wrapped in
+
+  Buffer.add_string buf
+    (if state.awaiting_response then hide_cursor else show_cursor );
 
   let _log_string_list li  = 
     let rec loop b li = 
@@ -40,7 +45,10 @@ let view state =
   List.iteri (fun i line ->
     if i >= skip_rows && i < skip_rows + state.term_height then begin
       Buffer.add_string buf clear_line;
-      (if i = 0 then Buffer.add_string buf prompt else Buffer.add_string buf continued_prompt);
+      (match (i, state.awaiting_response) with
+        | 0, false -> Buffer.add_string buf prompt
+        | 0, true -> Buffer.add_string buf pending_prompt
+        | _ -> Buffer.add_string buf continued_prompt);
       Buffer.add_string buf line;
       if i < skip_rows + state.term_height - 1 && i < total_rows - 1 then Buffer.add_char buf '\n'
     end

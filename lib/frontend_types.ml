@@ -1,5 +1,6 @@
 let prompt = "> "
 let continued_prompt = ". "
+let pending_prompt = "  "
 
 type state =
   { lines : string list
