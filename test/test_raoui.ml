@@ -205,14 +205,260 @@ let test_process_response_clears_scroll () =
 
   Alcotest.(check int) "scroll_amount cleared" 0 new_state.scroll_amount
 
+(* wrap_line tests *)
+(* Note: wrap_line adds an empty string when a line exactly fills width,
+   which is needed for cursor positioning at end of full lines *)
+let test_wrap_line_short () =
+  let result = wrap_line 10 "hello" in
+  Alcotest.(check (list string)) "short line" ["hello"] result
+
+let test_wrap_line_exact () =
+  let result = wrap_line 5 "hello" in
+  (* Exact fit adds empty string for cursor positioning *)
+  Alcotest.(check (list string)) "exact fit" ["hello"; ""] result
+
+let test_wrap_line_overflow () =
+  let result = wrap_line 5 "helloworld" in
+  (* 10 chars = 2 full rows, adds empty for cursor *)
+  Alcotest.(check (list string)) "overflow wraps" ["hello"; "world"; ""] result
+
+let test_wrap_line_multiple () =
+  let result = wrap_line 3 "abcdefghi" in
+  (* 9 chars = 3 full rows, adds empty for cursor *)
+  Alcotest.(check (list string)) "multiple wraps" ["abc"; "def"; "ghi"; ""] result
+
+let test_wrap_line_empty () =
+  let result = wrap_line 10 "" in
+  Alcotest.(check (list string)) "empty line" [""] result
+
+let test_wrap_lines_multiline () =
+  let result = wrap_lines 5 ["hello"; "world"] in
+  (* Both lines exactly fill width *)
+  Alcotest.(check (list string)) "multiline" ["hello"; ""; "world"; ""] result
+
+let test_wrap_lines_mixed () =
+  let result = wrap_lines 5 ["hi"; "helloworld"] in
+  (* "hi" short, "helloworld" = 2 full rows *)
+  Alcotest.(check (list string)) "mixed lengths" ["hi"; "hello"; "world"; ""] result
+
+(* Coordinate conversion tests *)
+let test_internal_to_terminal_simple () =
+  let lines = ["hello"] in
+  let (row, col) = internal_to_terminal 10 lines (0, 3) in
+  Alcotest.(check int) "row" 0 row;
+  Alcotest.(check int) "col" 3 col
+
+let test_internal_to_terminal_wrapped () =
+  let lines = ["helloworld"] in (* wraps at width 5 *)
+  let (row, col) = internal_to_terminal 5 lines (0, 7) in
+  (* col 7 is in second wrapped row, position 2 *)
+  Alcotest.(check int) "row in wrapped" 1 row;
+  Alcotest.(check int) "col in wrapped" 2 col
+
+let test_internal_to_terminal_multiline () =
+  let lines = ["hello"; "world"] in
+  let (row, col) = internal_to_terminal 10 lines (1, 2) in
+  Alcotest.(check int) "row second line" 1 row;
+  Alcotest.(check int) "col second line" 2 col
+
+let test_internal_to_terminal_multiline_wrapped () =
+  let lines = ["helloworld"; "abc"] in (* first line wraps to 3 rows: "hello", "world", "" *)
+  let (row, col) = internal_to_terminal 5 lines (1, 1) in
+  (* first line takes rows 0-2 (including empty), second line starts at row 3 *)
+  Alcotest.(check int) "row after wrapped" 3 row;
+  Alcotest.(check int) "col after wrapped" 1 col
+
+let test_terminal_to_internal_simple () =
+  let lines = ["hello"] in
+  let (line_idx, col) = terminal_to_internal 10 lines (0, 3) in
+  Alcotest.(check int) "line_idx" 0 line_idx;
+  Alcotest.(check int) "col" 3 col
+
+let test_terminal_to_internal_wrapped () =
+  let lines = ["helloworld"] in
+  let (line_idx, col) = terminal_to_internal 5 lines (1, 2) in
+  (* row 1 col 2 -> internal col 7 (5 + 2) *)
+  Alcotest.(check int) "line_idx wrapped" 0 line_idx;
+  Alcotest.(check int) "col wrapped" 7 col
+
+let test_terminal_to_internal_multiline () =
+  let lines = ["hello"; "world"] in
+  let (line_idx, col) = terminal_to_internal 10 lines (1, 2) in
+  Alcotest.(check int) "line_idx second" 1 line_idx;
+  Alcotest.(check int) "col second" 2 col
+
+(* Coordinate roundtrip *)
+let test_coordinate_roundtrip () =
+  let lines = ["helloworld"; "foo"; "barbarbar"] in
+  let width = 5 in
+  let test_roundtrip (orig_line, orig_col) =
+    let (term_row, term_col) = internal_to_terminal width lines (orig_line, orig_col) in
+    let (line_idx, col) = terminal_to_internal width lines (term_row, term_col) in
+    Alcotest.(check int) (Printf.sprintf "roundtrip line (%d,%d)" orig_line orig_col) orig_line line_idx;
+    Alcotest.(check int) (Printf.sprintf "roundtrip col (%d,%d)" orig_line orig_col) orig_col col
+  in
+  test_roundtrip (0, 0);
+  test_roundtrip (0, 5);
+  test_roundtrip (0, 9);
+  test_roundtrip (1, 0);
+  test_roundtrip (1, 2);
+  test_roundtrip (2, 0);
+  test_roundtrip (2, 8)
+
+(* Awaiting response behavior tests *)
+let test_typing_while_awaiting () =
+  let width = 10 in
+  let state = { (initial_state width) with awaiting_response = true } in
+
+  match Update.update (Tty_listener.Char 'a') ~term_width:width state with
+  | Continue new_state ->
+    Alcotest.(check string) "char inserted" "a" (List.hd new_state.lines)
+  | _ -> Alcotest.fail "Expected Continue with char inserted"
+
+let test_submit_blocked_while_awaiting () =
+  let width = 10 in
+  let state = { (initial_state width) with awaiting_response = true; lines = ["test"] } in
+
+  match Update.update (Tty_listener.Ctrl 'p') ~term_width:width state with
+  | Continue new_state ->
+    (* Submit should be blocked, state unchanged *)
+    Alcotest.(check string) "lines unchanged" "test" (List.hd new_state.lines);
+    Alcotest.(check bool) "still awaiting" true new_state.awaiting_response
+  | Submit _ -> Alcotest.fail "Submit should be blocked while awaiting"
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_cancel_while_awaiting () =
+  let width = 10 in
+  let state = { (initial_state width) with awaiting_response = true } in
+
+  match Update.update (Tty_listener.Ctrl 'c') ~term_width:width state with
+  | Cancel -> Alcotest.(check bool) "cancel works" true true
+  | _ -> Alcotest.fail "Expected Cancel"
+
+let test_backspace_while_awaiting () =
+  let width = 10 in
+  let state = { (initial_state width) with awaiting_response = true; lines = ["ab"]; cursor_col = 2 } in
+
+  match Update.update Tty_listener.Backspace ~term_width:width state with
+  | Continue new_state ->
+    Alcotest.(check string) "backspace works" "a" (List.hd new_state.lines)
+  | _ -> Alcotest.fail "Expected Continue"
+
+(* Cursor movement edge cases *)
+let test_left_at_start () =
+  let width = 10 in
+  let state = initial_state width in
+
+  match Update.update Tty_listener.Left ~term_width:width state with
+  | Continue new_state ->
+    Alcotest.(check int) "col stays 0" 0 new_state.cursor_col;
+    Alcotest.(check int) "row stays 0" 0 new_state.cursor_row
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_right_at_end () =
+  let width = 10 in
+  let state = { (initial_state width) with lines = ["ab"]; cursor_col = 2 } in
+
+  match Update.update Tty_listener.Right ~term_width:width state with
+  | Continue new_state ->
+    Alcotest.(check int) "col stays at end" 2 new_state.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_backspace_at_start () =
+  let width = 10 in
+  let state = initial_state width in
+
+  match Update.update Tty_listener.Backspace ~term_width:width state with
+  | Continue new_state ->
+    Alcotest.(check string) "empty line unchanged" "" (List.hd new_state.lines)
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_backspace_merges_lines () =
+  let width = 10 in
+  let state = { (initial_state width) with
+    lines = ["hello"; "world"];
+    cursor_row = 1;
+    cursor_col = 0;
+  } in
+
+  match Update.update Tty_listener.Backspace ~term_width:width state with
+  | Continue new_state ->
+    Alcotest.(check int) "lines merged" 1 (List.length new_state.lines);
+    Alcotest.(check string) "content merged" "helloworld" (List.hd new_state.lines)
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_newline_splits_line () =
+  let width = 10 in
+  let state = { (initial_state width) with lines = ["helloworld"]; cursor_col = 5 } in
+
+  match Update.update Tty_listener.Enter ~term_width:width state with
+  | Continue new_state ->
+    Alcotest.(check int) "two lines" 2 (List.length new_state.lines);
+    Alcotest.(check string) "first part" "hello" (List.nth new_state.lines 0);
+    Alcotest.(check string) "second part" "world" (List.nth new_state.lines 1)
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_ctrl_d_exit_on_empty () =
+  let width = 10 in
+  let state = initial_state width in
+
+  match Update.update (Tty_listener.Ctrl 'd') ~term_width:width state with
+  | Exit -> Alcotest.(check bool) "exits on empty" true true
+  | _ -> Alcotest.fail "Expected Exit"
+
+let test_ctrl_d_deletes_char () =
+  let width = 10 in
+  let state = { (initial_state width) with lines = ["ab"]; cursor_col = 0 } in
+
+  match Update.update (Tty_listener.Ctrl 'd') ~term_width:width state with
+  | Continue new_state ->
+    Alcotest.(check string) "char deleted" "b" (List.hd new_state.lines)
+  | _ -> Alcotest.fail "Expected Continue"
+
 let () =
   let open Alcotest in
   run "Raoui" [
+    "wrap_line", [
+      test_case "Short line" `Quick test_wrap_line_short;
+      test_case "Exact fit" `Quick test_wrap_line_exact;
+      test_case "Overflow" `Quick test_wrap_line_overflow;
+      test_case "Multiple wraps" `Quick test_wrap_line_multiple;
+      test_case "Empty line" `Quick test_wrap_line_empty;
+      test_case "Multiline" `Quick test_wrap_lines_multiline;
+      test_case "Mixed lengths" `Quick test_wrap_lines_mixed;
+    ];
+    "coordinate_conversion", [
+      test_case "Internal to terminal simple" `Quick test_internal_to_terminal_simple;
+      test_case "Internal to terminal wrapped" `Quick test_internal_to_terminal_wrapped;
+      test_case "Internal to terminal multiline" `Quick test_internal_to_terminal_multiline;
+      test_case "Internal to terminal multiline wrapped" `Quick test_internal_to_terminal_multiline_wrapped;
+      test_case "Terminal to internal simple" `Quick test_terminal_to_internal_simple;
+      test_case "Terminal to internal wrapped" `Quick test_terminal_to_internal_wrapped;
+      test_case "Terminal to internal multiline" `Quick test_terminal_to_internal_multiline;
+      test_case "Coordinate roundtrip" `Quick test_coordinate_roundtrip;
+    ];
     "wrapping", [
       test_case "Crash on wrap" `Quick test_wrap_crash;
       test_case "Exact width wrap" `Quick test_exact_width_wrap;
       test_case "Resize crash" `Quick test_resize_crash;
       test_case "Resize narrow crash" `Quick test_resize_narrower_crash;
+    ];
+    "awaiting_response", [
+      test_case "Typing while awaiting" `Quick test_typing_while_awaiting;
+      test_case "Submit blocked while awaiting" `Quick test_submit_blocked_while_awaiting;
+      test_case "Cancel while awaiting" `Quick test_cancel_while_awaiting;
+      test_case "Backspace while awaiting" `Quick test_backspace_while_awaiting;
+    ];
+    "cursor_movement", [
+      test_case "Left at start" `Quick test_left_at_start;
+      test_case "Right at end" `Quick test_right_at_end;
+    ];
+    "editing", [
+      test_case "Backspace at start" `Quick test_backspace_at_start;
+      test_case "Backspace merges lines" `Quick test_backspace_merges_lines;
+      test_case "Newline splits line" `Quick test_newline_splits_line;
+      test_case "Ctrl-D exits on empty" `Quick test_ctrl_d_exit_on_empty;
+      test_case "Ctrl-D deletes char" `Quick test_ctrl_d_deletes_char;
     ];
     "submit", [
       test_case "Basic submit" `Quick test_submit_basic;
