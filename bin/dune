@@ -3,7 +3,3 @@
  (name main)
  (modes byte exe)
  (libraries raoui base stdio unix terminal_size eio_main eio))
-
-(executable
- (name listener_test)
- (libraries raoui unix eio_main eio))

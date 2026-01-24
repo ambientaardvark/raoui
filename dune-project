@@ -19,7 +19,7 @@
  (name raoui)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml lambda_term lwt zed lwt_ppx sedlex)
+ (depends ocaml eio terminal_size base)
  (tags
   ("add topics" "to describe" your project)))
 
