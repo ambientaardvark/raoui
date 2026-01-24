@@ -203,26 +203,23 @@ let handle_resize new_width state =
 
 let apply_key key state =
   let open Tty_listener in
-  if state.awaiting_response then
-    match key with
-    | Ctrl 'c' -> Cancel
-    | _ -> Continue state
-  else
-    match key with
-    | Ctrl 'd' ->
-      if state.lines = [""]
-      then Exit
-      else Continue (delete_char_after_cursor state)
-    | Ctrl 'p' -> submit state
-    | Ctrl 'u' -> Continue (delete_before_cursor state)
-    | Enter -> Continue (insert_newline state)
-    | Char c -> Continue (insert_char state c)
-    | Backspace -> Continue (delete_char state)
-    | Left -> Continue (move_left state)
-    | Right -> Continue (move_right state)
-    | Up -> Continue (move_up state)
-    | Down -> Continue (move_down state)
-    | _ -> Continue state
+  match key with
+  | Ctrl 'c' when state.awaiting_response -> Cancel
+  | Ctrl 'p' when state.awaiting_response -> Continue state
+  | Ctrl 'd' ->
+    if state.lines = [""]
+    then Exit
+    else Continue (delete_char_after_cursor state)
+  | Ctrl 'p' -> submit state
+  | Ctrl 'u' -> Continue (delete_before_cursor state)
+  | Enter -> Continue (insert_newline state)
+  | Char c -> Continue (insert_char state c)
+  | Backspace -> Continue (delete_char state)
+  | Left -> Continue (move_left state)
+  | Right -> Continue (move_right state)
+  | Up -> Continue (move_up state)
+  | Down -> Continue (move_down state)
+  | _ -> Continue state
 
 let universal_corrections key state =
   state

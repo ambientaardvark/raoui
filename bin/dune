@@ -2,7 +2,7 @@
  (public_name raoui)
  (name main)
  (modes byte exe)
- (libraries raoui unix terminal_size eio_main eio))
+ (libraries raoui base stdio unix terminal_size eio_main eio))
 
 (executable
  (name listener_test)
