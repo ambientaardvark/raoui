@@ -91,6 +91,8 @@ let handle_key backend ~term_width model key =
     Backend.cancel backend;
     Out_channel.flush stdout;
     `Continue (make_init ())
+  | Frontend_types.Submit (text, _) when String.equal (String.strip text) "q()" ->
+    `Exit
   | Frontend_types.Submit (text, new_model) ->
     Backend.submit backend text;
     `Continue new_model
@@ -124,6 +126,7 @@ let run env backend =
       (match handle_key backend ~term_width model key with
        | `Exit -> ()
        | `Continue new_model -> loop new_model)
+    | Response Backend.Shutdown -> ()
     | Response r ->
       loop (handle_response model r)
   in

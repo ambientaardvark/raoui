@@ -242,10 +242,11 @@ let process_response model =
       | Backend.Complete s -> s
       | Backend.Partial s -> s
       | Backend.Error s -> "Error: " ^ s
+      | Backend.Shutdown -> ""
     in
     let awaiting_response = match response with
       | Backend.Partial _ -> true
-      | Backend.Complete _ | Backend.Error _ -> false
+      | Backend.Complete _ | Backend.Error _ | Backend.Shutdown -> false
     in
     { model with
       backend_response = None

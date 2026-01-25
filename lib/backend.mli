@@ -4,6 +4,7 @@ type response_chunk =
   | Partial of string
   | Complete of string
   | Error of string
+  | Shutdown
 
 type completion = string
 
@@ -22,3 +23,7 @@ val cancel : t -> unit
 val get_completions : t -> string -> cursor_pos:int -> completion list
 
 val deinit : t -> unit
+
+(* Exposed for testing *)
+val random_hex_token : int -> string
+val sign : string list -> string -> string

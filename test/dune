@@ -1,3 +1,7 @@
 (test
  (name test_raoui)
  (libraries raoui alcotest))
+
+(test
+ (name test_backend)
+ (libraries raoui alcotest str))

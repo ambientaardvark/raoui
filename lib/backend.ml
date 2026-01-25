@@ -10,6 +10,7 @@ type response_chunk =
   | Partial of string
   | Complete of string
   | Error of string
+  | Shutdown
 
 type completion = string
 
@@ -167,12 +168,17 @@ let pretty_print_error error_data =
 let await_response t =
   let open Yojson.Basic.Util in
   let rec loop () =
-    let header, content = recv_message t.iopub in
+    let header, content =
+      try recv_message t.iopub
+      with Unix.Unix_error (Unix.EINTR, _, _) -> raise Stdlib.Exit
+    in
     let message_type =
       header |> member "msg_type" |> to_string in
+    log (Printf.sprintf "recv: %s (saw_busy=%b)" message_type t.saw_busy);
     match message_type with
     | "status" -> (
         let new_status = content |> member "execution_state" |> to_string in
+        log (Printf.sprintf "  status: %s" new_status);
         match new_status with
         | "starting" -> loop ()
         | "busy" -> t.saw_busy <- true; loop ()
@@ -193,7 +199,8 @@ let await_response t =
     | "error" -> Error (pretty_print_error content)
     | _ -> loop ()
   in
-  loop ()
+  try loop ()
+  with Stdlib.Exit -> Shutdown
 
 
 let cancel t =
