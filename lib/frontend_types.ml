@@ -2,7 +2,7 @@ let prompt = "> "
 let continued_prompt = ". "
 let pending_prompt = "  "
 
-type state =
+type model =
   { lines : string list
   ; cursor_row : int
   ; cursor_col : int
@@ -21,8 +21,8 @@ type state =
   }
 
 type update_result =
-  | Continue of state
-  | Submit of string * state
+  | Continue of model
+  | Submit of string * model
   | Exit
   | Cancel
 
@@ -83,4 +83,4 @@ let update_line lines line_idx new_line =
     if i = line_idx then new_line else line
   ) lines
 
-let effective_width state = state.term_width - String.length prompt
+let effective_width model = model.term_width - String.length prompt

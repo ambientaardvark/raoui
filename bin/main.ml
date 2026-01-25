@@ -49,7 +49,7 @@ let get_term_dimensions () =
   in
   (width, height)
 
-let make_init () : Frontend_types.state =
+let make_init () : Frontend_types.model =
   let (row, _col) = get_cursor_position () in
   let (term_width, term_height) = get_term_dimensions () in
   { lines = [""]; cursor_row = 0; cursor_col = 0;
@@ -64,41 +64,41 @@ let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
    which erases any prompt the user typed while waiting. View then repaints.
    This may not work correctly with output that uses cursor movement (e.g.
    progress bars with \r) - get_cursor_position won't reflect actual extent. *)
-let print_repl_output state =
-  match state.repl_output with
-  | None | Some "" -> { state with repl_output = None }
+let print_repl_output model =
+  match model.repl_output with
+  | None | Some "" -> { model with repl_output = None }
   | Some text ->
-    let (row, col) = state.repl_cursor in
+    let (row, col) = model.repl_cursor in
     print_string (cursor_to row col);
     print_string "\x1b[J";
     print_string text;
     Out_channel.flush stdout;
     let (new_row, _) = get_cursor_position () in
-    { state with
+    { model with
       repl_output = None;
       repl_cursor = (new_row, 1);
-      prompt_top_row = max state.prompt_top_row (new_row + 1);
+      prompt_top_row = max model.prompt_top_row (new_row + 1);
     }
 
 type msg =
   | Key of Tty_listener.key
   | Response of Backend.response_chunk
 
-let handle_key backend ~term_width state key =
-  match Update.update key ~term_width state with
+let handle_key backend ~term_width model key =
+  match Update.update key ~term_width model with
   | Frontend_types.Exit -> `Exit
   | Frontend_types.Cancel ->
     Backend.cancel backend;
     Out_channel.flush stdout;
     `Continue (make_init ())
-  | Frontend_types.Submit (text, new_state) ->
+  | Frontend_types.Submit (text, new_model) ->
     Backend.submit backend text;
-    `Continue new_state
-  | Frontend_types.Continue new_state ->
-    `Continue new_state
+    `Continue new_model
+  | Frontend_types.Continue new_model ->
+    `Continue new_model
 
-let handle_response state response =
-  { state with backend_response = Some response }
+let handle_response model response =
+  { model with backend_response = Some response }
   |> Update.process_response
   |> print_repl_output
   |> Update.handle_vertical_cursor_movement
@@ -106,12 +106,12 @@ let handle_response state response =
 let run env backend =
   let clock = Eio.Stdenv.clock env in
   let stdin = Eio.Stdenv.stdin env in
-  let rec loop state =
-    print_string (View.view state);
+  let rec loop model =
+    print_string (View.view model);
     Out_channel.flush stdout;
     let (term_width, _) = get_term_dimensions () in
     let msg =
-      if state.awaiting_response then
+      if model.awaiting_response then
         Eio.Fiber.any [
           (fun () -> Key (Tty_listener.await_input ~clock ~stdin));
           (fun () -> Response (Backend.await_response backend));
@@ -121,11 +121,11 @@ let run env backend =
     in
     match msg with
     | Key key ->
-      (match handle_key backend ~term_width state key with
+      (match handle_key backend ~term_width model key with
        | `Exit -> ()
-       | `Continue new_state -> loop new_state)
+       | `Continue new_model -> loop new_model)
     | Response r ->
-      loop (handle_response state r)
+      loop (handle_response model r)
   in
   loop (make_init ())
 
