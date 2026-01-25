@@ -7,7 +7,7 @@ type response_chunk =
 
 type completion = string
 
-val create : _ Eio.Time.clock -> t
+val create : unit -> t
 
 (** Send input to the backend. Returns immediately. *)
 val submit : t -> string -> unit
@@ -20,3 +20,5 @@ val cancel : t -> unit
 
 (** Block until completions are available. Race this with input. *)
 val get_completions : t -> string -> cursor_pos:int -> completion list
+
+val deinit : t -> unit

@@ -66,7 +66,7 @@ let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
    progress bars with \r) - get_cursor_position won't reflect actual extent. *)
 let print_repl_output state =
   match state.repl_output with
-  | None -> state
+  | None | Some "" -> { state with repl_output = None }
   | Some text ->
     let (row, col) = state.repl_cursor in
     print_string (cursor_to row col);
@@ -103,10 +103,9 @@ let handle_response state response =
   |> print_repl_output
   |> Update.handle_vertical_cursor_movement
 
-let run env =
+let run env backend =
   let clock = Eio.Stdenv.clock env in
   let stdin = Eio.Stdenv.stdin env in
-  let backend = Backend.create clock in
   let rec loop state =
     print_string (View.view state);
     Out_channel.flush stdout;
@@ -133,8 +132,12 @@ let run env =
 let () =
   clear_log ();
   Eio_main.run @@ fun env ->
+    let backend = Backend.create () in
     let orig = set_raw_mode () in
     set_solid_cursor ();
     Stdlib.Fun.protect
-      ~finally:(fun () -> print_endline ""; restore_mode orig)
-      (fun () -> run env)
+      (fun () -> run env backend)
+      ~finally:(fun () ->
+        print_endline "";
+        restore_mode orig;
+        Backend.deinit backend)

@@ -29,9 +29,9 @@ let view state =
   Buffer.add_string buf
     (if state.awaiting_response then hide_cursor else show_cursor );
 
-  let _log_string_list li  = 
-    let rec loop b li = 
-      match li with | [] -> b | hd::tl -> loop (b ^ ", " ^ hd) tl 
+  let _log_string_list li  =
+    let rec loop b li =
+      match li with | [] -> b | hd::tl -> loop (b ^ ", " ^ hd) tl
     in
     log (loop "" li)
   in
@@ -54,9 +54,6 @@ let view state =
     end
   ) wrapped;
 
-  log (Printf.sprintf "skip rows: %d, viewport_start: %d, prompt_top_row: %d, total_rows: %d"
-    skip_rows viewport_start state.prompt_top_row total_rows);
-
   let visible_rows = min (total_rows - skip_rows) state.term_height in
   let old_visible_rows = min state.prompt_box_height state.term_height in
   let extra_lines = old_visible_rows - visible_rows in
@@ -71,5 +68,10 @@ let view state =
   let cursor_abs_row = state.prompt_top_row + state.cursor_row in
   let cursor_abs_col = prompt_width + state.cursor_col + 1 in
   Buffer.add_string buf (cursor_to cursor_abs_row cursor_abs_col);
+
+  (* (match state.backend_response with
+    | Some Partial m | Some Complete m -> log (Printf.sprintf "Logging with response %s" m);
+    | Some _ -> ()
+    | None -> ()); *)
 
   Buffer.contents buf

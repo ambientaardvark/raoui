@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 import zmq
 
-KERNEL_PATH = '/Users/alanlee/Downloads/ark-0.1.223-darwin-universal/ark'
+KERNEL_PATH = '/Users/alanlee/Documents/Programs/raoui/vendor/ark-0.1.223-darwin-universal/ark'
 CONNECTION_FILE = '/tmp/kernel.json'
 
 # Create the connection file ourselves with available ports

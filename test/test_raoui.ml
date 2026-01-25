@@ -415,6 +415,22 @@ let test_ctrl_d_deletes_char () =
     Alcotest.(check string) "char deleted" "b" (List.hd new_state.lines)
   | _ -> Alcotest.fail "Expected Continue"
 
+let test_submit_multiline () =
+  let width = 20 in
+  let state = { (initial_state width) with
+    lines = ["c(1,"; "2,"; "3)"];
+    cursor_row = 2;
+    cursor_col = 2;
+  } in
+
+  match Update.submit state with
+  | Submit (text, new_state) ->
+    Alcotest.(check string) "submitted text" "c(1,\n2,\n3)" text;
+    Alcotest.(check bool) "awaiting_response" true new_state.awaiting_response;
+    Alcotest.(check string) "lines reset" "" (List.hd new_state.lines);
+    Alcotest.(check int) "lines count" 1 (List.length new_state.lines)
+  | _ -> Alcotest.fail "Expected Submit result"
+
 let () =
   let open Alcotest in
   run "Raoui" [
@@ -463,6 +479,7 @@ let () =
     "submit", [
       test_case "Basic submit" `Quick test_submit_basic;
       test_case "Prompt position after submit" `Quick test_submit_prompt_position;
+      test_case "Multiline submit" `Quick test_submit_multiline;
     ];
     "process_response", [
       test_case "Complete response" `Quick test_process_response_complete;
