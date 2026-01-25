@@ -239,14 +239,18 @@ let process_response model =
   | None -> failwith "process_response called with no backend_response"
   | Some response ->
     let repl_output = match response with
-      | Backend.Complete s -> s
-      | Backend.Partial s -> s
-      | Backend.Error s -> "Error: " ^ s
+      | Backend.Stdout s -> s
+      | Backend.Result s -> s
+      | Backend.R_error s -> s  (* error message already formatted by backend *)
+      | Backend.Internal_error s -> "Internal error: " ^ s
+      | Backend.Done -> ""
       | Backend.Shutdown -> ""
     in
     let awaiting_response = match response with
-      | Backend.Partial _ -> true
-      | Backend.Complete _ | Backend.Error _ | Backend.Shutdown -> false
+      (* Keep waiting for more output until we get a terminal response *)
+      | Backend.Stdout _ | Backend.Result _ | Backend.R_error _ -> true
+      (* Terminal responses *)
+      | Backend.Done | Backend.Shutdown | Backend.Internal_error _ -> false
     in
     { model with
       backend_response = None

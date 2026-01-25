@@ -7,9 +7,11 @@ let log message =
     (fun () -> Stdlib.Printf.fprintf oc "%s\n" message)
 
 type response_chunk =
-  | Partial of string
-  | Complete of string
-  | Error of string
+  | Stdout of string
+  | Result of string
+  | R_error of string
+  | Internal_error of string
+  | Done
   | Shutdown
 
 type completion = string
@@ -184,23 +186,25 @@ let await_response t =
         | "busy" -> t.saw_busy <- true; loop ()
         | "idle" when t.saw_busy ->
           t.saw_busy <- false;
-          Complete ""
+          Done
         | "idle" -> loop ()
-        | s -> failwith (Printf.sprintf "Unexpected response from backend: status %s" s)
+        | s -> Internal_error (Printf.sprintf "Unexpected status from backend: %s" s)
       )
     | "stream" ->
       (let to_print = content |> member "text" |> to_string in
       match (content |> member "name" |> to_string) with
-      | "stdout" -> Partial to_print
-      | "stderr" -> loop ()
-      | _ -> failwith "invalid response channel")
+      | "stdout" -> Stdout to_print
+      | "stderr" -> loop ()  (* skip ark's internal logging *)
+      | _ -> Internal_error "invalid response channel")
     | "execute_result" ->
-      Partial (content |> member "data" |> parse_response)
-    | "error" -> Error (pretty_print_error content)
+      Result (content |> member "data" |> parse_response)
+    | "error" -> R_error (pretty_print_error content)  (* NOT terminal - caller keeps calling *)
     | _ -> loop ()
   in
   try loop ()
-  with Stdlib.Exit -> Shutdown
+  with
+  | Stdlib.Exit -> Shutdown
+  | e -> Internal_error (Printf.sprintf "Backend exception: %s" (Exn.to_string e))
 
 
 let cancel t =

@@ -133,30 +133,68 @@ let test_submit_prompt_position () =
     Alcotest.(check int) "prompt_top_row" 7 new_model.prompt_top_row
   | _ -> Alcotest.fail "Expected Submit result"
 
-let test_process_response_complete () =
+let test_process_response_done () =
   let width = 10 in
   let model = { (initial_model width) with
-    backend_response = Some (Backend.Complete "hello");
+    backend_response = Some Backend.Done;
     awaiting_response = true;
   } in
 
   let new_model = Update.process_response model in
 
-  Alcotest.(check (option string)) "repl_output" (Some "hello") new_model.repl_output;
+  Alcotest.(check (option string)) "repl_output" (Some "") new_model.repl_output;
   Alcotest.(check bool) "awaiting_response" false new_model.awaiting_response;
   Alcotest.(check bool) "backend_response cleared" true (new_model.backend_response = None)
 
-let test_process_response_partial () =
+let test_process_response_stdout () =
   let width = 10 in
   let model = { (initial_model width) with
-    backend_response = Some (Backend.Partial "partial");
+    backend_response = Some (Backend.Stdout "hello\n");
     awaiting_response = true;
   } in
 
   let new_model = Update.process_response model in
 
-  Alcotest.(check (option string)) "repl_output" (Some "partial") new_model.repl_output;
+  Alcotest.(check (option string)) "repl_output" (Some "hello\n") new_model.repl_output;
   Alcotest.(check bool) "awaiting_response stays true" true new_model.awaiting_response
+
+let test_process_response_result () =
+  let width = 10 in
+  let model = { (initial_model width) with
+    backend_response = Some (Backend.Result "[1] 42");
+    awaiting_response = true;
+  } in
+
+  let new_model = Update.process_response model in
+
+  Alcotest.(check (option string)) "repl_output" (Some "[1] 42") new_model.repl_output;
+  Alcotest.(check bool) "awaiting_response stays true" true new_model.awaiting_response
+
+let test_process_response_r_error () =
+  let width = 10 in
+  let model = { (initial_model width) with
+    backend_response = Some (Backend.R_error "Error: object 'x' not found");
+    awaiting_response = true;
+  } in
+
+  let new_model = Update.process_response model in
+
+  Alcotest.(check (option string)) "repl_output" (Some "Error: object 'x' not found") new_model.repl_output;
+  (* KEY: R_error is NOT terminal - we keep awaiting_response=true until Done *)
+  Alcotest.(check bool) "awaiting_response stays true after R_error" true new_model.awaiting_response
+
+let test_process_response_internal_error () =
+  let width = 10 in
+  let model = { (initial_model width) with
+    backend_response = Some (Backend.Internal_error "kernel crashed");
+    awaiting_response = true;
+  } in
+
+  let new_model = Update.process_response model in
+
+  Alcotest.(check (option string)) "repl_output" (Some "Internal error: kernel crashed") new_model.repl_output;
+  (* Internal_error IS terminal *)
+  Alcotest.(check bool) "awaiting_response false after Internal_error" false new_model.awaiting_response
 
 let test_scroll_when_cursor_below_screen () =
   let width = 10 in
@@ -197,13 +235,36 @@ let test_submit_scrolls_when_at_bottom () =
 let test_process_response_clears_scroll () =
   let width = 10 in
   let model = { (initial_model width) with
-    backend_response = Some (Backend.Complete "hello");
+    backend_response = Some Backend.Done;
     scroll_amount = (-5);
   } in
 
   let new_model = Update.process_response model in
 
   Alcotest.(check int) "scroll_amount cleared" 0 new_model.scroll_amount
+
+(* This test documents the bug we're fixing:
+   After an R_error, the state machine should continue until Done.
+   Previously, Error was terminal which caused response desync. *)
+let test_r_error_followed_by_done () =
+  let width = 10 in
+
+  (* Simulate receiving R_error *)
+  let model = { (initial_model width) with
+    backend_response = Some (Backend.R_error "Error: oops");
+    awaiting_response = true;
+  } in
+  let model = Update.process_response model in
+
+  (* After R_error, we should STILL be awaiting (this is the fix) *)
+  Alcotest.(check bool) "still awaiting after R_error" true model.awaiting_response;
+
+  (* Then Done arrives *)
+  let model = { model with backend_response = Some Backend.Done } in
+  let model = Update.process_response model in
+
+  (* NOW we're done awaiting *)
+  Alcotest.(check bool) "not awaiting after Done" false model.awaiting_response
 
 (* wrap_line tests *)
 (* Note: wrap_line adds an empty string when a line exactly fills width,
@@ -482,8 +543,12 @@ let () =
       test_case "Multiline submit" `Quick test_submit_multiline;
     ];
     "process_response", [
-      test_case "Complete response" `Quick test_process_response_complete;
-      test_case "Partial response" `Quick test_process_response_partial;
+      test_case "Done response" `Quick test_process_response_done;
+      test_case "Stdout response" `Quick test_process_response_stdout;
+      test_case "Result response" `Quick test_process_response_result;
+      test_case "R_error response" `Quick test_process_response_r_error;
+      test_case "Internal_error response" `Quick test_process_response_internal_error;
+      test_case "R_error followed by Done" `Quick test_r_error_followed_by_done;
     ];
     "scrolling", [
       test_case "Scroll when cursor below screen" `Quick test_scroll_when_cursor_below_screen;
