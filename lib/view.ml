@@ -30,11 +30,12 @@ let view_ops model =
   List.iteri wrapped ~f:(fun i line ->
     if i >= skip_rows && i < skip_rows + model.term_height then begin
       add Clear_to_eol;
-      (match (i, model.awaiting_response) with
-        | 0, false -> add (Print prompt)
-        | 0, true -> add (Print pending_prompt)
-        | _ -> add (Print continued_prompt));
-      add (Print line);
+      let p = match i, model.awaiting_response with
+        | 0, false -> prompt
+        | 0, true -> pending_prompt
+        | _ -> continued_prompt
+      in
+      add (Print [(`Accent, p); (`Plain, line)]);
       if i < skip_rows + model.term_height - 1 && i < total_rows - 1 then add Newline
     end
   );

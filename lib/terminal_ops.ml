@@ -1,6 +1,8 @@
 open Base
 
-type term_output = string
+type style = [ `Raw | `Plain | `Accent | `Error ]
+type span = style * string
+type term_output = span list
 type direction = Left of int | Right of int | Up of int | Down of int
 
 type op =
@@ -23,10 +25,28 @@ module type CONFIG = sig
   val term_type : string
 end
 
+let style_to_ansi = function
+  | `Raw -> "\x1b[0m"       (* reset before pass-through content *)
+  | `Plain -> "\x1b[0m"     (* reset to default *)
+  | `Accent -> "\x1b[36m"   (* cyan *)
+  | `Error -> "\x1b[31m"    (* red *)
+
+let render_spans_to_buf buf spans =
+  List.iter spans ~f:(fun (style, text) ->
+    Buffer.add_string buf (style_to_ansi style);
+    Buffer.add_string buf text
+  );
+  Buffer.add_string buf "\x1b[0m"  (* reset after *)
+
+let render_spans spans =
+  let buf = Buffer.create 256 in
+  render_spans_to_buf buf spans;
+  Buffer.contents buf
+
 let render_op_ansi buf op =
   let csi = "\x1b[" in
   match op with
-  | Print s -> Buffer.add_string buf s
+  | Print spans -> render_spans_to_buf buf spans
   | Print_char c -> Buffer.add_char buf c
   | Newline -> Buffer.add_char buf '\n'
   | Cursor_to (row, col) -> Printf.bprintf buf "%s%d;%dH" csi row col

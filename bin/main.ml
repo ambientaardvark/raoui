@@ -66,12 +66,12 @@ let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
    progress bars with \r) - get_cursor_position won't reflect actual extent. *)
 let print_repl_output model =
   match model.repl_output with
-  | None | Some "" -> { model with repl_output = None }
-  | Some text ->
+  | None | Some [] -> { model with repl_output = None }
+  | Some spans ->
     let (row, col) = model.repl_cursor in
     print_string (cursor_to row col);
     print_string "\x1b[J";
-    print_string text;
+    print_string (Terminal_ops.render_spans spans);
     Out_channel.flush stdout;
     let (new_row, _) = get_cursor_position () in
     { model with

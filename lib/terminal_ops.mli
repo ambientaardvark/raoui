@@ -4,8 +4,14 @@ open Base
     Provides a typed interface for terminal control that can be rendered
     to different terminal types (ANSI, etc.) *)
 
-(** Will eventually be unicode string with color support *)
-type term_output = string
+(** Style for terminal output *)
+type style = [ `Raw | `Plain | `Accent | `Error ]
+
+(** A styled span of text *)
+type span = style * string
+
+(** Styled text - list of spans *)
+type term_output = span list
 
 type direction =
   | Left of int
@@ -34,3 +40,6 @@ module type CONFIG = sig
 end
 
 module Make (_ : CONFIG) : TERMINAL
+
+(** Render spans to ANSI string *)
+val render_spans : span list -> string

@@ -15,7 +15,7 @@ type model =
   ; persistent_col : int
   ; awaiting_response : bool
   ; backend_response : Backend.response_chunk option
-  ; repl_output : string option
+  ; repl_output : Terminal_ops.span list option
   ; repl_cursor : int * int
   ; scroll_amount : int
   }

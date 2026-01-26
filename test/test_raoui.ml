@@ -1,6 +1,11 @@
 open Raoui
 open Frontend_types
 
+(* Helper to extract text from spans for testing *)
+let spans_to_text = function
+  | None -> None
+  | Some spans -> Some (String.concat "" (List.map snd spans))
+
 let initial_model width = {
   lines = [""];
   cursor_row = 0;
@@ -142,7 +147,7 @@ let test_process_response_done () =
 
   let new_model = Update.process_response model in
 
-  Alcotest.(check (option string)) "repl_output" (Some "") new_model.repl_output;
+  Alcotest.(check (option string)) "repl_output" (Some "") (spans_to_text new_model.repl_output);
   Alcotest.(check bool) "awaiting_response" false new_model.awaiting_response;
   Alcotest.(check bool) "backend_response cleared" true (new_model.backend_response = None)
 
@@ -155,7 +160,7 @@ let test_process_response_stdout () =
 
   let new_model = Update.process_response model in
 
-  Alcotest.(check (option string)) "repl_output" (Some "hello\n") new_model.repl_output;
+  Alcotest.(check (option string)) "repl_output" (Some "hello\n") (spans_to_text new_model.repl_output);
   Alcotest.(check bool) "awaiting_response stays true" true new_model.awaiting_response
 
 let test_process_response_result () =
@@ -167,7 +172,7 @@ let test_process_response_result () =
 
   let new_model = Update.process_response model in
 
-  Alcotest.(check (option string)) "repl_output" (Some "[1] 42") new_model.repl_output;
+  Alcotest.(check (option string)) "repl_output" (Some "[1] 42") (spans_to_text new_model.repl_output);
   Alcotest.(check bool) "awaiting_response stays true" true new_model.awaiting_response
 
 let test_process_response_r_error () =
@@ -179,7 +184,7 @@ let test_process_response_r_error () =
 
   let new_model = Update.process_response model in
 
-  Alcotest.(check (option string)) "repl_output" (Some "Error: object 'x' not found") new_model.repl_output;
+  Alcotest.(check (option string)) "repl_output" (Some "Error: object 'x' not found") (spans_to_text new_model.repl_output);
   (* KEY: R_error is NOT terminal - we keep awaiting_response=true until Done *)
   Alcotest.(check bool) "awaiting_response stays true after R_error" true new_model.awaiting_response
 
@@ -192,7 +197,7 @@ let test_process_response_internal_error () =
 
   let new_model = Update.process_response model in
 
-  Alcotest.(check (option string)) "repl_output" (Some "Internal error: kernel crashed") new_model.repl_output;
+  Alcotest.(check (option string)) "repl_output" (Some "Internal error: kernel crashed") (spans_to_text new_model.repl_output);
   (* Internal_error IS terminal *)
   Alcotest.(check bool) "awaiting_response false after Internal_error" false new_model.awaiting_response
 
