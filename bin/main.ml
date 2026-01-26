@@ -5,25 +5,26 @@ open Frontend_types
 
 let set_raw_mode () =
   let termio = Unix.tcgetattr Unix.stdin in
-  let raw_termio = { termio with
-    Unix.c_icanon = false;
-    Unix.c_echo = false;
-    Unix.c_isig = false;
-    Unix.c_vmin = 1;
-    Unix.c_vtime = 0;
-  } in
+  let raw_termio =
+    {
+      termio with
+      Unix.c_icanon = false;
+      Unix.c_echo = false;
+      Unix.c_isig = false;
+      Unix.c_vmin = 1;
+      Unix.c_vtime = 0;
+    }
+  in
   Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH raw_termio;
   termio
 
-let restore_mode termio =
-  Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH termio
+let restore_mode termio = Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH termio
 
 let set_solid_cursor () =
   print_string "\x1b[2 q";
   Out_channel.flush stdout
 
-let clear_log () =
-  Out_channel.write_all "debug_log.txt" ~data:""
+let clear_log () = Out_channel.write_all "debug_log.txt" ~data:""
 
 let get_cursor_position () =
   print_string "\x1b[6n";
@@ -32,7 +33,9 @@ let get_cursor_position () =
   let rec read_until_r () =
     let c = In_channel.(input_char stdin) |> Option.value_exn in
     if Char.(c = 'R') then ()
-    else (Buffer.add_char buf c; read_until_r ())
+    else (
+      Buffer.add_char buf c;
+      read_until_r ())
   in
   read_until_r ();
   let response = Buffer.contents buf in
@@ -50,13 +53,27 @@ let get_term_dimensions () =
   (width, height)
 
 let make_init () : Frontend_types.model =
-  let (row, _col) = get_cursor_position () in
-  let (term_width, term_height) = get_term_dimensions () in
-  { lines = [""]; cursor_row = 0; cursor_col = 0;
-    prompt_top_row = row; term_width; term_height; prompt_box_height = 1;
-    previous_prompt_top_row = row; previous_key = None; persistent_col = 0;
-    awaiting_response = false; backend_response = None; repl_output = None;
-    repl_cursor = (row, 1); scroll_amount = 0 }
+  let row, _col = get_cursor_position () in
+  let term_width, term_height = get_term_dimensions () in
+  {
+    lines = [ "" ];
+    cursor_row = 0;
+    cursor_col = 0;
+    prompt_top_row = row;
+    term_width;
+    term_height;
+    prompt_box_height = 1;
+    previous_prompt_top_row = row;
+    previous_key = None;
+    persistent_col = 0;
+    awaiting_response = false;
+    backend_response = None;
+    repl_output = None;
+    repl_cursor = (row, 1);
+    scroll_amount = 0;
+    prompt_history = [];
+    place_in_history = 0;
+  }
 
 let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
 
@@ -68,41 +85,39 @@ let print_repl_output model =
   match model.repl_output with
   | None | Some [] -> { model with repl_output = None }
   | Some spans ->
-    let (row, col) = model.repl_cursor in
-    print_string (cursor_to row col);
-    print_string "\x1b[J";
-    print_string (Terminal_ops.render_spans spans);
-    Out_channel.flush stdout;
-    let (new_row, _) = get_cursor_position () in
-    { model with
-      repl_output = None;
-      repl_cursor = (new_row, 1);
-      prompt_top_row = max model.prompt_top_row (new_row + 1);
-    }
+      let row, col = model.repl_cursor in
+      print_string (cursor_to row col);
+      print_string "\x1b[J";
+      print_string (Terminal_ops.render_spans spans);
+      Out_channel.flush stdout;
+      let new_row, _ = get_cursor_position () in
+      {
+        model with
+        repl_output = None;
+        repl_cursor = (new_row, 1);
+        prompt_top_row = max model.prompt_top_row (new_row + 1);
+      }
 
-type msg =
-  | Key of Tty_listener.key
-  | Response of Backend.response_chunk
+type msg = Key of Tty_listener.key | Response of Backend.response_chunk
 
 let handle_key backend ~term_width model key =
   match Update.update key ~term_width model with
   | Frontend_types.Exit -> `Exit
   | Frontend_types.Cancel ->
-    Backend.cancel backend;
-    Out_channel.flush stdout;
-    `Continue (make_init ())
-  | Frontend_types.Submit (text, _) when String.equal (String.strip text) "q()" ->
-    `Exit
+      Backend.cancel backend;
+      Out_channel.flush stdout;
+      `Continue (make_init ())
+  | Frontend_types.Submit (text, _) when String.equal (String.strip text) "q()"
+    ->
+      `Exit
   | Frontend_types.Submit (text, new_model) ->
-    Backend.submit backend text;
-    `Continue new_model
-  | Frontend_types.Continue new_model ->
-    `Continue new_model
+      Backend.submit backend text;
+      `Continue new_model
+  | Frontend_types.Continue new_model -> `Continue new_model
 
 let handle_response model response =
   { model with backend_response = Some response }
-  |> Update.process_response
-  |> print_repl_output
+  |> Update.process_response |> print_repl_output
   |> Update.handle_vertical_cursor_movement
 
 let run env backend =
@@ -111,36 +126,35 @@ let run env backend =
   let rec loop model =
     print_string (View.view model);
     Out_channel.flush stdout;
-    let (term_width, _) = get_term_dimensions () in
+    let term_width, _ = get_term_dimensions () in
     let msg =
       if model.awaiting_response then
-        Eio.Fiber.any [
-          (fun () -> Key (Tty_listener.await_input ~clock ~stdin));
-          (fun () -> Response (Backend.await_response backend));
-        ]
-      else
-        Key (Tty_listener.await_input ~clock ~stdin)
+        Eio.Fiber.any
+          [
+            (fun () -> Key (Tty_listener.await_input ~clock ~stdin));
+            (fun () -> Response (Backend.await_response backend));
+          ]
+      else Key (Tty_listener.await_input ~clock ~stdin)
     in
     match msg with
-    | Key key ->
-      (match handle_key backend ~term_width model key with
-       | `Exit -> ()
-       | `Continue new_model -> loop new_model)
+    | Key key -> (
+        match handle_key backend ~term_width model key with
+        | `Exit -> ()
+        | `Continue new_model -> loop new_model)
     | Response Backend.Shutdown -> ()
-    | Response r ->
-      loop (handle_response model r)
+    | Response r -> loop (handle_response model r)
   in
   loop (make_init ())
 
 let () =
   clear_log ();
   Eio_main.run @@ fun env ->
-    let backend = Backend.create () in
-    let orig = set_raw_mode () in
-    set_solid_cursor ();
-    Stdlib.Fun.protect
-      (fun () -> run env backend)
-      ~finally:(fun () ->
-        print_endline "";
-        restore_mode orig;
-        Backend.deinit backend)
+  let backend = Backend.create () in
+  let orig = set_raw_mode () in
+  set_solid_cursor ();
+  Stdlib.Fun.protect
+    (fun () -> run env backend)
+    ~finally:(fun () ->
+      print_endline "";
+      restore_mode orig;
+      Backend.deinit backend)
