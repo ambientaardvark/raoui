@@ -578,6 +578,61 @@ let test_submit_multiline () =
       Alcotest.(check int) "lines count" 1 (List.length new_model.lines)
   | _ -> Alcotest.fail "Expected Submit result"
 
+let test_paste_simple () =
+  let width = 40 in
+  let model = initial_model width in
+  match Update.update (Tty_listener.Paste "hello") ~term_width:width model with
+  | Continue new_model ->
+      Alcotest.(check (list string)) "lines" [ "hello" ] new_model.lines;
+      Alcotest.(check int) "cursor col" 5 new_model.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_paste_multiline () =
+  let width = 40 in
+  let model = initial_model width in
+  match
+    Update.update (Tty_listener.Paste "line1\nline2\nline3") ~term_width:width
+      model
+  with
+  | Continue new_model ->
+      Alcotest.(check (list string))
+        "lines" [ "line1"; "line2"; "line3" ] new_model.lines;
+      Alcotest.(check int) "cursor row" 2 new_model.cursor_row;
+      Alcotest.(check int) "cursor col" 5 new_model.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_paste_at_cursor () =
+  let width = 40 in
+  let model = { (initial_model width) with lines = [ "helloworld" ]; cursor_col = 5 } in
+  match Update.update (Tty_listener.Paste "XXX") ~term_width:width model with
+  | Continue new_model ->
+      Alcotest.(check (list string)) "lines" [ "helloXXXworld" ] new_model.lines;
+      Alcotest.(check int) "cursor col" 8 new_model.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_paste_multiline_at_cursor () =
+  let width = 40 in
+  let model = { (initial_model width) with lines = [ "helloworld" ]; cursor_col = 5 } in
+  match
+    Update.update (Tty_listener.Paste "A\nB\nC") ~term_width:width model
+  with
+  | Continue new_model ->
+      Alcotest.(check (list string))
+        "lines" [ "helloA"; "B"; "Cworld" ] new_model.lines;
+      Alcotest.(check int) "cursor row" 2 new_model.cursor_row;
+      Alcotest.(check int) "cursor col" 1 new_model.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_paste_truncates_large () =
+  let width = 40 in
+  let model = initial_model width in
+  let large_text = String.make 10000 'x' in
+  match Update.update (Tty_listener.Paste large_text) ~term_width:width model with
+  | Continue new_model ->
+      let total_len = List.fold_left ( + ) 0 (List.map String.length new_model.lines) in
+      Alcotest.(check bool) "truncated to 5kb" true (total_len <= 5 * 1024)
+  | _ -> Alcotest.fail "Expected Continue"
+
 let () =
   let open Alcotest in
   run "Raoui"
@@ -665,5 +720,13 @@ let () =
             test_submit_scrolls_when_at_bottom;
           test_case "Process response clears scroll" `Quick
             test_process_response_clears_scroll;
+        ] );
+      ( "paste",
+        [
+          test_case "Simple paste" `Quick test_paste_simple;
+          test_case "Multiline paste" `Quick test_paste_multiline;
+          test_case "Paste at cursor" `Quick test_paste_at_cursor;
+          test_case "Multiline paste at cursor" `Quick test_paste_multiline_at_cursor;
+          test_case "Large paste truncated" `Quick test_paste_truncates_large;
         ] );
     ]

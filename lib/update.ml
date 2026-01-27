@@ -69,6 +69,45 @@ let insert_newline model =
   in
   { model with lines = new_lines; cursor_row = new_row; cursor_col = new_col }
 
+let insert_paste model text =
+  let max_len = 5 * 1024 in
+  let text =
+    if String.length text > max_len then String.sub text 0 max_len else text
+  in
+  let width = effective_width model in
+  let line_idx, col =
+    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
+  in
+  let line = get_line model.lines line_idx in
+  let before = String.sub line 0 col in
+  let after = String.sub line col (String.length line - col) in
+  let paste_lines = String.split_on_char '\n' text in
+  let inserted, final_col =
+    match paste_lines with
+    | [] -> ([ before ^ after ], col)
+    | [ single ] -> ([ before ^ single ^ after ], col + String.length single)
+    | first :: rest ->
+        let rec split_last = function
+          | [] -> ([], "")
+          | [ x ] -> ([], x)
+          | x :: xs ->
+              let middle, last = split_last xs in
+              (x :: middle, last)
+        in
+        let middle, last = split_last rest in
+        ((before ^ first) :: middle @ [ last ^ after ], String.length last)
+  in
+  let new_lines =
+    List.concat_map
+      (fun (i, l) -> if i = line_idx then inserted else [ l ])
+      (List.mapi (fun i l -> (i, l)) model.lines)
+  in
+  let final_line_idx = line_idx + List.length paste_lines - 1 in
+  let new_row, new_col =
+    internal_to_terminal width new_lines (final_line_idx, final_col)
+  in
+  { model with lines = new_lines; cursor_row = new_row; cursor_col = new_col }
+
 let move_left model =
   let width = effective_width model in
   let wrapped_lines = wrap_lines width model.lines in
@@ -309,6 +348,7 @@ let apply_key key model =
       if at_bottom || Option.is_some model.flipping_through_history then
         Continue (shift_history model ~amount:(-1))
       else Continue (move_down model)
+  | Paste text -> Continue (insert_paste model text)
   | _ -> Continue model
 
 let universal_corrections key model =

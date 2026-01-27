@@ -40,26 +40,31 @@ let read_until_tilde stdin =
 
 let read_bracketed_paste stdin =
   let buf = Buffer.create 256 in
+  let add_chars chars = List.iter (Buffer.add_char buf) chars in
   let rec loop () =
     match read_byte stdin with
     | None -> Buffer.contents buf
-    | Some '\x1b' -> (
-        (* Check for end sequence \x1b[201~ *)
-        match
-          ( read_byte stdin,
-            read_byte stdin,
-            read_byte stdin,
-            read_byte stdin,
-            read_byte stdin )
-        with
-        | Some '[', Some '2', Some '0', Some '1', Some '~' ->
-            Buffer.contents buf
-        | _ ->
-            Buffer.add_char buf '\x1b';
-            loop ())
+    | Some '\x1b' -> check_end [ '\x1b' ]
     | Some c ->
         Buffer.add_char buf c;
         loop ()
+  and check_end acc =
+    let expected = [ '\x1b'; '['; '2'; '0'; '1'; '~' ] in
+    if acc = expected then Buffer.contents buf
+    else if List.length acc >= 6 then (
+      add_chars acc;
+      loop ())
+    else
+      match read_byte stdin with
+      | None ->
+          add_chars acc;
+          Buffer.contents buf
+      | Some c ->
+          let next = acc @ [c] in
+          if List.nth expected (List.length acc) = c then check_end next
+          else (
+            add_chars next;
+            loop ())
   in
   loop ()
 

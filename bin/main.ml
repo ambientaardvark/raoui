@@ -26,7 +26,19 @@ let set_solid_cursor () =
 
 let clear_log () = Out_channel.write_all "debug_log.txt" ~data:""
 
+let drain_stdin () =
+  let buf = Bytes.create 256 in
+  let rec loop () =
+    let ready, _, _ = Unix.select [ Unix.stdin ] [] [] 0.0 in
+    if List.is_empty ready then ()
+    else
+      let _ = Unix.read Unix.stdin buf 0 256 in
+      loop ()
+  in
+  loop ()
+
 let get_cursor_position () =
+  drain_stdin ();
   print_string "\x1b[6n";
   Out_channel.flush stdout;
   let buf = Buffer.create 16 in
