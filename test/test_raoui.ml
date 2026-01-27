@@ -29,11 +29,11 @@ let initial_model width =
     flipping_through_history = None;
   }
 
-let insert_many model width n =
+let insert_many model n =
   let rec loop s n =
     if n = 0 then s
     else
-      let res = Update.update (Tty_listener.Char 'a') ~term_width:width s in
+      let res = Update.update (Tty_listener.Char 'a') s in
       match res with Continue s' -> loop s' (n - 1) | _ -> s
   in
   loop model n
@@ -44,13 +44,13 @@ let test_wrap_crash () =
   let model = initial_model width in
 
   (* Insert 17 chars. *)
-  let model = insert_many model width 17 in
+  let model = insert_many model 17 in
 
   Alcotest.(check int) "cursor row after insertion" 2 model.cursor_row;
   Alcotest.(check int) "cursor col after insertion" 1 model.cursor_col;
 
   (* Now try to move cursor. *)
-  let res_left = Update.update Tty_listener.Left ~term_width:width model in
+  let res_left = Update.update Tty_listener.Left model in
   match res_left with
   | Continue _ -> Alcotest.(check bool) "move left success" true true
   | _ -> Alcotest.fail "Failed to move left"
@@ -59,7 +59,7 @@ let test_exact_width_wrap () =
   let width = 10 in
   (* effective 8 *)
   let model = initial_model width in
-  let model = insert_many model width 8 in
+  let model = insert_many model 8 in
 
   let wrapped = wrap_lines (effective_width model) model.lines in
   let total_rows = List.length wrapped in
@@ -73,7 +73,7 @@ let test_resize_crash () =
   let model = initial_model width in
   (* prompt "> ", effective width 8 *)
   (* Insert 9 chars 'a'. "aaaaaaaaa" *)
-  let model = insert_many model width 9 in
+  let model = insert_many model 9 in
 
   (* Check assumption: wrapped to 2 lines. Cursor at row 1, col 1. *)
   Alcotest.(check int) "cursor row before resize" 1 model.cursor_row;
@@ -85,7 +85,8 @@ let test_resize_crash () =
   (* Specifically when inserting a char or doing an action that uses the old cursor position *)
   try
     let res =
-      Update.update (Tty_listener.Char 'b') ~term_width:new_width model
+      Update.update (Tty_listener.Char 'b')
+        { model with term_width = new_width }
     in
     match res with
     | Continue _ -> Alcotest.(check bool) "Resize and insert success" true true
@@ -98,7 +99,7 @@ let test_resize_narrower_crash () =
   let model = initial_model width in
   (* prompt "> ", effective width 18 *)
   (* Insert 15 chars 'a'. No wrap yet. *)
-  let model = insert_many model width 15 in
+  let model = insert_many model 15 in
 
   Alcotest.(check int) "cursor row before narrowing" 0 model.cursor_row;
 
@@ -107,7 +108,8 @@ let test_resize_narrower_crash () =
 
   try
     let res =
-      Update.update (Tty_listener.Char 'b') ~term_width:new_width model
+      Update.update (Tty_listener.Char 'b')
+        { model with term_width = new_width }
     in
     match res with
     | Continue _ ->
@@ -119,7 +121,7 @@ let test_resize_narrower_crash () =
 let test_submit_basic () =
   let width = 10 in
   let model = initial_model width in
-  let model = insert_many model width 5 in
+  let model = insert_many model 5 in
 
   Alcotest.(check string) "lines before submit" "aaaaa" (List.hd model.lines);
 
@@ -135,7 +137,7 @@ let test_submit_basic () =
 let test_submit_prompt_position () =
   let width = 10 in
   let model = { (initial_model width) with prompt_top_row = 5 } in
-  let model = insert_many model width 5 in
+  let model = insert_many model 5 in
 
   (* Single line of 5 chars, so 1 row *)
   match Update.submit model with
@@ -251,7 +253,7 @@ let test_scroll_when_cursor_below_screen () =
   in
 
   (* Send any key to trigger universal_corrections *)
-  match Update.update (Tty_listener.Char 'a') ~term_width:width model with
+  match Update.update (Tty_listener.Char 'a') model with
   | Continue new_model ->
       (* scroll_amount should be negative (scroll up) to bring cursor into view *)
       (* cursor is at row 15, need to scroll up by 5 to get to row 10 *)
@@ -265,7 +267,7 @@ let test_submit_scrolls_when_at_bottom () =
   let model =
     { (initial_model width) with prompt_top_row = 10; term_height = 10 }
   in
-  let model = insert_many model width 3 in
+  let model = insert_many model 3 in
 
   match Update.submit model with
   | Submit (_, new_model) ->
@@ -438,7 +440,7 @@ let test_typing_while_awaiting () =
   let width = 10 in
   let model = { (initial_model width) with awaiting_response = true } in
 
-  match Update.update (Tty_listener.Char 'a') ~term_width:width model with
+  match Update.update (Tty_listener.Char 'a') model with
   | Continue new_model ->
       Alcotest.(check string) "char inserted" "a" (List.hd new_model.lines)
   | _ -> Alcotest.fail "Expected Continue with char inserted"
@@ -449,7 +451,7 @@ let test_submit_blocked_while_awaiting () =
     { (initial_model width) with awaiting_response = true; lines = [ "test" ] }
   in
 
-  match Update.update (Tty_listener.Ctrl 'p') ~term_width:width model with
+  match Update.update (Tty_listener.Ctrl 'p') model with
   | Continue new_model ->
       (* Submit should be blocked, model unchanged *)
       Alcotest.(check string) "lines unchanged" "test" (List.hd new_model.lines);
@@ -461,7 +463,7 @@ let test_cancel_while_awaiting () =
   let width = 10 in
   let model = { (initial_model width) with awaiting_response = true } in
 
-  match Update.update (Tty_listener.Ctrl 'c') ~term_width:width model with
+  match Update.update (Tty_listener.Ctrl 'c') model with
   | Cancel -> Alcotest.(check bool) "cancel works" true true
   | _ -> Alcotest.fail "Expected Cancel"
 
@@ -476,7 +478,7 @@ let test_backspace_while_awaiting () =
     }
   in
 
-  match Update.update Tty_listener.Backspace ~term_width:width model with
+  match Update.update Tty_listener.Backspace model with
   | Continue new_model ->
       Alcotest.(check string) "backspace works" "a" (List.hd new_model.lines)
   | _ -> Alcotest.fail "Expected Continue"
@@ -486,7 +488,7 @@ let test_left_at_start () =
   let width = 10 in
   let model = initial_model width in
 
-  match Update.update Tty_listener.Left ~term_width:width model with
+  match Update.update Tty_listener.Left model with
   | Continue new_model ->
       Alcotest.(check int) "col stays 0" 0 new_model.cursor_col;
       Alcotest.(check int) "row stays 0" 0 new_model.cursor_row
@@ -496,7 +498,7 @@ let test_right_at_end () =
   let width = 10 in
   let model = { (initial_model width) with lines = [ "ab" ]; cursor_col = 2 } in
 
-  match Update.update Tty_listener.Right ~term_width:width model with
+  match Update.update Tty_listener.Right model with
   | Continue new_model ->
       Alcotest.(check int) "col stays at end" 2 new_model.cursor_col
   | _ -> Alcotest.fail "Expected Continue"
@@ -505,7 +507,7 @@ let test_backspace_at_start () =
   let width = 10 in
   let model = initial_model width in
 
-  match Update.update Tty_listener.Backspace ~term_width:width model with
+  match Update.update Tty_listener.Backspace model with
   | Continue new_model ->
       Alcotest.(check string)
         "empty line unchanged" "" (List.hd new_model.lines)
@@ -522,7 +524,7 @@ let test_backspace_merges_lines () =
     }
   in
 
-  match Update.update Tty_listener.Backspace ~term_width:width model with
+  match Update.update Tty_listener.Backspace model with
   | Continue new_model ->
       Alcotest.(check int) "lines merged" 1 (List.length new_model.lines);
       Alcotest.(check string)
@@ -535,7 +537,7 @@ let test_newline_splits_line () =
     { (initial_model width) with lines = [ "helloworld" ]; cursor_col = 5 }
   in
 
-  match Update.update (Tty_listener.Ctrl 'l') ~term_width:width model with
+  match Update.update (Tty_listener.Ctrl 'l') model with
   | Continue new_model ->
       Alcotest.(check int) "two lines" 2 (List.length new_model.lines);
       Alcotest.(check string) "first part" "hello" (List.nth new_model.lines 0);
@@ -546,7 +548,7 @@ let test_ctrl_d_exit_on_empty () =
   let width = 10 in
   let model = initial_model width in
 
-  match Update.update (Tty_listener.Ctrl 'd') ~term_width:width model with
+  match Update.update (Tty_listener.Ctrl 'd') model with
   | Exit -> Alcotest.(check bool) "exits on empty" true true
   | _ -> Alcotest.fail "Expected Exit"
 
@@ -554,7 +556,7 @@ let test_ctrl_d_deletes_char () =
   let width = 10 in
   let model = { (initial_model width) with lines = [ "ab" ]; cursor_col = 0 } in
 
-  match Update.update (Tty_listener.Ctrl 'd') ~term_width:width model with
+  match Update.update (Tty_listener.Ctrl 'd') model with
   | Continue new_model ->
       Alcotest.(check string) "char deleted" "b" (List.hd new_model.lines)
   | _ -> Alcotest.fail "Expected Continue"
@@ -581,7 +583,7 @@ let test_submit_multiline () =
 let test_paste_simple () =
   let width = 40 in
   let model = initial_model width in
-  match Update.update (Tty_listener.Paste "hello") ~term_width:width model with
+  match Update.update (Tty_listener.Paste "hello") model with
   | Continue new_model ->
       Alcotest.(check (list string)) "lines" [ "hello" ] new_model.lines;
       Alcotest.(check int) "cursor col" 5 new_model.cursor_col
@@ -590,21 +592,22 @@ let test_paste_simple () =
 let test_paste_multiline () =
   let width = 40 in
   let model = initial_model width in
-  match
-    Update.update (Tty_listener.Paste "line1\nline2\nline3") ~term_width:width
-      model
-  with
+  match Update.update (Tty_listener.Paste "line1\nline2\nline3") model with
   | Continue new_model ->
       Alcotest.(check (list string))
-        "lines" [ "line1"; "line2"; "line3" ] new_model.lines;
+        "lines"
+        [ "line1"; "line2"; "line3" ]
+        new_model.lines;
       Alcotest.(check int) "cursor row" 2 new_model.cursor_row;
       Alcotest.(check int) "cursor col" 5 new_model.cursor_col
   | _ -> Alcotest.fail "Expected Continue"
 
 let test_paste_at_cursor () =
   let width = 40 in
-  let model = { (initial_model width) with lines = [ "helloworld" ]; cursor_col = 5 } in
-  match Update.update (Tty_listener.Paste "XXX") ~term_width:width model with
+  let model =
+    { (initial_model width) with lines = [ "helloworld" ]; cursor_col = 5 }
+  in
+  match Update.update (Tty_listener.Paste "XXX") model with
   | Continue new_model ->
       Alcotest.(check (list string)) "lines" [ "helloXXXworld" ] new_model.lines;
       Alcotest.(check int) "cursor col" 8 new_model.cursor_col
@@ -612,13 +615,15 @@ let test_paste_at_cursor () =
 
 let test_paste_multiline_at_cursor () =
   let width = 40 in
-  let model = { (initial_model width) with lines = [ "helloworld" ]; cursor_col = 5 } in
-  match
-    Update.update (Tty_listener.Paste "A\nB\nC") ~term_width:width model
-  with
+  let model =
+    { (initial_model width) with lines = [ "helloworld" ]; cursor_col = 5 }
+  in
+  match Update.update (Tty_listener.Paste "A\nB\nC") model with
   | Continue new_model ->
       Alcotest.(check (list string))
-        "lines" [ "helloA"; "B"; "Cworld" ] new_model.lines;
+        "lines"
+        [ "helloA"; "B"; "Cworld" ]
+        new_model.lines;
       Alcotest.(check int) "cursor row" 2 new_model.cursor_row;
       Alcotest.(check int) "cursor col" 1 new_model.cursor_col
   | _ -> Alcotest.fail "Expected Continue"
@@ -627,9 +632,11 @@ let test_paste_truncates_large () =
   let width = 40 in
   let model = initial_model width in
   let large_text = String.make 10000 'x' in
-  match Update.update (Tty_listener.Paste large_text) ~term_width:width model with
+  match Update.update (Tty_listener.Paste large_text) model with
   | Continue new_model ->
-      let total_len = List.fold_left ( + ) 0 (List.map String.length new_model.lines) in
+      let total_len =
+        List.fold_left ( + ) 0 (List.map String.length new_model.lines)
+      in
       Alcotest.(check bool) "truncated to 5kb" true (total_len <= 5 * 1024)
   | _ -> Alcotest.fail "Expected Continue"
 
@@ -726,7 +733,8 @@ let () =
           test_case "Simple paste" `Quick test_paste_simple;
           test_case "Multiline paste" `Quick test_paste_multiline;
           test_case "Paste at cursor" `Quick test_paste_at_cursor;
-          test_case "Multiline paste at cursor" `Quick test_paste_multiline_at_cursor;
+          test_case "Multiline paste at cursor" `Quick
+            test_paste_multiline_at_cursor;
           test_case "Large paste truncated" `Quick test_paste_truncates_large;
         ] );
     ]

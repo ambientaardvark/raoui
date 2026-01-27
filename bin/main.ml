@@ -112,10 +112,13 @@ let print_repl_output model =
         prompt_top_row = max model.prompt_top_row (new_row + 1);
       }
 
-type msg = Key of Tty_listener.key | Response of Backend.response_chunk
+type msg =
+  | Key of Tty_listener.key
+  | Response of Backend.response_chunk
+  | Term_size of (int * int)
 
-let handle_key backend ~term_width model key =
-  match Update.update key ~term_width model with
+let handle_key backend model key =
+  match Update.update key model with
   | Frontend_types.Exit -> `Exit
   | Frontend_types.Cancel ->
       Backend.cancel backend;
@@ -140,23 +143,24 @@ let run env backend =
   let rec loop model =
     print_string (View.view model);
     Out_channel.flush stdout;
-    let term_width, _ = get_term_dimensions () in
     let msg =
       if model.awaiting_response then
         Eio.Fiber.any
           [
             (fun () -> Key (Tty_listener.await_input ~clock ~stdin));
             (fun () -> Response (Backend.await_response backend));
+            (fun () -> Term_size (get_term_dimensions ()));
           ]
       else Key (Tty_listener.await_input ~clock ~stdin)
     in
     match msg with
     | Key key -> (
-        match handle_key backend ~term_width model key with
+        match handle_key backend model key with
         | `Exit -> ()
         | `Continue new_model -> loop new_model)
     | Response Backend.Shutdown -> ()
     | Response r -> loop (handle_response model r)
+    | Term_size (term_width, _) -> loop { model with term_width }
   in
   loop (make_init ())
 

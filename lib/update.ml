@@ -95,7 +95,7 @@ let insert_paste model text =
               (x :: middle, last)
         in
         let middle, last = split_last rest in
-        ((before ^ first) :: middle @ [ last ^ after ], String.length last)
+        (((before ^ first) :: middle) @ [ last ^ after ], String.length last)
   in
   let new_lines =
     List.concat_map
@@ -197,7 +197,8 @@ let shift_history model ~amount =
     else Option.get model.original_prompt
   in
   let update_to lines place =
-    { model with
+    {
+      model with
       lines;
       place_in_history = place;
       flipping_through_history = Some 2;
@@ -360,8 +361,10 @@ let universal_corrections key model =
   in
   { s with previous_key = Some key; flipping_through_history }
 
-let update key ~term_width model =
-  { model with scroll_amount = 0 } |> handle_resize term_width |> apply_key key
+let update key model =
+  { model with scroll_amount = 0 }
+  |> handle_resize model.term_width
+  |> apply_key key
   |> function
   | Continue s -> Continue (universal_corrections key s)
   | other -> other
