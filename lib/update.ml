@@ -142,24 +142,38 @@ let move_down model =
     }
   else model
 
-let rewind_history model =
-  match List.nth_opt model.prompt_history model.place_in_history with
-  | None -> model
-  | Some new_prompt_text ->
-      let new_row, new_col =
-        let width = effective_width model in
-        let wrapped = wrap_lines width new_prompt_text in
-        let last_row = List.length wrapped - 1 in
-        let last_col = String.length (List.nth wrapped last_row) in
-        internal_to_terminal width new_prompt_text (last_row, last_col)
-      in
-      {
-        model with
-        lines = new_prompt_text;
-        place_in_history = model.place_in_history + 1;
-        cursor_row = new_row;
-        cursor_col = new_col;
-      }
+let move_cursor_to_end model =
+  let new_row, new_col =
+    let width = effective_width model in
+    let wrapped = wrap_lines width model.lines in
+    let last_row = List.length wrapped - 1 in
+    let last_col = String.length (List.nth wrapped last_row) in
+    internal_to_terminal width model.lines (last_row, last_col)
+  in
+  { model with cursor_row = new_row; cursor_col = new_col }
+
+let shift_history model ~amount =
+  let original_prompt =
+    if model.place_in_history = 0 then model.lines
+    else Option.get model.original_prompt
+  in
+  let update_to lines place =
+    { model with
+      lines;
+      place_in_history = place;
+      flipping_through_history = Some 2;
+      original_prompt = Some original_prompt;
+    }
+    |> move_cursor_to_end
+  in
+  let destination = model.place_in_history + amount in
+  match destination with
+  | d when d < 0 && model.place_in_history = 0 -> model
+  | d when d < 0 -> update_to original_prompt 0
+  | d -> (
+      match List.nth_opt (original_prompt :: model.prompt_history) d with
+      | None -> model
+      | Some new_prompt_text -> update_to new_prompt_text d)
 
 let delete_before_cursor model =
   let width = effective_width model in
@@ -206,6 +220,7 @@ let submit model =
       cursor_col = 0;
       prompt_box_height = 1;
       prompt_history = model.lines :: model.prompt_history;
+      original_prompt = None;
       place_in_history = 0;
       scroll_amount;
     }
@@ -274,25 +289,36 @@ let apply_key key model =
   | Left -> Continue (move_left model)
   | Right -> Continue (move_right model)
   | Up ->
+      let width = effective_width model in
       let row, _col =
-        terminal_to_internal model.term_width model.lines
+        terminal_to_internal width model.lines
           (model.cursor_row, model.cursor_col)
       in
       let at_top = row = 0 in
-      let after_move_right = move_right model in
-      let at_end_of_prompt =
-        after_move_right.cursor_col = model.cursor_col
-        && after_move_right.cursor_row = model.cursor_row
-      in
-      let rewind_chain = model.previous_key = Some Up && at_end_of_prompt in
-      if at_top || rewind_chain then Continue (rewind_history model)
+      if at_top || Option.is_some model.flipping_through_history then
+        Continue (shift_history model ~amount:1)
       else Continue (move_up model)
-  | Down -> Continue (move_down model)
+  | Down ->
+      let width = effective_width model in
+      let wrapped = wrap_lines width model.lines in
+      let row, _col =
+        terminal_to_internal width model.lines
+          (model.cursor_row, model.cursor_col)
+      in
+      let at_bottom = row = List.length wrapped - 1 in
+      if at_bottom || Option.is_some model.flipping_through_history then
+        Continue (shift_history model ~amount:(-1))
+      else Continue (move_down model)
   | _ -> Continue model
 
 let universal_corrections key model =
   model |> handle_vertical_cursor_movement |> fun s ->
-  { s with previous_key = Some key }
+  let flipping_through_history =
+    match model.flipping_through_history with
+    | Some 1 | None -> None
+    | Some n -> Some (n - 1)
+  in
+  { s with previous_key = Some key; flipping_through_history }
 
 let update key ~term_width model =
   { model with scroll_amount = 0 } |> handle_resize term_width |> apply_key key

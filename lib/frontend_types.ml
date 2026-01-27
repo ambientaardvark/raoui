@@ -19,7 +19,9 @@ type model = {
   repl_cursor : int * int;
   scroll_amount : int;
   prompt_history : string list list;
+  original_prompt : string list option;
   place_in_history : int;
+  flipping_through_history : int option;
 }
 
 type update_result =

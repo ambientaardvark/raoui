@@ -24,7 +24,9 @@ let initial_model width =
     repl_cursor = (0, 1);
     scroll_amount = 0;
     prompt_history = [];
+    original_prompt = None;
     place_in_history = 0;
+    flipping_through_history = None;
   }
 
 let insert_many model width n =
@@ -533,7 +535,7 @@ let test_newline_splits_line () =
     { (initial_model width) with lines = [ "helloworld" ]; cursor_col = 5 }
   in
 
-  match Update.update Tty_listener.Enter ~term_width:width model with
+  match Update.update (Tty_listener.Ctrl 'l') ~term_width:width model with
   | Continue new_model ->
       Alcotest.(check int) "two lines" 2 (List.length new_model.lines);
       Alcotest.(check string) "first part" "hello" (List.nth new_model.lines 0);

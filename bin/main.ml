@@ -72,7 +72,9 @@ let make_init () : Frontend_types.model =
     repl_cursor = (row, 1);
     scroll_amount = 0;
     prompt_history = [];
+    original_prompt = None;
     place_in_history = 0;
+    flipping_through_history = None;
   }
 
 let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
