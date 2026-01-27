@@ -175,10 +175,7 @@ let parse_response response_field =
   | output -> Yojson.Basic.Util.to_string output
 
 let pretty_print_error error_data =
-  let open Yojson.Basic.Util in
-  let ename = error_data |> member "ename" |> to_string in
-  let emsg = error_data |> member "evalue" |> to_string in
-  Printf.sprintf "%s: %s" ename emsg
+  Yojson.Basic.Util.(error_data |> member "evalue" |> to_string)
 
 let await_response t =
   let open Yojson.Basic.Util in
