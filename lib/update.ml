@@ -7,13 +7,18 @@ let insert_char model c =
   in
   let line = get_line model.lines line_idx in
   match Unicode_string.insert_string line ~pos:col (String.make 1 c) with
-  | Error _ -> model  (* Invalid UTF-8 byte, ignore it *)
+  | Error _ -> model (* Invalid UTF-8 byte, ignore it *)
   | Ok new_line ->
       let new_lines = update_line model.lines line_idx new_line in
       let new_row, new_col =
         internal_to_terminal width new_lines (line_idx, col + 1)
       in
-      { model with lines = new_lines; cursor_row = new_row; cursor_col = new_col }
+      {
+        model with
+        lines = new_lines;
+        cursor_row = new_row;
+        cursor_col = new_col;
+      }
 
 let delete_char model =
   let width = effective_width model in
@@ -79,13 +84,18 @@ let insert_paste model text =
   let line = get_line model.lines line_idx in
   let before, after = Unicode_string.split line col in
   let paste_lines = String.split_on_char '\n' text in
-  let to_us s = match Unicode_string.of_string s with Ok u -> u | Error _ -> Unicode_string.empty in
+  let to_us s =
+    match Unicode_string.of_string s with
+    | Ok u -> u
+    | Error _ -> Unicode_string.empty
+  in
   let inserted, final_col =
     match paste_lines with
     | [] -> ([ Unicode_string.append before after ], col)
     | [ single ] ->
         let single_us = to_us single in
-        ([ Unicode_string.concat [ before; single_us; after ] ], col + Unicode_string.length single_us)
+        ( [ Unicode_string.concat [ before; single_us; after ] ],
+          col + Unicode_string.length single_us )
     | first :: rest ->
         let rec split_last = function
           | [] -> ([], "")
@@ -100,7 +110,8 @@ let insert_paste model text =
         let middle_us = List.map to_us middle in
         let first_line = Unicode_string.append before first_us in
         let last_line = Unicode_string.append last_us after in
-        ((first_line :: middle_us) @ [ last_line ], Unicode_string.length last_us)
+        ( (first_line :: middle_us) @ [ last_line ],
+          Unicode_string.length last_us )
   in
   let new_lines =
     List.concat_map
@@ -122,7 +133,8 @@ let move_left model =
       model with
       cursor_row = model.cursor_row - 1;
       cursor_col =
-        List.nth wrapped_lines (model.cursor_row - 1) |> Unicode_string.display_width;
+        List.nth wrapped_lines (model.cursor_row - 1)
+        |> Unicode_string.display_width;
     }
   else model
 
@@ -155,7 +167,8 @@ let move_up model =
       | _ -> model.cursor_col
     in
     let line_width =
-      List.nth wrapped_lines (model.cursor_row - 1) |> Unicode_string.display_width
+      List.nth wrapped_lines (model.cursor_row - 1)
+      |> Unicode_string.display_width
     in
     {
       model with
@@ -176,7 +189,8 @@ let move_down model =
       | _ -> model.cursor_col
     in
     let line_width =
-      List.nth wrapped_lines (model.cursor_row + 1) |> Unicode_string.display_width
+      List.nth wrapped_lines (model.cursor_row + 1)
+      |> Unicode_string.display_width
     in
     {
       model with
@@ -191,7 +205,8 @@ let move_cursor_to_end model =
   let last_line_idx = List.length model.lines - 1 in
   let last_line = List.nth model.lines last_line_idx in
   let new_row, new_col =
-    internal_to_terminal width model.lines (last_line_idx, Unicode_string.length last_line)
+    internal_to_terminal width model.lines
+      (last_line_idx, Unicode_string.length last_line)
   in
   { model with cursor_row = new_row; cursor_col = new_col }
 
@@ -241,7 +256,9 @@ let delete_char_after_cursor model =
   else delete_char after_move_right
 
 let submit model =
-  let text = String.concat "\n" (List.map Unicode_string.to_string model.lines) in
+  let text =
+    String.concat "\n" (List.map Unicode_string.to_string model.lines)
+  in
   let width = effective_width model in
   let wrapped = wrap_lines width model.lines in
   let total_rows = List.length wrapped in
@@ -318,9 +335,7 @@ let handle_resize new_width model =
     { model with cursor_row = new_row; cursor_col = new_col }
 
 let is_empty_input model =
-  match model.lines with
-  | [ line ] -> Unicode_string.is_empty line
-  | _ -> false
+  match model.lines with [ line ] -> Unicode_string.is_empty line | _ -> false
 
 let apply_key key model =
   let open Tty_listener in
@@ -332,7 +347,7 @@ let apply_key key model =
       else Continue (delete_char_after_cursor model)
   | Enter -> submit model
   | Ctrl 'u' -> Continue (delete_before_cursor model)
-  | Ctrl 'l' -> Continue (insert_newline model)
+  | Ctrl '\r' -> Continue (insert_newline model)
   | Ctrl 'p' -> Continue (shift_history model ~amount:1)
   | Char c -> Continue (insert_char model c)
   | Backspace -> Continue (delete_char model)

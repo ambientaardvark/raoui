@@ -29,15 +29,6 @@ let read_byte_timeout clock stdin timeout_sec =
   | Ok result -> result
   | Error `Timeout -> None
 
-let read_until_tilde stdin =
-  let rec loop acc =
-    match read_byte stdin with
-    | None -> List.rev acc
-    | Some '~' -> List.rev acc
-    | Some c -> loop (c :: acc)
-  in
-  loop []
-
 let read_bracketed_paste stdin =
   let buf = Buffer.create 256 in
   let add_chars chars = List.iter (Buffer.add_char buf) chars in
@@ -60,7 +51,7 @@ let read_bracketed_paste stdin =
           add_chars acc;
           Buffer.contents buf
       | Some c ->
-          let next = acc @ [c] in
+          let next = acc @ [ c ] in
           if List.nth expected (List.length acc) = c then check_end next
           else (
             add_chars next;
@@ -69,27 +60,32 @@ let read_bracketed_paste stdin =
   loop ()
 
 let parse_csi_sequence stdin =
-  match read_byte stdin with
-  | None -> Unknown "\x1b["
+  (* Read all parameter bytes until we hit a final byte (letter or ~) *)
+  let rec read_until_final acc =
+    match read_byte stdin with
+    | None -> (List.rev acc, None)
+    | Some c
+      when (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c = '~' ->
+        (List.rev acc, Some c)
+    | Some c -> read_until_final (c :: acc)
+  in
+  let param_chars, final = read_until_final [] in
+  let params = String.init (List.length param_chars) (List.nth param_chars) in
+  match final with
+  | None -> Unknown (Printf.sprintf "\x1b[%s" params)
   | Some 'A' -> Up
   | Some 'B' -> Down
   | Some 'C' -> Right
   | Some 'D' -> Left
   | Some 'H' -> Home
   | Some 'F' -> End
-  | Some '3' -> (
-      match read_byte stdin with Some '~' -> Delete | _ -> Unknown "\x1b[3")
-  | Some '2' -> (
-      (* Could be \x1b[200~ for bracketed paste *)
-      match (read_byte stdin, read_byte stdin, read_byte stdin) with
-      | Some '0', Some '0', Some '~' -> Paste (read_bracketed_paste stdin)
-      | _ -> Unknown "\x1b[2")
-  | Some c ->
-      (* Read until ~ for extended sequences like \x1b[1;5C *)
-      let rest = read_until_tilde stdin in
-      Unknown
-        (Printf.sprintf "\x1b[%c%s~" c
-           (String.init (List.length rest) (List.nth rest)))
+  | Some '~' -> (
+      match params with
+      | "3" -> Delete
+      | "200" -> Paste (read_bracketed_paste stdin)
+      | "27;5;13" -> Ctrl '\r' (* Ctrl+Enter *)
+      | _ -> Unknown (Printf.sprintf "\x1b[%s~" params))
+  | Some c -> Unknown (Printf.sprintf "\x1b[%s%c" params c)
 
 let parse_escape clock stdin =
   match read_byte_timeout clock stdin escape_timeout_sec with
