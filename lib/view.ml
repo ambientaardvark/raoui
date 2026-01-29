@@ -35,7 +35,7 @@ let view_ops model =
         | 0, true -> pending_prompt
         | _ -> continued_prompt
       in
-      add (Print [(`Accent, p); (`Plain, line)]);
+      add (Print [(`Accent, p); (`Plain, Unicode_string.to_string line)]);
       if i < skip_rows + model.term_height - 1 && i < total_rows - 1 then add Newline
     end
   );

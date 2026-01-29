@@ -5,3 +5,7 @@
 (test
  (name test_backend)
  (libraries raoui alcotest str))
+
+(test
+ (name test_unicode_string)
+ (libraries raoui alcotest))

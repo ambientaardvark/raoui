@@ -3,7 +3,7 @@ let continued_prompt = ". "
 let pending_prompt = "  "
 
 type model = {
-  lines : string list;
+  lines : Unicode_string.t list;
   cursor_row : int;
   cursor_col : int;
   prompt_top_row : int;
@@ -18,8 +18,8 @@ type model = {
   repl_output : Terminal_ops.span list option;
   repl_cursor : int * int;
   scroll_amount : int;
-  prompt_history : string list list;
-  original_prompt : string list option;
+  prompt_history : Unicode_string.t list list;
+  original_prompt : Unicode_string.t list option;
   place_in_history : int;
   flipping_through_history : int option;
 }
@@ -30,20 +30,12 @@ type update_result =
   | Exit
   | Cancel
 
-(* Line wrapping utilities *)
-let wrap_line width line =
-  let rec loop acc remaining =
-    if String.length remaining < width then List.rev (remaining :: acc)
-    else
-      let chunk = String.sub remaining 0 width in
-      let rest = String.sub remaining width (String.length remaining - width) in
-      loop (chunk :: acc) rest
-  in
-  if width <= 0 then [ line ] else loop [] line
+(* Line wrapping utilities - uses display width *)
+let wrap_line width line = Unicode_string.wrap line ~width
 
 let wrap_lines width lines = List.concat_map (wrap_line width) lines
 
-(* Coordinate conversion between internal (line_idx, col) and terminal (row, col) *)
+(* Coordinate conversion between internal (line_idx, grapheme_col) and terminal (row, display_col) *)
 let internal_to_terminal width lines (line_idx, col) =
   let rows_before =
     lines
@@ -52,11 +44,28 @@ let internal_to_terminal width lines (line_idx, col) =
          (fun acc line -> acc + List.length (wrap_line width line))
          0
   in
-  let row_in_line = col / width in
-  let col_in_line = col mod width in
+  let line = List.nth lines line_idx in
+  let wrapped = wrap_line width line in
+  (* Find which wrapped row contains grapheme col *)
+  let rec find_row row_idx graphemes_so_far = function
+    | [] -> (row_idx, 0)
+    | chunk :: rest ->
+        let chunk_len = Unicode_string.length chunk in
+        let end_of_chunk = graphemes_so_far + chunk_len in
+        (* Cursor is in this chunk if:
+           - col is strictly before end, OR
+           - col equals end AND this is the last chunk (no more rows to move to) *)
+        if col < end_of_chunk || (col = end_of_chunk && rest = []) then
+          let offset_in_chunk = col - graphemes_so_far in
+          let display_col = Unicode_string.prefix_width chunk offset_in_chunk in
+          (row_idx, display_col)
+        else
+          find_row (row_idx + 1) end_of_chunk rest
+  in
+  let row_in_line, col_in_line = find_row 0 0 wrapped in
   (rows_before + row_in_line, col_in_line)
 
-let terminal_to_internal width lines (row, col) =
+let terminal_to_internal width lines (row, display_col) =
   let rec loop internal_row lines current_terminal_row =
     match lines with
     | [] -> failwith "terminal_to_internal: row out of bounds"
@@ -69,15 +78,22 @@ let terminal_to_internal width lines (row, col) =
           || (is_last_line && row = current_terminal_row + num_rows)
         then
           let row_offset = row - current_terminal_row in
-          let rec sum_lengths acc idx l =
+          (* Sum grapheme counts of previous wrapped rows *)
+          let rec sum_graphemes acc idx l =
             if idx = 0 then acc
             else
               match l with
               | [] -> acc
-              | h :: t -> sum_lengths (acc + String.length h) (idx - 1) t
+              | h :: t -> sum_graphemes (acc + Unicode_string.length h) (idx - 1) t
           in
-          let chars_before = sum_lengths 0 row_offset wrapped in
-          (internal_row, chars_before + col)
+          let graphemes_before = sum_graphemes 0 row_offset wrapped in
+          (* Convert display_col to grapheme offset within this wrapped row *)
+          let chunk =
+            if row_offset < num_rows then List.nth wrapped row_offset
+            else Unicode_string.empty
+          in
+          let grapheme_col = Unicode_string.grapheme_at_width chunk display_col in
+          (internal_row, graphemes_before + grapheme_col)
         else loop (internal_row + 1) rest (current_terminal_row + num_rows)
   in
   loop 0 lines 0

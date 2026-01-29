@@ -6,14 +6,14 @@ let insert_char model c =
     terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
   in
   let line = get_line model.lines line_idx in
-  let before = String.sub line 0 col in
-  let after = String.sub line col (String.length line - col) in
-  let new_line = before ^ String.make 1 c ^ after in
-  let new_lines = update_line model.lines line_idx new_line in
-  let new_row, new_col =
-    internal_to_terminal width new_lines (line_idx, col + 1)
-  in
-  { model with lines = new_lines; cursor_row = new_row; cursor_col = new_col }
+  match Unicode_string.insert_string line ~pos:col (String.make 1 c) with
+  | Error _ -> model  (* Invalid UTF-8 byte, ignore it *)
+  | Ok new_line ->
+      let new_lines = update_line model.lines line_idx new_line in
+      let new_row, new_col =
+        internal_to_terminal width new_lines (line_idx, col + 1)
+      in
+      { model with lines = new_lines; cursor_row = new_row; cursor_col = new_col }
 
 let delete_char model =
   let width = effective_width model in
@@ -25,7 +25,7 @@ let delete_char model =
     else
       let prev_line = get_line model.lines (line_idx - 1) in
       let curr_line = get_line model.lines line_idx in
-      let merged = prev_line ^ curr_line in
+      let merged = Unicode_string.append prev_line curr_line in
       let new_lines =
         model.lines
         |> List.filteri (fun i _ -> i <> line_idx)
@@ -33,7 +33,7 @@ let delete_char model =
       in
       let new_row, new_col =
         internal_to_terminal width new_lines
-          (line_idx - 1, String.length prev_line)
+          (line_idx - 1, Unicode_string.length prev_line)
       in
       {
         model with
@@ -43,9 +43,8 @@ let delete_char model =
       }
   else
     let line = get_line model.lines line_idx in
-    let before = String.sub line 0 (col - 1) in
-    let after = String.sub line col (String.length line - col) in
-    let new_lines = update_line model.lines line_idx (before ^ after) in
+    let new_line = Unicode_string.delete line (col - 1) in
+    let new_lines = update_line model.lines line_idx new_line in
     let new_row, new_col =
       internal_to_terminal width new_lines (line_idx, col - 1)
     in
@@ -57,8 +56,7 @@ let insert_newline model =
     terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
   in
   let line = get_line model.lines line_idx in
-  let before = String.sub line 0 col in
-  let after = String.sub line col (String.length line - col) in
+  let before, after = Unicode_string.split line col in
   let new_lines =
     List.concat_map
       (fun (i, l) -> if i = line_idx then [ before; after ] else [ l ])
@@ -79,13 +77,15 @@ let insert_paste model text =
     terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
   in
   let line = get_line model.lines line_idx in
-  let before = String.sub line 0 col in
-  let after = String.sub line col (String.length line - col) in
+  let before, after = Unicode_string.split line col in
   let paste_lines = String.split_on_char '\n' text in
+  let to_us s = match Unicode_string.of_string s with Ok u -> u | Error _ -> Unicode_string.empty in
   let inserted, final_col =
     match paste_lines with
-    | [] -> ([ before ^ after ], col)
-    | [ single ] -> ([ before ^ single ^ after ], col + String.length single)
+    | [] -> ([ Unicode_string.append before after ], col)
+    | [ single ] ->
+        let single_us = to_us single in
+        ([ Unicode_string.concat [ before; single_us; after ] ], col + Unicode_string.length single_us)
     | first :: rest ->
         let rec split_last = function
           | [] -> ([], "")
@@ -95,7 +95,12 @@ let insert_paste model text =
               (x :: middle, last)
         in
         let middle, last = split_last rest in
-        (((before ^ first) :: middle) @ [ last ^ after ], String.length last)
+        let first_us = to_us first in
+        let last_us = to_us last in
+        let middle_us = List.map to_us middle in
+        let first_line = Unicode_string.append before first_us in
+        let last_line = Unicode_string.append last_us after in
+        ((first_line :: middle_us) @ [ last_line ], Unicode_string.length last_us)
   in
   let new_lines =
     List.concat_map
@@ -117,7 +122,7 @@ let move_left model =
       model with
       cursor_row = model.cursor_row - 1;
       cursor_col =
-        List.nth wrapped_lines (model.cursor_row - 1) |> String.length;
+        List.nth wrapped_lines (model.cursor_row - 1) |> Unicode_string.display_width;
     }
   else model
 
@@ -128,7 +133,7 @@ let move_right model =
     terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
   in
   let line = get_line model.lines line_idx in
-  if col >= String.length line then
+  if col >= Unicode_string.length line then
     if line_idx < List.length model.lines - 1 then
       let new_row, new_col =
         internal_to_terminal width model.lines (line_idx + 1, 0)
@@ -149,13 +154,13 @@ let move_up model =
       | Some Up | Some Down -> model.persistent_col
       | _ -> model.cursor_col
     in
-    let line_length =
-      List.nth wrapped_lines (model.cursor_row - 1) |> String.length
+    let line_width =
+      List.nth wrapped_lines (model.cursor_row - 1) |> Unicode_string.display_width
     in
     {
       model with
       cursor_row = model.cursor_row - 1;
-      cursor_col = min target_col line_length;
+      cursor_col = min target_col line_width;
       persistent_col = target_col;
     }
   else model
@@ -170,24 +175,23 @@ let move_down model =
       | Some Up | Some Down -> model.persistent_col
       | _ -> model.cursor_col
     in
-    let line_length =
-      List.nth wrapped_lines (model.cursor_row + 1) |> String.length
+    let line_width =
+      List.nth wrapped_lines (model.cursor_row + 1) |> Unicode_string.display_width
     in
     {
       model with
       cursor_row = model.cursor_row + 1;
-      cursor_col = min target_col line_length;
+      cursor_col = min target_col line_width;
       persistent_col = target_col;
     }
   else model
 
 let move_cursor_to_end model =
+  let width = effective_width model in
+  let last_line_idx = List.length model.lines - 1 in
+  let last_line = List.nth model.lines last_line_idx in
   let new_row, new_col =
-    let width = effective_width model in
-    let wrapped = wrap_lines width model.lines in
-    let last_row = List.length wrapped - 1 in
-    let last_col = String.length (List.nth wrapped last_row) in
-    internal_to_terminal width model.lines (last_row, last_col)
+    internal_to_terminal width model.lines (last_line_idx, Unicode_string.length last_line)
   in
   { model with cursor_row = new_row; cursor_col = new_col }
 
@@ -222,9 +226,9 @@ let delete_before_cursor model =
   in
   if col = 0 then delete_char model
   else
-    let line_str = List.nth model.lines line_idx in
-    let new_line_str = String.sub line_str col (String.length line_str - col) in
-    let new_lines = update_line model.lines line_idx new_line_str in
+    let line = List.nth model.lines line_idx in
+    let new_line = Unicode_string.delete_range line ~start:0 ~len:col in
+    let new_lines = update_line model.lines line_idx new_line in
     let new_row, new_col = internal_to_terminal width new_lines (line_idx, 0) in
     { model with lines = new_lines; cursor_row = new_row; cursor_col = new_col }
 
@@ -237,7 +241,7 @@ let delete_char_after_cursor model =
   else delete_char after_move_right
 
 let submit model =
-  let text = String.concat "\n" model.lines in
+  let text = String.concat "\n" (List.map Unicode_string.to_string model.lines) in
   let width = effective_width model in
   let wrapped = wrap_lines width model.lines in
   let total_rows = List.length wrapped in
@@ -255,7 +259,7 @@ let submit model =
       repl_cursor = (output_row + scroll_amount, 1);
       prompt_top_row = new_prompt_top + scroll_amount;
       previous_prompt_top_row = new_prompt_top + scroll_amount;
-      lines = [ "" ];
+      lines = [ Unicode_string.empty ];
       cursor_row = 0;
       cursor_col = 0;
       prompt_box_height = 1;
@@ -313,17 +317,23 @@ let handle_resize new_width model =
     in
     { model with cursor_row = new_row; cursor_col = new_col }
 
+let is_empty_input model =
+  match model.lines with
+  | [ line ] -> Unicode_string.is_empty line
+  | _ -> false
+
 let apply_key key model =
   let open Tty_listener in
   match key with
   | Ctrl 'c' when model.awaiting_response -> Cancel
   | Ctrl 'p' when model.awaiting_response -> Continue model
   | Ctrl 'd' ->
-      if model.lines = [ "" ] then Exit
+      if is_empty_input model then Exit
       else Continue (delete_char_after_cursor model)
   | Enter -> submit model
   | Ctrl 'u' -> Continue (delete_before_cursor model)
   | Ctrl 'l' -> Continue (insert_newline model)
+  | Ctrl 'p' -> Continue (shift_history model ~amount:1)
   | Char c -> Continue (insert_char model c)
   | Backspace -> Continue (delete_char model)
   | Left -> Continue (move_left model)

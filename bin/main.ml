@@ -24,6 +24,14 @@ let set_solid_cursor () =
   print_string "\x1b[2 q";
   Out_channel.flush stdout
 
+let enable_bracketed_paste () =
+  print_string "\x1b[?2004h";
+  Out_channel.flush stdout
+
+let disable_bracketed_paste () =
+  print_string "\x1b[?2004l";
+  Out_channel.flush stdout
+
 let clear_log () = Out_channel.write_all "debug_log.txt" ~data:""
 
 let drain_stdin () =
@@ -68,7 +76,7 @@ let make_init () : Frontend_types.model =
   let row, _col = get_cursor_position () in
   let term_width, term_height = get_term_dimensions () in
   {
-    lines = [ "" ];
+    lines = [ Unicode_string.empty ];
     cursor_row = 0;
     cursor_col = 0;
     prompt_top_row = row;
@@ -170,9 +178,11 @@ let () =
   let backend = Backend.create () in
   let orig = set_raw_mode () in
   set_solid_cursor ();
+  enable_bracketed_paste ();
   Stdlib.Fun.protect
     (fun () -> run env backend)
     ~finally:(fun () ->
+      disable_bracketed_paste ();
       print_endline "";
       restore_mode orig;
       Backend.deinit backend)

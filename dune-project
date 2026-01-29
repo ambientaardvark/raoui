@@ -19,7 +19,7 @@
  (name raoui)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml eio terminal_size base)
+ (depends ocaml eio terminal_size base uutf uuseg uucp)
  (tags
   ("add topics" "to describe" your project)))
 

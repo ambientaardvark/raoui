@@ -15,6 +15,9 @@ depends: [
   "eio"
   "terminal_size"
   "base"
+  "uutf"
+  "uuseg"
+  "uucp"
   "odoc" {with-doc}
 ]
 build: [
