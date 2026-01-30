@@ -132,8 +132,10 @@ let of_string s =
             | `Await -> ()
             | `End -> ());
 
-            (* Accumulate width *)
-            current_cluster_width := !current_cluster_width + uchar_width u;
+            (* Accumulate display width: use max width within cluster *)
+            let w = uchar_width u in
+            if w > !current_cluster_width then
+              current_cluster_width := w;
             cp_idx := i + 1
           done;
 

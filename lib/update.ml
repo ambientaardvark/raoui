@@ -126,36 +126,39 @@ let insert_paste model text =
 
 let move_left model =
   let width = effective_width model in
-  let wrapped_lines = wrap_lines width model.lines in
-  if model.cursor_col > 0 then { model with cursor_col = model.cursor_col - 1 }
-  else if model.cursor_row > 0 then
-    {
-      model with
-      cursor_row = model.cursor_row - 1;
-      cursor_col =
-        List.nth wrapped_lines (model.cursor_row - 1)
-        |> Unicode_string.display_width;
-    }
+  let line_idx, col =
+    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
+  in
+  if col > 0 then
+    let new_row, new_col =
+      internal_to_terminal width model.lines (line_idx, col - 1)
+    in
+    { model with cursor_row = new_row; cursor_col = new_col }
+  else if line_idx > 0 then
+    let prev_line = get_line model.lines (line_idx - 1) in
+    let new_row, new_col =
+      internal_to_terminal width model.lines
+        (line_idx - 1, Unicode_string.length prev_line)
+    in
+    { model with cursor_row = new_row; cursor_col = new_col }
   else model
 
 let move_right model =
   let width = effective_width model in
-  let total_rows = List.length (wrap_lines width model.lines) in
   let line_idx, col =
     terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
   in
   let line = get_line model.lines line_idx in
-  if col >= Unicode_string.length line then
-    if line_idx < List.length model.lines - 1 then
-      let new_row, new_col =
-        internal_to_terminal width model.lines (line_idx + 1, 0)
-      in
-      { model with cursor_row = new_row; cursor_col = new_col }
-    else model
-  else if model.cursor_col < width - 1 then
-    { model with cursor_col = model.cursor_col + 1 }
-  else if model.cursor_row < total_rows - 1 then
-    { model with cursor_row = model.cursor_row + 1; cursor_col = 0 }
+  if col < Unicode_string.length line then
+    let new_row, new_col =
+      internal_to_terminal width model.lines (line_idx, col + 1)
+    in
+    { model with cursor_row = new_row; cursor_col = new_col }
+  else if line_idx < List.length model.lines - 1 then
+    let new_row, new_col =
+      internal_to_terminal width model.lines (line_idx + 1, 0)
+    in
+    { model with cursor_row = new_row; cursor_col = new_col }
   else model
 
 let move_up model =

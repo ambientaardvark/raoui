@@ -7,7 +7,8 @@ let spans_to_text = function
   | Some spans -> Some (String.concat "" (List.map snd spans))
 
 (* Helper to convert string to Unicode_string, failing on error *)
-let us s = match Unicode_string.of_string s with
+let us s =
+  match Unicode_string.of_string s with
   | Ok u -> u
   | Error _ -> failwith ("Invalid unicode: " ^ s)
 
@@ -364,7 +365,10 @@ let test_wrap_line_empty () =
 let test_wrap_lines_multiline () =
   let result = wrap_lines 5 [ us "hello"; us "world" ] in
   (* Both lines exactly fill width *)
-  Alcotest.(check (list string)) "multiline" [ "hello"; ""; "world"; "" ] (to_strings result)
+  Alcotest.(check (list string))
+    "multiline"
+    [ "hello"; ""; "world"; "" ]
+    (to_strings result)
 
 let test_wrap_lines_mixed () =
   let result = wrap_lines 5 [ us "hi"; us "helloworld" ] in
@@ -459,13 +463,18 @@ let test_typing_while_awaiting () =
 let test_submit_blocked_while_awaiting () =
   let width = 10 in
   let model =
-    { (initial_model width) with awaiting_response = true; lines = [ us "test" ] }
+    {
+      (initial_model width) with
+      awaiting_response = true;
+      lines = [ us "test" ];
+    }
   in
 
   match Update.update (Tty_listener.Ctrl 'p') model with
   | Continue new_model ->
       (* Submit should be blocked, model unchanged *)
-      Alcotest.(check string) "lines unchanged" "test" (first_line_str new_model);
+      Alcotest.(check string)
+        "lines unchanged" "test" (first_line_str new_model);
       Alcotest.(check bool) "still awaiting" true new_model.awaiting_response
   | Submit _ -> Alcotest.fail "Submit should be blocked while awaiting"
   | _ -> Alcotest.fail "Expected Continue"
@@ -507,12 +516,62 @@ let test_left_at_start () =
 
 let test_right_at_end () =
   let width = 10 in
-  let model = { (initial_model width) with lines = [ us "ab" ]; cursor_col = 2 } in
+  let model =
+    { (initial_model width) with lines = [ us "ab" ]; cursor_col = 2 }
+  in
 
   match Update.update Tty_listener.Right model with
   | Continue new_model ->
       Alcotest.(check int) "col stays at end" 2 new_model.cursor_col
   | _ -> Alcotest.fail "Expected Continue"
+
+let test_cursor_moves_over_wide_grapheme () =
+  let width = 10 in
+  let model =
+    { (initial_model width) with lines = [ us "a中b" ]; cursor_col = 0 }
+  in
+  let model =
+    match Update.update Tty_listener.Right model with
+    | Continue new_model -> new_model
+    | _ -> Alcotest.fail "Expected Continue after first right"
+  in
+  Alcotest.(check int) "col after 'a'" 1 model.cursor_col;
+  let model =
+    match Update.update Tty_listener.Right model with
+    | Continue new_model -> new_model
+    | _ -> Alcotest.fail "Expected Continue after second right"
+  in
+  Alcotest.(check int) "col after '中'" 3 model.cursor_col;
+  let model =
+    match Update.update Tty_listener.Left model with
+    | Continue new_model -> new_model
+    | _ -> Alcotest.fail "Expected Continue after left"
+  in
+  Alcotest.(check int) "col back over '中'" 1 model.cursor_col
+
+let test_cursor_moves_over_emoji_zwj () =
+  let width = 10 in
+  let model =
+    { (initial_model width) with lines = [ us "a👩🏻‍⚕️b" ]; cursor_col = 0 }
+  in
+  let model =
+    match Update.update Tty_listener.Right model with
+    | Continue new_model -> new_model
+    | _ -> Alcotest.fail "Expected Continue after first right"
+  in
+  Alcotest.(check int) "col after 'a'" 1 model.cursor_col;
+  let model =
+    match Update.update Tty_listener.Right model with
+    | Continue new_model -> new_model
+    | _ -> Alcotest.fail "Expected Continue after second right"
+  in
+  Alcotest.(check int) "col after emoji" 3 model.cursor_col;
+  let model =
+    match Update.update Tty_listener.Left model with
+    | Continue new_model -> new_model
+    | _ -> Alcotest.fail "Expected Continue after left"
+  in
+  Alcotest.(check int) "col back over emoji" 1 model.cursor_col
 
 let test_backspace_at_start () =
   let width = 10 in
@@ -548,10 +607,12 @@ let test_newline_splits_line () =
     { (initial_model width) with lines = [ us "helloworld" ]; cursor_col = 5 }
   in
 
-  match Update.update (Tty_listener.Ctrl 'l') model with
+  match Update.update (Tty_listener.Ctrl '\r') model with
   | Continue new_model ->
       Alcotest.(check int) "two lines" 2 (List.length new_model.lines);
-      Alcotest.(check (list string)) "split content" [ "hello"; "world" ] (to_strings new_model.lines)
+      Alcotest.(check (list string))
+        "split content" [ "hello"; "world" ]
+        (to_strings new_model.lines)
   | _ -> Alcotest.fail "Expected Continue"
 
 let test_ctrl_d_exit_on_empty () =
@@ -564,7 +625,9 @@ let test_ctrl_d_exit_on_empty () =
 
 let test_ctrl_d_deletes_char () =
   let width = 10 in
-  let model = { (initial_model width) with lines = [ us "ab" ]; cursor_col = 0 } in
+  let model =
+    { (initial_model width) with lines = [ us "ab" ]; cursor_col = 0 }
+  in
 
   match Update.update (Tty_listener.Ctrl 'd') model with
   | Continue new_model ->
@@ -595,7 +658,9 @@ let test_paste_simple () =
   let model = initial_model width in
   match Update.update (Tty_listener.Paste "hello") model with
   | Continue new_model ->
-      Alcotest.(check (list string)) "lines" [ "hello" ] (to_strings new_model.lines);
+      Alcotest.(check (list string))
+        "lines" [ "hello" ]
+        (to_strings new_model.lines);
       Alcotest.(check int) "cursor col" 5 new_model.cursor_col
   | _ -> Alcotest.fail "Expected Continue"
 
@@ -619,7 +684,9 @@ let test_paste_at_cursor () =
   in
   match Update.update (Tty_listener.Paste "XXX") model with
   | Continue new_model ->
-      Alcotest.(check (list string)) "lines" [ "helloXXXworld" ] (to_strings new_model.lines);
+      Alcotest.(check (list string))
+        "lines" [ "helloXXXworld" ]
+        (to_strings new_model.lines);
       Alcotest.(check int) "cursor col" 8 new_model.cursor_col
   | _ -> Alcotest.fail "Expected Continue"
 
@@ -645,7 +712,8 @@ let test_paste_truncates_large () =
   match Update.update (Tty_listener.Paste large_text) model with
   | Continue new_model ->
       let total_len =
-        List.fold_left ( + ) 0 (List.map Unicode_string.byte_length new_model.lines)
+        List.fold_left ( + ) 0
+          (List.map Unicode_string.byte_length new_model.lines)
       in
       Alcotest.(check bool) "truncated to 5kb" true (total_len <= 5 * 1024)
   | _ -> Alcotest.fail "Expected Continue"
@@ -702,6 +770,9 @@ let () =
         [
           test_case "Left at start" `Quick test_left_at_start;
           test_case "Right at end" `Quick test_right_at_end;
+          test_case "Wide grapheme movement" `Quick
+            test_cursor_moves_over_wide_grapheme;
+          test_case "Emoji ZWJ movement" `Quick test_cursor_moves_over_emoji_zwj;
         ] );
       ( "editing",
         [
