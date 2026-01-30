@@ -64,8 +64,7 @@ let parse_csi_sequence stdin =
   let rec read_until_final acc =
     match read_byte stdin with
     | None -> (List.rev acc, None)
-    | Some c
-      when (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c = '~' ->
+    | Some c when (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c = '~' ->
         (List.rev acc, Some c)
     | Some c -> read_until_final (c :: acc)
   in
@@ -91,6 +90,7 @@ let parse_escape clock stdin =
   match read_byte_timeout clock stdin escape_timeout_sec with
   | None -> Escape
   | Some '[' -> parse_csi_sequence stdin
+  | Some '\n' -> Ctrl '\r' (* newline on linux *)
   | Some c -> Unknown (Printf.sprintf "\x1b%c" c)
 
 let await_input ~clock ~stdin =

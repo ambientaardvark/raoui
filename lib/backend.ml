@@ -29,10 +29,25 @@ type t = {
 }
 
 let kernel_path =
-  "/Users/alanlee/Documents/Programs/raoui/vendor/ark-0.1.223-darwin-universal/ark"
+  let candidates =
+    [
+      "vendor/ark-0.1.227-linux-x64/ark";
+      "vendor/ark-0.1.223-darwin-universal/ark";
+    ]
+  in
+  let rec first_existing = function
+    | [] -> None
+    | path :: rest ->
+        if Stdlib.Sys.file_exists path then Some path else first_existing rest
+  in
+  match first_existing candidates with
+  | Some path -> path
+  | None ->
+      failwith
+        "No compatible ark binary found under vendor/. Check OS-specific paths."
 
 let connection_file = "/tmp/kernel.json"
-let startup_file = "/Users/alanlee/Documents/Programs/raoui/vendor/startup.R"
+let startup_file = "r_scripts/startup.R"
 
 let random_hex_token len =
   let hex_chars = "0123456789abcdef" in
