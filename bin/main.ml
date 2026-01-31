@@ -72,6 +72,13 @@ let get_term_dimensions () =
   in
   (width, height)
 
+let rec await_dim_change prev_width prev_height =
+  let w, h = get_term_dimensions () in
+  if w = prev_width && h = prev_height then (
+    Eio.Fiber.yield ();
+    await_dim_change w h)
+  else (w, h)
+
 let make_init () : Frontend_types.model =
   let row, _col = get_cursor_position () in
   let term_width, term_height = get_term_dimensions () in
@@ -157,9 +164,16 @@ let run env backend =
           [
             (fun () -> Key (Tty_listener.await_input ~clock ~stdin));
             (fun () -> Response (Backend.await_response backend));
-            (fun () -> Term_size (get_term_dimensions ()));
+            (fun () ->
+              Term_size (await_dim_change model.term_width model.term_height));
           ]
-      else Key (Tty_listener.await_input ~clock ~stdin)
+      else
+        Eio.Fiber.any
+          [
+            (fun () -> Key (Tty_listener.await_input ~clock ~stdin));
+            (fun () ->
+              Term_size (await_dim_change model.term_width model.term_height));
+          ]
     in
     match msg with
     | Key key -> (
