@@ -26,6 +26,7 @@ type t = {
   ark_pid : Core.Pid.t;
   session_id : string;
   mutable saw_busy : bool;
+  connection_file : string;
 }
 
 let kernel_path () =
@@ -46,12 +47,23 @@ let kernel_path () =
       failwith
         "No compatible ark binary found under vendor/. Check OS-specific paths."
 
-let connection_file = "/tmp/kernel.json"
+let make_connection_file key = Printf.sprintf "/tmp/kernel%s.json" key
 let startup_file = "r_scripts/startup.R"
 
 let random_hex_token len =
   let hex_chars = "0123456789abcdef" in
   String.init (len * 2) ~f:(fun _ -> hex_chars.[Random.int 16])
+
+let get_available_port () =
+  let sock = Unix.socket PF_INET SOCK_STREAM 0 in
+  Unix.bind sock (ADDR_INET (Unix.inet_addr_any, 0));
+  let port =
+    match Unix.getsockname sock with
+    | ADDR_INET (_, port) -> port
+    | _ -> failwith "Could not get socket port"
+  in
+  Unix.close sock;
+  port
 
 let conn_info () =
   let token_hex = random_hex_token 16 in
@@ -59,17 +71,17 @@ let conn_info () =
     [
       ("ip", `String "127.0.0.1");
       ("transport", `String "tcp");
-      ("shell_port", `Int 57001);
-      ("iopub_port", `Int 57002);
-      ("stdin_port", `Int 57003);
-      ("control_port", `Int 57004);
-      ("hb_port", `Int 57005);
+      ("shell_port", `Int (get_available_port ()));
+      ("iopub_port", `Int (get_available_port ()));
+      ("stdin_port", `Int (get_available_port ()));
+      ("control_port", `Int (get_available_port ()));
+      ("hb_port", `Int (get_available_port ()));
       ("key", `String token_hex);
       ("signature_scheme", `String "hmac-sha256");
       ("kernel_name", `String "ark");
     ]
 
-let start_kernel () =
+let start_kernel connection_file =
   let preexec_fn () =
     let dev_null = Caml_unix.openfile "/dev/null" [ O_WRONLY ] 0 in
     Caml_unix.dup2 dev_null Caml_unix.stdout;
@@ -124,10 +136,14 @@ let send_message t socket msg_type content =
 
 let create () =
   let conn_info = conn_info () in
+  let key = Yojson.Basic.Util.(conn_info |> member "key" |> to_string) in
+  let connection_file = make_connection_file key in
   Stdio.Out_channel.write_all connection_file
     ~data:(Yojson.Safe.to_string conn_info);
 
-  let ark_pid = Eio_unix.run_in_systhread start_kernel in
+  let ark_pid =
+    Eio_unix.run_in_systhread (fun () -> start_kernel connection_file)
+  in
 
   (* Connect to ark kernel *)
   let ctx = Zmq.Context.create () in
@@ -147,9 +163,10 @@ let create () =
     shell;
     iopub;
     ark_pid;
-    key = Yojson.Basic.Util.(conn_info |> member "key" |> to_string);
+    key;
     session_id;
     saw_busy = false;
+    connection_file;
   }
 
 let recv_message socket =
@@ -243,4 +260,5 @@ let deinit t =
   Caml_unix.kill (Core.Pid.to_int t.ark_pid) Stdlib.Sys.sigterm;
   Zmq.Socket.close t.shell;
   Zmq.Socket.close t.iopub;
-  Zmq.Context.terminate t.ctx
+  Zmq.Context.terminate t.ctx;
+  Unix.unlink t.connection_file
