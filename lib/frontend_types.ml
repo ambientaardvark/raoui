@@ -2,8 +2,16 @@ let prompt = "> "
 let continued_prompt = ". "
 let pending_prompt = "  "
 
+type lex_line = {
+  text : string;
+  tokens : R_lexer.token list;
+  start_mode : R_lexer.mode;
+  end_mode : R_lexer.mode;
+}
+
 type model = {
   lines : Unicode_string.t list;
+  lex_cache : lex_line list;
   cursor_row : int;
   cursor_col : int;
   prompt_top_row : int;

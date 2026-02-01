@@ -17,16 +17,10 @@ let view_ops model =
   let prompt_width = String.length prompt in
   let width = effective_width model in
 
-  (* Highlight all lines, tracking lexer mode *)
+  (* Convert cached tokens to spans *)
   let highlighted_lines =
-    let rec loop mode acc = function
-      | [] -> List.rev acc
-      | line :: rest ->
-          let line_str = Unicode_string.to_string line in
-          let spans, new_mode = Syntax.highlight_line mode line_str in
-          loop new_mode (spans :: acc) rest
-    in
-    loop R_lexer.Normal [] model.lines
+    List.map model.lex_cache ~f:(fun lex_line ->
+      List.map lex_line.tokens ~f:Syntax.token_to_span)
   in
 
   (* Wrap each line's spans for display *)
@@ -92,7 +86,7 @@ let view_ops model =
     end
   );
 
-  let visible_rows = min (total_rows - skip_rows) model.term_height in
+  let visible_rows = max 0 (min (total_rows - skip_rows) model.term_height) in
   let old_visible_rows = min model.prompt_box_height model.term_height in
   let extra_lines = old_visible_rows - visible_rows in
   let cursor_after_render = viewport_start + visible_rows - 1 in

@@ -82,8 +82,10 @@ let rec await_dim_change prev_width prev_height =
 let make_init () : Frontend_types.model =
   let row, _col = get_cursor_position () in
   let term_width, term_height = get_term_dimensions () in
+  let lines = [ Unicode_string.empty ] in
   {
-    lines = [ Unicode_string.empty ];
+    lines;
+    lex_cache = Update.lex_cache_for_lines lines;
     cursor_row = 0;
     cursor_col = 0;
     prompt_top_row = row;

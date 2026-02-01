@@ -35,7 +35,7 @@ type mode =
   | In_double_quote of string
   | In_single_quote of string
   | In_backtick of string
-  | In_raw_string of string * string  (* closing_seq, accumulated *)
+  | In_raw_string of string * string (* closing_seq, accumulated *)
 
 let digit = [%sedlex.regexp? '0' .. '9']
 let hex_digit = [%sedlex.regexp? '0' .. '9' | 'a' .. 'f' | 'A' .. 'F']
@@ -59,21 +59,21 @@ let imaginary_number = [%sedlex.regexp? (integer | floating_point), 'i']
 
 let complex_number =
   [%sedlex.regexp?
-    real_number, Chars "+-", imaginary_number
-    | imaginary_number, Chars "+-", real_number]
+    ( real_number, Chars "+-", imaginary_number
+    | imaginary_number, Chars "+-", real_number )]
 
 let r_number = [%sedlex.regexp? real_number | complex_number | imaginary_number]
 let double_quote_string = [%sedlex.regexp? '"', Star (Compl '"' | "\\\""), '"']
 let _raw_string_start = [%sedlex.regexp? "r\""]
 let whitespace = [%sedlex.regexp? Plus (Chars "\t ")]
-let punctuation = [%sedlex.regexp? Chars ",;"]
+let punctuation = [%sedlex.regexp? Chars ",;_"]
 let wildcard_operator = [%sedlex.regexp? '%', Plus (Compl '%'), '%']
 let escaped_char = [%sedlex.regexp? "\\", any]
 
 let constant =
   [%sedlex.regexp?
-    ( "TRUE" | "FALSE" | "NULL" | "NA" | "Inf" | "NaN"
-    | "NA_integer_" | "NA_real_" | "NA_complex_" | "NA_character_" )]
+    ( "TRUE" | "FALSE" | "NULL" | "NA" | "Inf" | "NaN" | "NA_integer_"
+    | "NA_real_" | "NA_complex_" | "NA_character_" )]
 
 let keyword_of_string = function
   | "if" -> Some IF
@@ -89,12 +89,15 @@ let keyword_of_string = function
   | _ -> None
 
 let ident_start = [%sedlex.regexp? 'a' .. 'z' | 'A' .. 'Z']
-let ident_continue = [%sedlex.regexp? 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '.']
+
+let ident_continue =
+  [%sedlex.regexp? 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '.']
+
 let ident =
   [%sedlex.regexp?
-    ident_start, Star ident_continue
+    ( ident_start, Star ident_continue
     | '.', ident_start, Star ident_continue
-    | "..."]
+    | "..." )]
 
 let multi_char_operators =
   [%sedlex.regexp?
@@ -136,11 +139,13 @@ let read_backtick prev buf =
   let rec loop acc buf =
     match%sedlex buf with
     | escaped_char -> loop (Utf8.lexeme buf :: acc) buf
-    | '`' -> (BACKTICK_IDENT ((acc |> List.rev |> String.concat "") ^ "`"), Normal)
+    | '`' ->
+        (BACKTICK_IDENT ((acc |> List.rev |> String.concat "") ^ "`"), Normal)
     | any -> loop (Utf8.lexeme buf :: acc) buf
     | eof ->
         if acc = [ prev ] then (EOF, In_backtick prev)
-        else (BACKTICK_IDENT (acc |> List.rev |> String.concat ""), In_backtick "")
+        else
+          (BACKTICK_IDENT (acc |> List.rev |> String.concat ""), In_backtick "")
     | _ -> failwith "unreachable"
   in
   loop [ prev ] buf
@@ -160,13 +165,16 @@ let read_raw_string closing_seq prev buf =
         let c = Utf8.lexeme buf in
         let acc' = c :: acc in
         let current = acc' |> List.rev |> String.concat "" in
-        if String.length current >= close_len
-           && String.sub current (String.length current - close_len) close_len = closing_seq
+        if
+          String.length current >= close_len
+          && String.sub current (String.length current - close_len) close_len
+             = closing_seq
         then (STRING (prev ^ current), Normal)
         else loop acc' buf
     | eof ->
         let current = acc |> List.rev |> String.concat "" in
-        if current = "" && prev = "" then (EOF, In_raw_string (closing_seq, prev))
+        if current = "" && prev = "" then
+          (EOF, In_raw_string (closing_seq, prev))
         else (STRING (prev ^ current), In_raw_string (closing_seq, ""))
     | _ -> failwith "unreachable"
   in
@@ -210,9 +218,9 @@ let read_normal buf =
   | punctuation -> (PUNCTUATION (Utf8.lexeme buf), Normal)
   | whitespace -> (WHITESPACE (Utf8.lexeme buf), Normal)
   | constant -> (CONSTANT (Utf8.lexeme buf), Normal)
-  | ident ->
+  | ident -> (
       let s = Utf8.lexeme buf in
-      (match keyword_of_string s with
+      match keyword_of_string s with
       | Some kw -> (KEYWORD kw, Normal)
       | None -> (IDENT s, Normal))
   | eof -> (EOF, Normal)

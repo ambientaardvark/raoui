@@ -20,6 +20,7 @@ let make_model () =
   {
     Frontend_types.
     lines;
+    lex_cache = Update.lex_cache_for_lines lines;
     cursor_row = cursor_line;  (* simplified: assume no wrapping *)
     cursor_col = cursor_col;
     prompt_top_row = 1;

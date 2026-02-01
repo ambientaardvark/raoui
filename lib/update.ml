@@ -1,5 +1,46 @@
 open Frontend_types
 
+let lex_cache_for_lines lines =
+  let rec loop mode acc = function
+    | [] -> List.rev acc
+    | line :: rest ->
+        let text = Unicode_string.to_string line in
+        let tokens, end_mode = R_lexer.lex_line mode text in
+        let entry = { text; tokens; start_mode = mode; end_mode } in
+        loop end_mode (entry :: acc) rest
+  in
+  loop R_lexer.Normal [] lines
+
+let lexer_update start end_ model =
+  let rec loop i mode lines cache acc =
+    match lines with
+    | [] -> List.rev acc
+    | line :: rest ->
+        if i < start then
+          match cache with
+          | cached :: cache_rest ->
+              loop (i + 1) cached.end_mode rest cache_rest (cached :: acc)
+          | [] -> List.rev acc
+        else if i > end_ && R_lexer.(mode = Normal) then
+          match cache with
+          | cached :: cache_rest
+            when R_lexer.(cached.start_mode = Normal) ->
+              List.rev acc @ (cached :: cache_rest)
+          | _ ->
+              let text = Unicode_string.to_string line in
+              let tokens, end_mode = R_lexer.lex_line mode text in
+              let entry = { text; tokens; start_mode = mode; end_mode } in
+              let cache_rest = match cache with _ :: tl -> tl | [] -> [] in
+              loop (i + 1) end_mode rest cache_rest (entry :: acc)
+        else
+          let text = Unicode_string.to_string line in
+          let tokens, end_mode = R_lexer.lex_line mode text in
+          let entry = { text; tokens; start_mode = mode; end_mode } in
+          let cache_rest = match cache with _ :: tl -> tl | [] -> [] in
+          loop (i + 1) end_mode rest cache_rest (entry :: acc)
+  in
+  { model with lex_cache = loop 0 R_lexer.Normal model.lines model.lex_cache [] }
+
 let insert_char model c =
   let width = effective_width model in
   let line_idx, col =
@@ -19,6 +60,7 @@ let insert_char model c =
         cursor_row = new_row;
         cursor_col = new_col;
       }
+      |> lexer_update line_idx line_idx
 
 let delete_char model =
   let width = effective_width model in
@@ -46,6 +88,7 @@ let delete_char model =
         cursor_row = new_row;
         cursor_col = new_col;
       }
+      |> lexer_update (line_idx - 1) (line_idx - 1)
   else
     let line = get_line model.lines line_idx in
     let new_line = Unicode_string.delete line (col - 1) in
@@ -54,6 +97,7 @@ let delete_char model =
       internal_to_terminal width new_lines (line_idx, col - 1)
     in
     { model with lines = new_lines; cursor_row = new_row; cursor_col = new_col }
+    |> lexer_update line_idx line_idx
 
 let insert_newline model =
   let width = effective_width model in
@@ -71,6 +115,7 @@ let insert_newline model =
     internal_to_terminal width new_lines (line_idx + 1, 0)
   in
   { model with lines = new_lines; cursor_row = new_row; cursor_col = new_col }
+  |> lexer_update line_idx (line_idx + 1)
 
 let insert_paste model text =
   let max_len = 5 * 1024 in
@@ -123,6 +168,7 @@ let insert_paste model text =
     internal_to_terminal width new_lines (final_line_idx, final_col)
   in
   { model with lines = new_lines; cursor_row = new_row; cursor_col = new_col }
+  |> lexer_update line_idx final_line_idx
 
 let move_left model =
   let width = effective_width model in
@@ -222,6 +268,7 @@ let shift_history model ~amount =
     {
       model with
       lines;
+      lex_cache = lex_cache_for_lines lines;
       place_in_history = place;
       flipping_through_history = Some 2;
       original_prompt = Some original_prompt;
@@ -249,6 +296,7 @@ let delete_before_cursor model =
     let new_lines = update_line model.lines line_idx new_line in
     let new_row, new_col = internal_to_terminal width new_lines (line_idx, 0) in
     { model with lines = new_lines; cursor_row = new_row; cursor_col = new_col }
+    |> lexer_update line_idx line_idx
 
 let delete_char_after_cursor model =
   let after_move_right = move_right model in
@@ -258,15 +306,75 @@ let delete_char_after_cursor model =
   then model
   else delete_char after_move_right
 
+let update_balance (parens, brackets, braces) tokens =
+  List.fold_left
+    (fun (p, b, r) -> function
+      | R_lexer.LEFT_PAREN -> (p + 1, b, r)
+      | R_lexer.RIGHT_PAREN -> (max 0 (p - 1), b, r)
+      | R_lexer.LEFT_BRACKET -> (p, b + 1, r)
+      | R_lexer.RIGHT_BRACKET -> (p, max 0 (b - 1), r)
+      | R_lexer.LEFT_BRACE -> (p, b, r + 1)
+      | R_lexer.RIGHT_BRACE -> (p, b, max 0 (r - 1))
+      | _ -> (p, b, r))
+    (parens, brackets, braces)
+    tokens
+
+let check_keyword_continuation tokens =
+  let rec last_non_ws = function
+    | [] -> None
+    | R_lexer.WHITESPACE _ :: rest -> last_non_ws rest
+    | x :: _ -> Some x
+  in
+  let trailing =
+    match last_non_ws (List.rev tokens) with
+    | None -> false
+    | Some token -> (
+        match token with
+        | R_lexer.KEYWORD R_lexer.IF -> true
+        | R_lexer.KEYWORD R_lexer.ELSE -> true
+        | R_lexer.KEYWORD R_lexer.FOR -> true
+        | R_lexer.KEYWORD R_lexer.WHILE -> true
+        | R_lexer.KEYWORD R_lexer.FUNCTION -> true
+        | R_lexer.KEYWORD R_lexer.REPEAT -> true
+        | R_lexer.KEYWORD R_lexer.IN -> true
+        | R_lexer.OPERATOR _ -> true
+        | R_lexer.LEFT_PAREN | R_lexer.LEFT_BRACKET | R_lexer.LEFT_BRACE ->
+            true
+        | R_lexer.PUNCTUATION "," -> true
+        | _ -> false)
+  in
+  let rec control_needs_body seen_control seen_lbrace_after = function
+    | [] -> seen_control && not seen_lbrace_after
+    | R_lexer.KEYWORD
+        (R_lexer.IF | R_lexer.FOR | R_lexer.WHILE | R_lexer.FUNCTION
+        | R_lexer.ELSE | R_lexer.REPEAT) :: rest ->
+        control_needs_body true false rest
+    | R_lexer.LEFT_BRACE :: rest when seen_control ->
+        control_needs_body seen_control true rest
+    | _ :: rest -> control_needs_body seen_control seen_lbrace_after rest
+  in
+  trailing || control_needs_body false false tokens
+
+let rec needs_continuation balance = function
+  | [] -> false
+  | [ tokens ] ->
+      let parens, brackets, braces = update_balance balance tokens in
+      let unclosed = parens > 0 || brackets > 0 || braces > 0 in
+      unclosed || check_keyword_continuation tokens
+  | tokens :: rest ->
+      let balance = update_balance balance tokens in
+      needs_continuation balance rest
+
 let submit model =
   (* Check if expression needs continuation *)
-  let lines_as_strings = List.map Unicode_string.to_string model.lines in
-  let cont = Syntax.check_lines lines_as_strings in
-  if cont.needs_continuation then
+  let token_lines = List.map (fun l -> l.tokens) model.lex_cache in
+  if needs_continuation (0, 0, 0) token_lines then
     (* Insert newline instead of submitting *)
     Continue (insert_newline model)
   else
-    let text = String.concat "\n" lines_as_strings in
+    let text =
+      String.concat "\n" (List.map Unicode_string.to_string model.lines)
+    in
     let width = effective_width model in
     let wrapped = wrap_lines width model.lines in
     let total_rows = List.length wrapped in
@@ -285,6 +393,7 @@ let submit model =
         prompt_top_row = new_prompt_top + scroll_amount;
         previous_prompt_top_row = new_prompt_top + scroll_amount;
         lines = [ Unicode_string.empty ];
+        lex_cache = lex_cache_for_lines [ Unicode_string.empty ];
         cursor_row = 0;
         cursor_col = 0;
         prompt_box_height = 1;

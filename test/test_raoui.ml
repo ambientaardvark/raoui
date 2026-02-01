@@ -16,8 +16,10 @@ let us s =
 let first_line_str model = Unicode_string.to_string (List.hd model.lines)
 
 let initial_model width =
+  let lines = [ Unicode_string.empty ] in
   {
-    lines = [ Unicode_string.empty ];
+    lines;
+    lex_cache = Update.lex_cache_for_lines lines;
     cursor_row = 0;
     cursor_col = 0;
     prompt_top_row = 0;
@@ -37,6 +39,38 @@ let initial_model width =
     place_in_history = 0;
     flipping_through_history = None;
   }
+
+let with_lines model lines =
+  { model with lines; lex_cache = Update.lex_cache_for_lines lines }
+
+let style_to_string = function
+  | `Raw -> "Raw"
+  | `Plain -> "Plain"
+  | `Accent -> "Accent"
+  | `Error -> "Error"
+  | `Keyword -> "Keyword"
+  | `String -> "String"
+  | `Number -> "Number"
+  | `Comment -> "Comment"
+  | `Operator -> "Operator"
+  | `Constant -> "Constant"
+  | `Ident -> "Ident"
+  | `Bracket -> "Bracket"
+
+let pp_span fmt (style, text) =
+  Format.fprintf fmt "(%s,%S)" (style_to_string style) text
+
+let spans_of_cache cache =
+  List.map
+    (fun l -> List.map (fun t -> Syntax.token_to_span t) l.Frontend_types.tokens)
+    cache
+
+let check_lex_cache ~msg model =
+  let expected = Update.lex_cache_for_lines model.lines |> spans_of_cache in
+  let actual = spans_of_cache model.lex_cache in
+  let span_testable = Alcotest.testable pp_span ( = ) in
+  let spans_testable = Alcotest.list span_testable in
+  Alcotest.(check (list spans_testable)) msg expected actual
 
 let insert_many model n =
   let rec loop s n =
@@ -464,9 +498,8 @@ let test_submit_blocked_while_awaiting () =
   let width = 10 in
   let model =
     {
-      (initial_model width) with
+      (with_lines (initial_model width) [ us "test" ]) with
       awaiting_response = true;
-      lines = [ us "test" ];
     }
   in
 
@@ -491,9 +524,8 @@ let test_backspace_while_awaiting () =
   let width = 10 in
   let model =
     {
-      (initial_model width) with
+      (with_lines (initial_model width) [ us "ab" ]) with
       awaiting_response = true;
-      lines = [ us "ab" ];
       cursor_col = 2;
     }
   in
@@ -517,7 +549,7 @@ let test_left_at_start () =
 let test_right_at_end () =
   let width = 10 in
   let model =
-    { (initial_model width) with lines = [ us "ab" ]; cursor_col = 2 }
+    { (with_lines (initial_model width) [ us "ab" ]) with cursor_col = 2 }
   in
 
   match Update.update Tty_listener.Right model with
@@ -528,7 +560,7 @@ let test_right_at_end () =
 let test_cursor_moves_over_wide_grapheme () =
   let width = 10 in
   let model =
-    { (initial_model width) with lines = [ us "a中b" ]; cursor_col = 0 }
+    { (with_lines (initial_model width) [ us "a中b" ]) with cursor_col = 0 }
   in
   let model =
     match Update.update Tty_listener.Right model with
@@ -552,7 +584,7 @@ let test_cursor_moves_over_wide_grapheme () =
 let test_cursor_moves_over_emoji_zwj () =
   let width = 10 in
   let model =
-    { (initial_model width) with lines = [ us "a👩🏻‍⚕️b" ]; cursor_col = 0 }
+    { (with_lines (initial_model width) [ us "a👩🏻‍⚕️b" ]) with cursor_col = 0 }
   in
   let model =
     match Update.update Tty_listener.Right model with
@@ -587,8 +619,7 @@ let test_backspace_merges_lines () =
   let width = 10 in
   let model =
     {
-      (initial_model width) with
-      lines = [ us "hello"; us "world" ];
+      (with_lines (initial_model width) [ us "hello"; us "world" ]) with
       cursor_row = 1;
       cursor_col = 0;
     }
@@ -604,7 +635,7 @@ let test_backspace_merges_lines () =
 let test_newline_splits_line () =
   let width = 10 in
   let model =
-    { (initial_model width) with lines = [ us "helloworld" ]; cursor_col = 5 }
+    { (with_lines (initial_model width) [ us "helloworld" ]) with cursor_col = 5 }
   in
 
   match Update.update (Tty_listener.Ctrl '\r') model with
@@ -626,7 +657,7 @@ let test_ctrl_d_exit_on_empty () =
 let test_ctrl_d_deletes_char () =
   let width = 10 in
   let model =
-    { (initial_model width) with lines = [ us "ab" ]; cursor_col = 0 }
+    { (with_lines (initial_model width) [ us "ab" ]) with cursor_col = 0 }
   in
 
   match Update.update (Tty_listener.Ctrl 'd') model with
@@ -638,8 +669,7 @@ let test_submit_multiline () =
   let width = 20 in
   let model =
     {
-      (initial_model width) with
-      lines = [ us "c(1,"; us "2,"; us "3)" ];
+      (with_lines (initial_model width) [ us "c(1,"; us "2,"; us "3)" ]) with
       cursor_row = 2;
       cursor_col = 2;
     }
@@ -652,6 +682,55 @@ let test_submit_multiline () =
       Alcotest.(check string) "lines reset" "" (first_line_str new_model);
       Alcotest.(check int) "lines count" 1 (List.length new_model.lines)
   | _ -> Alcotest.fail "Expected Submit result"
+
+let test_submit_continuation_if_paren () =
+  let width = 20 in
+  let line = us "if (x)" in
+  let model =
+    {
+      (with_lines (initial_model width) [ line ]) with
+      cursor_row = 0;
+      cursor_col = Unicode_string.length line;
+    }
+  in
+  match Update.submit model with
+  | Continue new_model ->
+      Alcotest.(check int) "lines count" 2 (List.length new_model.lines);
+      Alcotest.(check string)
+        "first line preserved" "if (x)" (first_line_str new_model)
+  | _ -> Alcotest.fail "Expected Continue for if (x)"
+
+let test_submit_continuation_function_paren () =
+  let width = 20 in
+  let line = us "function(x)" in
+  let model =
+    {
+      (with_lines (initial_model width) [ line ]) with
+      cursor_row = 0;
+      cursor_col = Unicode_string.length line;
+    }
+  in
+  match Update.submit model with
+  | Continue new_model ->
+      Alcotest.(check int) "lines count" 2 (List.length new_model.lines);
+      Alcotest.(check string)
+        "first line preserved" "function(x)" (first_line_str new_model)
+  | _ -> Alcotest.fail "Expected Continue for function(x)"
+
+let test_submit_if_braced_single_line () =
+  let width = 20 in
+  let line = us "if (x) { 1 }" in
+  let model =
+    {
+      (with_lines (initial_model width) [ line ]) with
+      cursor_row = 0;
+      cursor_col = Unicode_string.length line;
+    }
+  in
+  match Update.submit model with
+  | Submit (text, _new_model) ->
+      Alcotest.(check string) "submitted text" "if (x) { 1 }" text
+  | _ -> Alcotest.fail "Expected Submit for if (x) { 1 }"
 
 let test_paste_simple () =
   let width = 40 in
@@ -680,7 +759,7 @@ let test_paste_multiline () =
 let test_paste_at_cursor () =
   let width = 40 in
   let model =
-    { (initial_model width) with lines = [ us "helloworld" ]; cursor_col = 5 }
+    { (with_lines (initial_model width) [ us "helloworld" ]) with cursor_col = 5 }
   in
   match Update.update (Tty_listener.Paste "XXX") model with
   | Continue new_model ->
@@ -693,7 +772,7 @@ let test_paste_at_cursor () =
 let test_paste_multiline_at_cursor () =
   let width = 40 in
   let model =
-    { (initial_model width) with lines = [ us "helloworld" ]; cursor_col = 5 }
+    { (with_lines (initial_model width) [ us "helloworld" ]) with cursor_col = 5 }
   in
   match Update.update (Tty_listener.Paste "A\nB\nC") model with
   | Continue new_model ->
@@ -716,6 +795,37 @@ let test_paste_truncates_large () =
           (List.map Unicode_string.byte_length new_model.lines)
       in
       Alcotest.(check bool) "truncated to 5kb" true (total_len <= 5 * 1024)
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_lex_cache_single_line_edit () =
+  let width = 80 in
+  let line = us "if (x" in
+  let model =
+    {
+      (with_lines (initial_model width) [ line ]) with
+      cursor_row = 0;
+      cursor_col = Unicode_string.length line;
+    }
+  in
+  match Update.update (Tty_listener.Char ')') model with
+  | Continue new_model ->
+      check_lex_cache ~msg:"lex cache matches after single-line edit" new_model
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_lex_cache_multiline_mode_change () =
+  let width = 80 in
+  let line0 = us "\"abc" in
+  let line1 = us "def\"" in
+  let model =
+    {
+      (with_lines (initial_model width) [ line0; line1 ]) with
+      cursor_row = 0;
+      cursor_col = Unicode_string.length line0;
+    }
+  in
+  match Update.update (Tty_listener.Char '"') model with
+  | Continue new_model ->
+      check_lex_cache ~msg:"lex cache matches after multiline edit" new_model
   | _ -> Alcotest.fail "Expected Continue"
 
 let () =
@@ -788,6 +898,12 @@ let () =
           test_case "Prompt position after submit" `Quick
             test_submit_prompt_position;
           test_case "Multiline submit" `Quick test_submit_multiline;
+          test_case "Continuation if paren" `Quick
+            test_submit_continuation_if_paren;
+          test_case "Continuation function paren" `Quick
+            test_submit_continuation_function_paren;
+          test_case "If braced single line" `Quick
+            test_submit_if_braced_single_line;
         ] );
       ( "process_response",
         [
@@ -817,5 +933,11 @@ let () =
           test_case "Multiline paste at cursor" `Quick
             test_paste_multiline_at_cursor;
           test_case "Large paste truncated" `Quick test_paste_truncates_large;
+        ] );
+      ( "lex_cache",
+        [
+          test_case "Single line edit" `Quick test_lex_cache_single_line_edit;
+          test_case "Multiline mode change" `Quick
+            test_lex_cache_multiline_mode_change;
         ] );
     ]
