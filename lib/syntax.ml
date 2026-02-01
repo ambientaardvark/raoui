@@ -53,22 +53,24 @@ let tokens_to_spans (tokens : Lexer.token list) : span list =
         match (hd, next) with
         | Lexer.IDENT func_name, Lexer.LEFT_PAREN ->
             loop (token_to_span next :: (`Function, func_name) :: acc) tl
-        | _ -> loop (token_to_span next :: token_to_span hd :: acc) tl)
+        | _ -> loop (token_to_span hd :: acc) (next :: tl))
     | hd :: tl -> loop (token_to_span hd :: acc) tl
   in
   loop [] tokens
 
 (** Highlight a line of R code, returning styled spans *)
-let highlight_line (mode : Lexer.mode) (line : string) : span list * Lexer.mode =
+let highlight_line (mode : Lexer.mode) (line : string) : span list * Lexer.mode
+    =
   let tokens, mode_out = Lexer.lex_line mode line in
-  let rec loop acc (ts: Lexer.token list) =
+  let rec loop acc (ts : Lexer.token list) =
     match ts with
     | [] -> List.rev acc
-    | hd::next::tl -> (
-      match hd, next with
-        | IDENT func_name, LEFT_PAREN ->  loop ((token_to_span next) :: (`Function, func_name) :: acc) tl
-        | _ -> loop ((token_to_span next) :: (token_to_span hd) :: acc) tl)
-    | hd::tl -> loop ((token_to_span hd) :: acc) tl
+    | hd :: next :: tl -> (
+        match (hd, next) with
+        | IDENT func_name, LEFT_PAREN ->
+            loop (token_to_span next :: (`Function, func_name) :: acc) tl
+        | _ -> loop (token_to_span hd :: acc) (next :: tl))
+    | hd :: tl -> loop (token_to_span hd :: acc) tl
   in
   let spans = loop [] tokens in
   (spans, mode_out)

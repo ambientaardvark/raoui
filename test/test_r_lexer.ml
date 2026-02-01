@@ -64,7 +64,9 @@ let test_percent_operator_single_token () =
 let test_lambda_paren_tokens () =
   let s = "\\(x)" in
   let tokens, _ = lex s RL.Normal in
-  let non_ws = List.filter (function RL.WHITESPACE _ -> false | _ -> true) tokens in
+  let non_ws =
+    List.filter (function RL.WHITESPACE _ -> false | _ -> true) tokens
+  in
   match non_ws with
   | [ RL.LAMBDA; RL.LEFT_PAREN; RL.IDENT "x"; RL.RIGHT_PAREN ] ->
       check bool "lambda tokens" true true
@@ -73,48 +75,36 @@ let test_lambda_paren_tokens () =
 (* Helper to check a single token *)
 let check_single_token name input expected =
   let tokens, _ = lex input RL.Normal in
-  let non_ws = List.filter (function RL.WHITESPACE _ -> false | _ -> true) tokens in
+  let non_ws =
+    List.filter (function RL.WHITESPACE _ -> false | _ -> true) tokens
+  in
   check int (name ^ " token count") 1 (List.length non_ws);
   check string (name ^ " value") expected (token_lexeme (List.hd non_ws))
 
 let is_constant = function RL.CONSTANT _ -> true | _ -> false
 
 (* Number tests *)
-let test_integer () =
-  check_single_token "integer" "42" "42"
-
-let test_float () =
-  check_single_token "float" "3.14" "3.14"
-
-let test_float_leading_dot () =
-  check_single_token "leading dot float" ".5" ".5"
+let test_integer () = check_single_token "integer" "42" "42"
+let test_float () = check_single_token "float" "3.14" "3.14"
+let test_float_leading_dot () = check_single_token "leading dot float" ".5" ".5"
 
 let test_float_trailing_dot () =
   check_single_token "trailing dot float" "5." "5."
 
-let test_hex_number () =
-  check_single_token "hex" "0xff" "0xff"
-
-let test_binary_number () =
-  check_single_token "binary" "0b101" "0b101"
-
-let test_scientific_notation () =
-  check_single_token "scientific" "1e10" "1e10"
+let test_hex_number () = check_single_token "hex" "0xff" "0xff"
+let test_binary_number () = check_single_token "binary" "0b101" "0b101"
+let test_scientific_notation () = check_single_token "scientific" "1e10" "1e10"
 
 let test_scientific_negative_exp () =
   check_single_token "scientific neg exp" "1e-5" "1e-5"
 
-let test_imaginary_number () =
-  check_single_token "imaginary" "2i" "2i"
-
-let test_complex_number () =
-  check_single_token "complex" "1+2i" "1+2i"
+let test_imaginary_number () = check_single_token "imaginary" "2i" "2i"
+let test_complex_number () = check_single_token "complex" "1+2i" "1+2i"
 
 let test_complex_imaginary_first () =
   check_single_token "complex imag first" "2i+1" "2i+1"
 
-let test_integer_suffix () =
-  check_single_token "integer L suffix" "42L" "42L"
+let test_integer_suffix () = check_single_token "integer L suffix" "42L" "42L"
 
 (* String tests *)
 let test_double_quote_string () =
@@ -126,18 +116,19 @@ let test_single_quote_string () =
 let test_string_with_escape () =
   check_single_token "escaped quote" "\"say \\\"hi\\\"\"" "\"say \\\"hi\\\"\""
 
-let test_empty_string () =
-  check_single_token "empty string" "\"\"" "\"\""
+let test_empty_string () = check_single_token "empty string" "\"\"" "\"\""
 
 (* Raw string tests *)
 let test_raw_string_basic () =
   check_single_token "raw string basic" "r\"(hello)\"" "r\"(hello)\""
 
 let test_raw_string_with_delimiter () =
-  check_single_token "raw string delimiter" "r\"---(hello)---\"" "r\"---(hello)---\""
+  check_single_token "raw string delimiter" "r\"---(hello)---\""
+    "r\"---(hello)---\""
 
 let test_raw_string_with_quotes () =
-  check_single_token "raw string with quotes" "r\"(say \"hi\")\"" "r\"(say \"hi\")\""
+  check_single_token "raw string with quotes" "r\"(say \"hi\")\""
+    "r\"(say \"hi\")\""
 
 let test_raw_string_uppercase () =
   check_single_token "raw string uppercase R" "R\"(hello)\"" "R\"(hello)\""
@@ -149,8 +140,7 @@ let test_raw_string_braces () =
   check_single_token "raw string braces" "r\"{hello}\"" "r\"{hello}\""
 
 (* Identifier tests *)
-let test_simple_ident () =
-  check_single_token "simple ident" "foo" "foo"
+let test_simple_ident () = check_single_token "simple ident" "foo" "foo"
 
 let test_ident_with_dots () =
   check_single_token "ident with dots" "data.frame" "data.frame"
@@ -158,11 +148,8 @@ let test_ident_with_dots () =
 let test_ident_with_underscore () =
   check_single_token "ident with underscore" "my_var" "my_var"
 
-let test_dot_ident () =
-  check_single_token "dot ident" ".Internal" ".Internal"
-
-let test_ellipsis () =
-  check_single_token "ellipsis" "..." "..."
+let test_dot_ident () = check_single_token "dot ident" ".Internal" ".Internal"
+let test_ellipsis () = check_single_token "ellipsis" "..." "..."
 
 (* Backtick identifier tests *)
 let test_backtick_ident () =
@@ -222,7 +209,8 @@ let test_keyword_while () =
 
 let test_keyword_function () =
   let tokens, _ = lex "function" RL.Normal in
-  check bool "function is FUNCTION" true (List.hd tokens = RL.KEYWORD RL.FUNCTION)
+  check bool "function is FUNCTION" true
+    (List.hd tokens = RL.KEYWORD RL.FUNCTION)
 
 let test_keyword_in () =
   let tokens, _ = lex "in" RL.Normal in
@@ -233,48 +221,22 @@ let test_keyword_return () =
   check bool "return is RETURN" true (List.hd tokens = RL.KEYWORD RL.RETURN)
 
 (* Operator tests *)
-let test_assignment () =
-  check_single_token "assignment" "<-" "<-"
-
-let test_right_assignment () =
-  check_single_token "right assignment" "->" "->"
-
-let test_double_colon () =
-  check_single_token "namespace" "::" "::"
-
-let test_triple_colon () =
-  check_single_token "internal namespace" ":::" ":::"
-
-let test_pipe () =
-  check_single_token "pipe" "|>" "|>"
-
-let test_equality () =
-  check_single_token "equality" "==" "=="
-
-let test_inequality () =
-  check_single_token "inequality" "!=" "!="
-
-let test_dollar () =
-  check_single_token "dollar" "$" "$"
-
-let test_at () =
-  check_single_token "at" "@" "@"
-
-let test_tilde () =
-  check_single_token "tilde" "~" "~"
-
-let test_question () =
-  check_single_token "question" "?" "?"
-
-let test_colon () =
-  check_single_token "colon" ":" ":"
+let test_assignment () = check_single_token "assignment" "<-" "<-"
+let test_right_assignment () = check_single_token "right assignment" "->" "->"
+let test_double_colon () = check_single_token "namespace" "::" "::"
+let test_triple_colon () = check_single_token "internal namespace" ":::" ":::"
+let test_pipe () = check_single_token "pipe" "|>" "|>"
+let test_equality () = check_single_token "equality" "==" "=="
+let test_inequality () = check_single_token "inequality" "!=" "!="
+let test_dollar () = check_single_token "dollar" "$" "$"
+let test_at () = check_single_token "at" "@" "@"
+let test_tilde () = check_single_token "tilde" "~" "~"
+let test_question () = check_single_token "question" "?" "?"
+let test_colon () = check_single_token "colon" ":" ":"
 
 (* Punctuation tests *)
-let test_comma () =
-  check_single_token "comma" "," ","
-
-let test_semicolon () =
-  check_single_token "semicolon" ";" ";"
+let test_comma () = check_single_token "comma" "," ","
+let test_semicolon () = check_single_token "semicolon" ";" ";"
 
 (* Bracket tests *)
 let test_parens () =
@@ -294,6 +256,12 @@ let test_braces () =
   check int "braces count" 2 (List.length tokens);
   check bool "left brace" true (List.hd tokens = RL.LEFT_BRACE);
   check bool "right brace" true (List.nth tokens 1 = RL.RIGHT_BRACE)
+
+let test_func () =
+  let tokens, _ = lex "  f(x)" RL.Normal in
+  check bool "leading whitespace" true (List.hd tokens = RL.WHITESPACE "  ");
+  check bool "ident func name" true (List.nth tokens 1 = RL.IDENT "f");
+  check bool "next left paren" true (List.nth tokens 2 = RL.LEFT_PAREN)
 
 (* Multiline tests *)
 let test_multiline_single_quote () =
@@ -359,10 +327,12 @@ let () =
           test_case "hex" `Quick test_hex_number;
           test_case "binary" `Quick test_binary_number;
           test_case "scientific" `Quick test_scientific_notation;
-          test_case "scientific negative exp" `Quick test_scientific_negative_exp;
+          test_case "scientific negative exp" `Quick
+            test_scientific_negative_exp;
           test_case "imaginary" `Quick test_imaginary_number;
           test_case "complex" `Quick test_complex_number;
-          test_case "complex imaginary first" `Quick test_complex_imaginary_first;
+          test_case "complex imaginary first" `Quick
+            test_complex_imaginary_first;
           test_case "integer L suffix" `Quick test_integer_suffix;
         ] );
       ( "strings",
@@ -388,6 +358,7 @@ let () =
           test_case "with underscore" `Quick test_ident_with_underscore;
           test_case "dot prefix" `Quick test_dot_ident;
           test_case "ellipsis" `Quick test_ellipsis;
+          test_case "function" `Quick test_func;
         ] );
       ( "backtick_idents",
         [
