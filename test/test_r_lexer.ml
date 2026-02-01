@@ -19,6 +19,7 @@ let token_lexeme : RL.token -> string = function
   | RL.IDENT s -> s
   | RL.BACKTICK_IDENT s -> s
   | RL.PUNCTUATION s -> s
+  | RL.LAMBDA -> "\\"
   | RL.LEFT_PAREN -> "("
   | RL.RIGHT_PAREN -> ")"
   | RL.LEFT_BRACKET -> "["
@@ -59,6 +60,15 @@ let test_percent_operator_single_token () =
       tokens
   in
   check int "find exactly one %>% operator token" 1 (List.length pct_ops)
+
+let test_lambda_paren_tokens () =
+  let s = "\\(x)" in
+  let tokens, _ = lex s RL.Normal in
+  let non_ws = List.filter (function RL.WHITESPACE _ -> false | _ -> true) tokens in
+  match non_ws with
+  | [ RL.LAMBDA; RL.LEFT_PAREN; RL.IDENT "x"; RL.RIGHT_PAREN ] ->
+      check bool "lambda tokens" true true
+  | _ -> fail "unexpected lambda tokenization"
 
 (* Helper to check a single token *)
 let check_single_token name input expected =
@@ -338,6 +348,7 @@ let () =
           test_case "multiline string mode" `Quick test_multiline_string_mode;
           test_case "%...% operator is single token" `Quick
             test_percent_operator_single_token;
+          test_case "lambda paren tokens" `Quick test_lambda_paren_tokens;
         ] );
       ( "numbers",
         [

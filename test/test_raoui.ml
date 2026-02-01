@@ -732,6 +732,22 @@ let test_submit_if_braced_single_line () =
       Alcotest.(check string) "submitted text" "if (x) { 1 }" text
   | _ -> Alcotest.fail "Expected Submit for if (x) { 1 }"
 
+let test_submit_lambda_body_same_line () =
+  let width = 40 in
+  let line = us "map_dbl(li, \\(x) x + 1)" in
+  let model =
+    {
+      (with_lines (initial_model width) [ line ]) with
+      cursor_row = 0;
+      cursor_col = Unicode_string.length line;
+    }
+  in
+  match Update.submit model with
+  | Submit (text, _new_model) ->
+      Alcotest.(check string)
+        "submitted text" "map_dbl(li, \\(x) x + 1)" text
+  | _ -> Alcotest.fail "Expected Submit for lambda body on same line"
+
 let test_paste_simple () =
   let width = 40 in
   let model = initial_model width in
@@ -904,6 +920,8 @@ let () =
             test_submit_continuation_function_paren;
           test_case "If braced single line" `Quick
             test_submit_if_braced_single_line;
+          test_case "Lambda body same line" `Quick
+            test_submit_lambda_body_same_line;
         ] );
       ( "process_response",
         [

@@ -20,6 +20,7 @@ type token =
   | IDENT of string
   | BACKTICK_IDENT of string
   | PUNCTUATION of string
+  | LAMBDA
   | LEFT_PAREN
   | RIGHT_PAREN
   | LEFT_BRACKET
@@ -66,7 +67,7 @@ let r_number = [%sedlex.regexp? real_number | complex_number | imaginary_number]
 let double_quote_string = [%sedlex.regexp? '"', Star (Compl '"' | "\\\""), '"']
 let _raw_string_start = [%sedlex.regexp? "r\""]
 let whitespace = [%sedlex.regexp? Plus (Chars "\t ")]
-let punctuation = [%sedlex.regexp? Chars ",;_"]
+let punctuation = [%sedlex.regexp? Chars ",;_\\"]
 let wildcard_operator = [%sedlex.regexp? '%', Plus (Compl '%'), '%']
 let escaped_char = [%sedlex.regexp? "\\", any]
 
@@ -205,6 +206,7 @@ let read_normal buf =
   | '"' -> read_double_quote "\"" buf
   | '\'' -> read_single_quote "'" buf
   | '`' -> read_backtick "`" buf
+  | '\\', '(' -> (LAMBDA, Normal)
   | r_number -> (NUMBER (Utf8.lexeme buf), Normal)
   | '(' -> (LEFT_PAREN, Normal)
   | ')' -> (RIGHT_PAREN, Normal)
@@ -257,6 +259,7 @@ let print_type = function
   | IDENT s -> Printf.sprintf "IDENT: %s" s
   | BACKTICK_IDENT s -> Printf.sprintf "BACKTICK_IDENT: %s" s
   | PUNCTUATION s -> Printf.sprintf "PUNCTUATION: %s" s
+  | LAMBDA -> "LAMBDA"
   | LEFT_PAREN -> "LEFT_PAREN"
   | RIGHT_PAREN -> "RIGHT_PAREN"
   | LEFT_BRACKET -> "LEFT_BRACKET"
@@ -277,6 +280,9 @@ let lex_line mode line =
     else
       match token mode buf with
       | EOF, m -> (List.rev acc, m)
+      | LAMBDA, m ->
+          (* Expand \(. into lambda token plus left paren for balance logic. *)
+          loop (LEFT_PAREN :: LAMBDA :: acc) m buf
       | t, m -> loop (t :: acc) m buf
   in
   loop [] mode for_lexer

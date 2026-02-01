@@ -315,6 +315,7 @@ let update_balance (parens, brackets, braces) tokens =
       | R_lexer.RIGHT_BRACKET -> (p, max 0 (b - 1), r)
       | R_lexer.LEFT_BRACE -> (p, b, r + 1)
       | R_lexer.RIGHT_BRACE -> (p, b, max 0 (r - 1))
+      | R_lexer.LAMBDA -> (p, b, r)
       | _ -> (p, b, r))
     (parens, brackets, braces)
     tokens
@@ -343,17 +344,50 @@ let check_keyword_continuation tokens =
         | R_lexer.PUNCTUATION "," -> true
         | _ -> false)
   in
-  let rec control_needs_body seen_control seen_lbrace_after = function
-    | [] -> seen_control && not seen_lbrace_after
-    | R_lexer.KEYWORD
-        (R_lexer.IF | R_lexer.FOR | R_lexer.WHILE | R_lexer.FUNCTION
-        | R_lexer.ELSE | R_lexer.REPEAT) :: rest ->
-        control_needs_body true false rest
-    | R_lexer.LEFT_BRACE :: rest when seen_control ->
-        control_needs_body seen_control true rest
-    | _ :: rest -> control_needs_body seen_control seen_lbrace_after rest
+  let is_ignorable = function
+    | R_lexer.WHITESPACE _ | R_lexer.COMMENT _ -> true
+    | _ -> false
   in
-  trailing || control_needs_body false false tokens
+  let needs_paren = function
+    | `If | `For | `While | `Function | `Lambda -> true
+    | `Else | `Repeat -> false
+  in
+  let control_of_token = function
+    | R_lexer.KEYWORD R_lexer.IF -> Some `If
+    | R_lexer.KEYWORD R_lexer.FOR -> Some `For
+    | R_lexer.KEYWORD R_lexer.WHILE -> Some `While
+    | R_lexer.KEYWORD R_lexer.FUNCTION -> Some `Function
+    | R_lexer.KEYWORD R_lexer.ELSE -> Some `Else
+    | R_lexer.KEYWORD R_lexer.REPEAT -> Some `Repeat
+    | R_lexer.LAMBDA -> Some `Lambda
+    | _ -> None
+  in
+  let rec scan control header_open paren_depth body_present = function
+    | [] -> (match control with Some _ -> not body_present | None -> false)
+    | tok :: rest ->
+        let control, header_open, paren_depth, body_present =
+          match control_of_token tok with
+          | Some c ->
+              let header_open = needs_paren c in
+              (Some c, header_open, 0, false)
+          | None ->
+              (match control, header_open with
+               | Some _, true ->
+                   (match tok with
+                    | R_lexer.LEFT_PAREN -> (control, header_open, paren_depth + 1, body_present)
+                    | R_lexer.RIGHT_PAREN ->
+                        let new_depth = max 0 (paren_depth - 1) in
+                        let header_open = new_depth > 0 in
+                        (control, header_open, new_depth, body_present)
+                    | _ -> (control, header_open, paren_depth, body_present))
+               | Some _, false ->
+                   if body_present || is_ignorable tok then (control, header_open, paren_depth, body_present)
+                   else (control, header_open, paren_depth, true)
+               | None, _ -> (control, header_open, paren_depth, body_present))
+        in
+        scan control header_open paren_depth body_present rest
+  in
+  trailing || scan None false 0 false tokens
 
 let rec needs_continuation balance = function
   | [] -> false
