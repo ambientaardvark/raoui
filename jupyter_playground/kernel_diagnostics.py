@@ -329,6 +329,7 @@ if __name__ == '__main__':
         ("Simple plot", "plot(1:10)"),
         ("Histogram", "hist(rnorm(100))"),
         ("ggplot (if available)", "if(require(ggplot2, quietly=TRUE)) ggplot(mtcars, aes(mpg)) + geom_histogram() else 'ggplot2 not installed'"),
+        ("ggplot scatter", "library(ggplot2); ggplot(mtcars, aes(x=wt, y=mpg)) + geom_point()"),
         # Message/cat to stderr
         ("Message to stderr", "message('this is a message'); 'done'"),
         # Invisible return

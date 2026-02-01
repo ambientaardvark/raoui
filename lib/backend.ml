@@ -29,26 +29,33 @@ type t = {
   connection_file : string;
 }
 
+let exe_dir () =
+  Stdlib.Filename.dirname (Caml_unix.realpath Stdlib.Sys.executable_name)
+
 let kernel_path () =
-  let candidates =
-    [
-      "vendor/ark-0.1.227-linux-x64/ark";
-      "vendor/ark-0.1.223-darwin-universal/ark";
-    ]
-  in
-  let rec first_existing = function
-    | [] -> None
-    | path :: rest ->
-        if Stdlib.Sys.file_exists path then Some path else first_existing rest
-  in
-  match first_existing candidates with
-  | Some path -> path
-  | None ->
-      failwith
-        "No compatible ark binary found under vendor/. Check OS-specific paths."
+  (* Check for ark next to executable first (bundle case) *)
+  let bundled_ark = Stdlib.Filename.concat (exe_dir ()) "ark" in
+  if Stdlib.Sys.file_exists bundled_ark then bundled_ark
+  else
+    (* Fall back to vendor paths relative to cwd (dev case) *)
+    let candidates =
+      [
+        "vendor/ark-0.1.227-linux-x64/ark";
+        "vendor/ark-0.1.223-darwin-universal/ark";
+      ]
+    in
+    match List.find candidates ~f:Stdlib.Sys.file_exists with
+    | Some path -> path
+    | None ->
+        failwith
+          "No ark binary found. Expected either next to executable or in \
+           vendor/"
 
 let make_connection_file key = Printf.sprintf "/tmp/kernel%s.json" key
-let startup_file = "r_scripts/startup.R"
+
+let startup_file () =
+  let bundled = Stdlib.Filename.concat (exe_dir ()) "startup.R" in
+  if Stdlib.Sys.file_exists bundled then bundled else "r_scripts/startup.R"
 
 let random_hex_token len =
   let hex_chars = "0123456789abcdef" in
@@ -98,7 +105,7 @@ let start_kernel connection_file =
         "--session-mode";
         "console";
         "--startup-file";
-        startup_file;
+        startup_file ();
       ]
     ()
 
