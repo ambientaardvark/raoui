@@ -26,6 +26,8 @@ type t = {
   ark_pid : Core.Pid.t;
   session_id : string;
   mutable saw_busy : bool;
+  mutable ready : bool;
+  mutable pending_submit : string option;
   connection_file : string;
 }
 
@@ -173,6 +175,8 @@ let create () =
     key;
     session_id;
     saw_busy = false;
+    ready = false;
+    pending_submit = None;
     connection_file;
   }
 
@@ -191,7 +195,7 @@ let recv_message socket =
   log content;
   Yojson.Basic.(from_string header, from_string content)
 
-let submit t input =
+let send_execute_request t input =
   let content =
     `Assoc
       [
@@ -204,6 +208,46 @@ let submit t input =
       ]
   in
   send_message t t.shell "execute_request" content
+
+let flush_pending t =
+  match t.pending_submit with
+  | Some input ->
+      t.pending_submit <- None;
+      send_execute_request t input
+  | None -> ()
+
+let poll_ready t =
+  if t.ready then true
+  else
+    let open Yojson.Basic.Util in
+    let rec drain () =
+      match Zmq.Socket.recv_all ~block:false t.iopub with
+      | message -> (
+          let rec read_message parts =
+            match parts with
+            | delim :: _signature :: header :: _parent_h :: _metadata :: _content
+              :: _buffers
+              when String.equal delim "<IDS|MSG>" ->
+                header
+            | _ :: tl -> read_message tl
+            | [] -> failwith "malformed response"
+          in
+          let header = read_message message in
+          let header = Yojson.Basic.from_string header in
+          let msg_type = header |> member "msg_type" |> to_string in
+          match msg_type with
+          | "iopub_welcome" ->
+              t.ready <- true;
+              flush_pending t
+          | _ -> drain ())
+      | exception Unix.Unix_error (Unix.EAGAIN, _, _) -> ()
+    in
+    drain ();
+    t.ready
+
+let submit t input =
+  if t.ready then send_execute_request t input
+  else t.pending_submit <- Some input
 
 let parse_response response_field =
   match Yojson.Basic.Util.member "text/plain" response_field with

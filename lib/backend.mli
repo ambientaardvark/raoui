@@ -12,6 +12,10 @@ type completion = string
 
 val create : unit -> t
 
+(** Non-blocking check if kernel is ready. Returns true once the initial
+    startup idle has been received. Call in a loop with Fiber.yield. *)
+val poll_ready : t -> bool
+
 (** Send input to the backend. Returns immediately. *)
 val submit : t -> string -> unit
 

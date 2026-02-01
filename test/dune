@@ -13,3 +13,7 @@
 (test
  (name test_r_lexer)
  (libraries raoui alcotest))
+
+(test
+ (name test_ark_integration)
+ (libraries raoui alcotest eio_main))

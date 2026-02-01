@@ -158,6 +158,7 @@ let run env backend =
   let clock = Eio.Stdenv.clock env in
   let stdin = Eio.Stdenv.stdin env in
   let rec loop model =
+    let _ = Backend.poll_ready backend in
     print_string (View.view model);
     Out_channel.flush stdout;
     let msg =
