@@ -23,6 +23,8 @@ let make_model () =
     lex_cache = Update.lex_cache_for_lines lines;
     cursor_row = cursor_line;  (* simplified: assume no wrapping *)
     cursor_col = cursor_col;
+    cursor_line;
+    cursor_pos = cursor_col;
     prompt_top_row = 1;
     term_width = 80;
     term_height = 24;

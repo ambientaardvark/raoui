@@ -43,81 +43,111 @@ let lexer_update start end_ model =
     lex_cache = loop 0 R_lexer.Normal model.lines model.lex_cache [];
   }
 
+(* Cursor context primitives - use internal coordinates *)
+let current_line model = List.nth model.lines model.cursor_line
+let line_length model = Unicode_string.length (current_line model)
+
+let char_at model =
+  let line = current_line model in
+  if model.cursor_pos >= Unicode_string.length line then None
+  else Some (Unicode_string.cluster_at line model.cursor_pos)
+
+let char_before model =
+  if model.cursor_pos = 0 then None
+  else Some (Unicode_string.cluster_at (current_line model) (model.cursor_pos - 1))
+
+let at_line_start model = model.cursor_pos = 0
+let at_line_end model = model.cursor_pos >= line_length model
+let at_first_line model = model.cursor_line = 0
+let at_last_line model = model.cursor_line >= List.length model.lines - 1
+
+let same_cursor_pos m1 m2 =
+  m1.cursor_line = m2.cursor_line && m1.cursor_pos = m2.cursor_pos
+
 let insert_char model c =
   let width = effective_width model in
-  let line_idx, col =
-    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
-  in
-  let line = get_line model.lines line_idx in
-  match Unicode_string.insert_string line ~pos:col (String.make 1 c) with
+  let line = current_line model in
+  match Unicode_string.insert_string line ~pos:model.cursor_pos (String.make 1 c) with
   | Error _ -> model (* Invalid UTF-8 byte, ignore it *)
   | Ok new_line ->
-      let new_lines = update_line model.lines line_idx new_line in
+      let new_lines = update_line model.lines model.cursor_line new_line in
+      let new_pos = model.cursor_pos + 1 in
       let new_row, new_col =
-        internal_to_terminal width new_lines (line_idx, col + 1)
+        internal_to_terminal width new_lines (model.cursor_line, new_pos)
       in
       {
         model with
         lines = new_lines;
+        cursor_pos = new_pos;
         cursor_row = new_row;
         cursor_col = new_col;
       }
-      |> lexer_update line_idx line_idx
+      |> lexer_update model.cursor_line model.cursor_line
 
 let delete_char model =
   let width = effective_width model in
-  let line_idx, col =
-    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
-  in
-  if col = 0 then
-    if line_idx = 0 then model
+  if at_line_start model then
+    if at_first_line model then model
     else
-      let prev_line = get_line model.lines (line_idx - 1) in
-      let curr_line = get_line model.lines line_idx in
+      let prev_line = List.nth model.lines (model.cursor_line - 1) in
+      let curr_line = current_line model in
       let merged = Unicode_string.append prev_line curr_line in
       let new_lines =
         model.lines
-        |> List.filteri (fun i _ -> i <> line_idx)
-        |> List.mapi (fun i line -> if i = line_idx - 1 then merged else line)
+        |> List.filteri (fun i _ -> i <> model.cursor_line)
+        |> List.mapi (fun i line -> if i = model.cursor_line - 1 then merged else line)
       in
+      let new_line_idx = model.cursor_line - 1 in
+      let new_pos = Unicode_string.length prev_line in
       let new_row, new_col =
-        internal_to_terminal width new_lines
-          (line_idx - 1, Unicode_string.length prev_line)
+        internal_to_terminal width new_lines (new_line_idx, new_pos)
       in
       {
         model with
         lines = new_lines;
+        cursor_line = new_line_idx;
+        cursor_pos = new_pos;
         cursor_row = new_row;
         cursor_col = new_col;
       }
-      |> lexer_update (line_idx - 1) (line_idx - 1)
+      |> lexer_update new_line_idx new_line_idx
   else
-    let line = get_line model.lines line_idx in
-    let new_line = Unicode_string.delete line (col - 1) in
-    let new_lines = update_line model.lines line_idx new_line in
+    let line = current_line model in
+    let new_line = Unicode_string.delete line (model.cursor_pos - 1) in
+    let new_lines = update_line model.lines model.cursor_line new_line in
+    let new_pos = model.cursor_pos - 1 in
     let new_row, new_col =
-      internal_to_terminal width new_lines (line_idx, col - 1)
+      internal_to_terminal width new_lines (model.cursor_line, new_pos)
     in
-    { model with lines = new_lines; cursor_row = new_row; cursor_col = new_col }
-    |> lexer_update line_idx line_idx
+    { model with
+      lines = new_lines;
+      cursor_pos = new_pos;
+      cursor_row = new_row;
+      cursor_col = new_col;
+    }
+    |> lexer_update model.cursor_line model.cursor_line
 
 let insert_newline model =
   let width = effective_width model in
-  let line_idx, col =
-    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
-  in
-  let line = get_line model.lines line_idx in
-  let before, after = Unicode_string.split line col in
+  let line = current_line model in
+  let before, after = Unicode_string.split line model.cursor_pos in
   let new_lines =
     List.concat_map
-      (fun (i, l) -> if i = line_idx then [ before; after ] else [ l ])
+      (fun (i, l) -> if i = model.cursor_line then [ before; after ] else [ l ])
       (List.mapi (fun i l -> (i, l)) model.lines)
   in
+  let new_line_idx = model.cursor_line + 1 in
   let new_row, new_col =
-    internal_to_terminal width new_lines (line_idx + 1, 0)
+    internal_to_terminal width new_lines (new_line_idx, 0)
   in
-  { model with lines = new_lines; cursor_row = new_row; cursor_col = new_col }
-  |> lexer_update line_idx (line_idx + 1)
+  { model with
+    lines = new_lines;
+    cursor_line = new_line_idx;
+    cursor_pos = 0;
+    cursor_row = new_row;
+    cursor_col = new_col;
+  }
+  |> lexer_update model.cursor_line new_line_idx
 
 let insert_paste model text =
   let max_len = 5 * 1024 in
@@ -125,24 +155,21 @@ let insert_paste model text =
     if String.length text > max_len then String.sub text 0 max_len else text
   in
   let width = effective_width model in
-  let line_idx, col =
-    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
-  in
-  let line = get_line model.lines line_idx in
-  let before, after = Unicode_string.split line col in
+  let line = current_line model in
+  let before, after = Unicode_string.split line model.cursor_pos in
   let paste_lines = String.split_on_char '\n' text in
   let to_us s =
     match Unicode_string.of_string s with
     | Ok u -> u
     | Error _ -> Unicode_string.empty
   in
-  let inserted, final_col =
+  let inserted, final_pos =
     match paste_lines with
-    | [] -> ([ Unicode_string.append before after ], col)
+    | [] -> ([ Unicode_string.append before after ], model.cursor_pos)
     | [ single ] ->
         let single_us = to_us single in
         ( [ Unicode_string.concat [ before; single_us; after ] ],
-          col + Unicode_string.length single_us )
+          model.cursor_pos + Unicode_string.length single_us )
     | first :: rest ->
         let rec split_last = function
           | [] -> ([], "")
@@ -162,55 +189,69 @@ let insert_paste model text =
   in
   let new_lines =
     List.concat_map
-      (fun (i, l) -> if i = line_idx then inserted else [ l ])
+      (fun (i, l) -> if i = model.cursor_line then inserted else [ l ])
       (List.mapi (fun i l -> (i, l)) model.lines)
   in
-  let final_line_idx = line_idx + List.length paste_lines - 1 in
+  let final_line_idx = model.cursor_line + List.length paste_lines - 1 in
   let new_row, new_col =
-    internal_to_terminal width new_lines (final_line_idx, final_col)
+    internal_to_terminal width new_lines (final_line_idx, final_pos)
   in
-  { model with lines = new_lines; cursor_row = new_row; cursor_col = new_col }
-  |> lexer_update line_idx final_line_idx
+  { model with
+    lines = new_lines;
+    cursor_line = final_line_idx;
+    cursor_pos = final_pos;
+    cursor_row = new_row;
+    cursor_col = new_col;
+  }
+  |> lexer_update model.cursor_line final_line_idx
 
 let move_left model =
   let width = effective_width model in
-  let line_idx, col =
-    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
-  in
-  if col > 0 then
+  if not (at_line_start model) then
+    let new_pos = model.cursor_pos - 1 in
     let new_row, new_col =
-      internal_to_terminal width model.lines (line_idx, col - 1)
+      internal_to_terminal width model.lines (model.cursor_line, new_pos)
     in
-    { model with cursor_row = new_row; cursor_col = new_col }
-  else if line_idx > 0 then
-    let prev_line = get_line model.lines (line_idx - 1) in
+    { model with cursor_pos = new_pos; cursor_row = new_row; cursor_col = new_col }
+  else if not (at_first_line model) then
+    let new_line = model.cursor_line - 1 in
+    let prev_line = List.nth model.lines new_line in
+    let new_pos = Unicode_string.length prev_line in
     let new_row, new_col =
-      internal_to_terminal width model.lines
-        (line_idx - 1, Unicode_string.length prev_line)
+      internal_to_terminal width model.lines (new_line, new_pos)
     in
-    { model with cursor_row = new_row; cursor_col = new_col }
+    { model with
+      cursor_line = new_line;
+      cursor_pos = new_pos;
+      cursor_row = new_row;
+      cursor_col = new_col;
+    }
   else model
 
 let move_right model =
   let width = effective_width model in
-  let line_idx, col =
-    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
-  in
-  let line = get_line model.lines line_idx in
-  if col < Unicode_string.length line then
+  if not (at_line_end model) then
+    let new_pos = model.cursor_pos + 1 in
     let new_row, new_col =
-      internal_to_terminal width model.lines (line_idx, col + 1)
+      internal_to_terminal width model.lines (model.cursor_line, new_pos)
     in
-    { model with cursor_row = new_row; cursor_col = new_col }
-  else if line_idx < List.length model.lines - 1 then
+    { model with cursor_pos = new_pos; cursor_row = new_row; cursor_col = new_col }
+  else if not (at_last_line model) then
+    let new_line = model.cursor_line + 1 in
     let new_row, new_col =
-      internal_to_terminal width model.lines (line_idx + 1, 0)
+      internal_to_terminal width model.lines (new_line, 0)
     in
-    { model with cursor_row = new_row; cursor_col = new_col }
+    { model with
+      cursor_line = new_line;
+      cursor_pos = 0;
+      cursor_row = new_row;
+      cursor_col = new_col;
+    }
   else model
 
 let move_up model =
-  let wrapped_lines = wrap_lines (effective_width model) model.lines in
+  let width = effective_width model in
+  let wrapped_lines = wrap_lines width model.lines in
   if model.cursor_row > 0 then
     let target_col =
       match model.previous_key with
@@ -221,10 +262,17 @@ let move_up model =
       List.nth wrapped_lines (model.cursor_row - 1)
       |> Unicode_string.display_width
     in
+    let new_row = model.cursor_row - 1 in
+    let new_col = min target_col line_width in
+    let new_cursor_line, new_cursor_pos =
+      terminal_to_internal width model.lines (new_row, new_col)
+    in
     {
       model with
-      cursor_row = model.cursor_row - 1;
-      cursor_col = min target_col line_width;
+      cursor_row = new_row;
+      cursor_col = new_col;
+      cursor_line = new_cursor_line;
+      cursor_pos = new_cursor_pos;
       persistent_col = target_col;
     }
   else model
@@ -243,10 +291,17 @@ let move_down model =
       List.nth wrapped_lines (model.cursor_row + 1)
       |> Unicode_string.display_width
     in
+    let new_row = model.cursor_row + 1 in
+    let new_col = min target_col line_width in
+    let new_cursor_line, new_cursor_pos =
+      terminal_to_internal width model.lines (new_row, new_col)
+    in
     {
       model with
-      cursor_row = model.cursor_row + 1;
-      cursor_col = min target_col line_width;
+      cursor_row = new_row;
+      cursor_col = new_col;
+      cursor_line = new_cursor_line;
+      cursor_pos = new_cursor_pos;
       persistent_col = target_col;
     }
   else model
@@ -260,29 +315,19 @@ let insert_matched_start model c =
   | _ -> after1
 
 let insert_matched_end model c =
-  let width = effective_width model in
-  let row, col =
-    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
-  in
-  let line = List.nth model.lines row in
-  if col = Unicode_string.length line then insert_char model c
+  if at_line_end model then insert_char model c
   else
-    let lookahead_char = Unicode_string.cluster_at line col in
-    if String.get lookahead_char 0 = c then move_right model
-    else insert_char model c
+    match char_at model with
+    | Some s when String.get s 0 = c -> move_right model
+    | _ -> insert_char model c
 
 let insert_matched_same model c =
-  let width = effective_width model in
-  let row, col =
-    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
-  in
-  let line = List.nth model.lines row in
-  if col = Unicode_string.length line then
+  if at_line_end model then
     insert_char (insert_char model c) c |> move_left
   else
-    let lookahead_char = Unicode_string.cluster_at line col in
-    if String.get lookahead_char 0 = c then move_right model
-    else insert_char (insert_char model c) c |> move_left
+    match char_at model with
+    | Some s when String.get s 0 = c -> move_right model
+    | _ -> insert_char (insert_char model c) c |> move_left
 
 let user_input_char model c =
   match c with
@@ -292,50 +337,50 @@ let user_input_char model c =
   | _ -> insert_char model c
 
 let user_input_delete model =
-  let width = effective_width model in
-  let row, col =
-    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
-  in
-  let line = List.nth model.lines row in
-  let len = Unicode_string.length line in
-  if col = 0 || col >= len then delete_char model
+  if at_line_start model || at_line_end model then delete_char model
   else
-    let char_before = String.get (Unicode_string.cluster_at line (col - 1)) 0 in
-    let char_at = String.get (Unicode_string.cluster_at line col) 0 in
-    let is_matched_pair =
-      match char_before with
-      | '(' -> char_at = ')'
-      | '[' -> char_at = ']'
-      | '{' -> char_at = '}'
-      | '"' -> char_at = '"'
-      | '\'' -> char_at = '\''
-      | _ -> false
-    in
-    if is_matched_pair then model |> move_right |> delete_char |> delete_char
-    else delete_char model
+    match (char_before model, char_at model) with
+    | Some before_s, Some at_s ->
+        let b = String.get before_s 0 in
+        let a = String.get at_s 0 in
+        let is_matched_pair =
+          match b with
+          | '(' -> a = ')'
+          | '[' -> a = ']'
+          | '{' -> a = '}'
+          | '"' -> a = '"'
+          | '\'' -> a = '\''
+          | _ -> false
+        in
+        if is_matched_pair then model |> move_right |> delete_char |> delete_char
+        else delete_char model
+    | _ -> delete_char model
 
 let move_cursor_to_end model =
   let width = effective_width model in
   let last_line_idx = List.length model.lines - 1 in
   let last_line = List.nth model.lines last_line_idx in
+  let new_pos = Unicode_string.length last_line in
   let new_row, new_col =
-    internal_to_terminal width model.lines
-      (last_line_idx, Unicode_string.length last_line)
+    internal_to_terminal width model.lines (last_line_idx, new_pos)
   in
-  { model with cursor_row = new_row; cursor_col = new_col }
+  { model with
+    cursor_line = last_line_idx;
+    cursor_pos = new_pos;
+    cursor_row = new_row;
+    cursor_col = new_col;
+  }
 
-let go_to_line_start model = { model with cursor_col = 0 }
+let go_to_line_start model =
+  { model with cursor_pos = 0; cursor_col = 0 }
 
 let go_to_line_end model =
   let width = effective_width model in
-  let row, _ =
-    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
-  in
-  let line_width = List.nth model.lines row |> Unicode_string.length in
+  let new_pos = line_length model in
   let new_row, new_col =
-    internal_to_terminal width model.lines (row, line_width)
+    internal_to_terminal width model.lines (model.cursor_line, new_pos)
   in
-  { model with cursor_row = new_row; cursor_col = new_col }
+  { model with cursor_pos = new_pos; cursor_row = new_row; cursor_col = new_col }
 
 let is_word_char s =
   if String.length s > 1 then true
@@ -345,58 +390,39 @@ let is_word_char s =
 
 let go_to_next_word model =
   let rec loop seen_word model =
-    let width = effective_width model in
-    let row, col_idx =
-      terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
-    in
-    let line = List.nth model.lines row in
-    if Unicode_string.length line < col_idx + 1 then model
+    if at_line_end model then model
     else
-      let cursor_char = Unicode_string.cluster_at line col_idx in
-      if is_word_char cursor_char then
-        let new_mod = move_right model in
-        if
-          model.cursor_col = new_mod.cursor_col
-          && model.cursor_row = new_mod.cursor_row
-        then model
-        else loop true new_mod
-      else if seen_word then model
-      else
-        let new_mod = move_right model in
-        if
-          model.cursor_col = new_mod.cursor_col
-          && model.cursor_row = new_mod.cursor_row
-        then model
-        else loop false new_mod
+      match char_at model with
+      | None -> model
+      | Some cursor_char ->
+          if is_word_char cursor_char then
+            let new_mod = move_right model in
+            if same_cursor_pos model new_mod then model
+            else loop true new_mod
+          else if seen_word then model
+          else
+            let new_mod = move_right model in
+            if same_cursor_pos model new_mod then model
+            else loop false new_mod
   in
   loop false model
 
 let go_to_last_word model =
   let rec loop seen_word model =
-    let width = effective_width model in
-    let row, col_idx =
-      terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
-    in
-    let lookahead_col = col_idx - 1 in
-    let line = List.nth model.lines row in
-    if lookahead_col < 0 then model
+    if at_line_start model then model
     else
-      let cursor_char = Unicode_string.cluster_at line lookahead_col in
-      if is_word_char cursor_char then
-        let new_mod = move_left model in
-        if
-          model.cursor_col = new_mod.cursor_col
-          && model.cursor_row = new_mod.cursor_row
-        then model
-        else loop true new_mod
-      else if seen_word then model
-      else
-        let new_mod = move_left model in
-        if
-          model.cursor_col = new_mod.cursor_col
-          && model.cursor_row = new_mod.cursor_row
-        then model
-        else loop false new_mod
+      match char_before model with
+      | None -> model
+      | Some cursor_char ->
+          if is_word_char cursor_char then
+            let new_mod = move_left model in
+            if same_cursor_pos model new_mod then model
+            else loop true new_mod
+          else if seen_word then model
+          else
+            let new_mod = move_left model in
+            if same_cursor_pos model new_mod then model
+            else loop false new_mod
   in
   loop false model
 
@@ -427,24 +453,23 @@ let shift_history model ~amount =
 
 let delete_before_cursor model =
   let width = effective_width model in
-  let line_idx, col =
-    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
-  in
-  if col = 0 then delete_char model
+  if at_line_start model then delete_char model
   else
-    let line = List.nth model.lines line_idx in
-    let new_line = Unicode_string.delete_range line ~start:0 ~len:col in
-    let new_lines = update_line model.lines line_idx new_line in
-    let new_row, new_col = internal_to_terminal width new_lines (line_idx, 0) in
-    { model with lines = new_lines; cursor_row = new_row; cursor_col = new_col }
-    |> lexer_update line_idx line_idx
+    let line = current_line model in
+    let new_line = Unicode_string.delete_range line ~start:0 ~len:model.cursor_pos in
+    let new_lines = update_line model.lines model.cursor_line new_line in
+    let new_row, new_col = internal_to_terminal width new_lines (model.cursor_line, 0) in
+    { model with
+      lines = new_lines;
+      cursor_pos = 0;
+      cursor_row = new_row;
+      cursor_col = new_col;
+    }
+    |> lexer_update model.cursor_line model.cursor_line
 
 let delete_char_after_cursor model =
   let after_move_right = move_right model in
-  if
-    model.cursor_row = after_move_right.cursor_row
-    && model.cursor_col = after_move_right.cursor_col
-  then model
+  if same_cursor_pos model after_move_right then model
   else delete_char after_move_right
 
 let update_balance (parens, brackets, braces) tokens =
@@ -563,23 +588,18 @@ let submit model =
   let token_lines = List.map (fun l -> l.tokens) model.lex_cache in
   match needs_continuation (0, 0, 0) token_lines with
   | Continuation indent_to_add ->
-      let width = effective_width model in
-      let row, _ =
-        terminal_to_internal width model.lines
-          (model.cursor_row, model.cursor_col)
-      in
       let indent_to_add =
         if indent_to_add = 2 then
-          let current_tokens = (List.nth model.lex_cache row).tokens in
+          let current_tokens = (List.nth model.lex_cache model.cursor_line).tokens in
           let prev_tokens =
-            if row > 0 then (List.nth model.lex_cache (row - 1)).tokens else []
+            if model.cursor_line > 0 then (List.nth model.lex_cache (model.cursor_line - 1)).tokens else []
           in
           if ends_with_operator current_tokens && ends_with_operator prev_tokens
           then 0
           else indent_to_add
         else indent_to_add
       in
-      let line = List.nth model.lines row in
+      let line = current_line model in
       let rec get_indentation i s =
         if i >= String.length s then i + 1
         else if String.get s i = ' ' then get_indentation (i + 1) s
@@ -619,6 +639,8 @@ let submit model =
           lex_cache = lex_cache_for_lines [ Unicode_string.empty ];
           cursor_row = 0;
           cursor_col = 0;
+          cursor_line = 0;
+          cursor_pos = 0;
           prompt_box_height = 1;
           prompt_history = model.lines :: model.prompt_history;
           original_prompt = None;
@@ -662,15 +684,10 @@ let handle_vertical_cursor_movement model =
 let handle_resize new_width model =
   if model.term_width = new_width then model
   else
-    let old_eff_width = effective_width model in
-    let line_idx, col =
-      terminal_to_internal old_eff_width model.lines
-        (model.cursor_row, model.cursor_col)
-    in
     let model = { model with term_width = new_width } in
     let new_eff_width = effective_width model in
     let new_row, new_col =
-      internal_to_terminal new_eff_width model.lines (line_idx, col)
+      internal_to_terminal new_eff_width model.lines (model.cursor_line, model.cursor_pos)
     in
     { model with cursor_row = new_row; cursor_col = new_col }
 
@@ -698,24 +715,11 @@ let apply_key key model =
   | Left -> Continue (move_left model)
   | Right -> Continue (move_right model)
   | Up ->
-      let width = effective_width model in
-      let row, _col =
-        terminal_to_internal width model.lines
-          (model.cursor_row, model.cursor_col)
-      in
-      let at_top = row = 0 in
-      if at_top || Option.is_some model.flipping_through_history then
+      if at_first_line model || Option.is_some model.flipping_through_history then
         Continue (shift_history model ~amount:1)
       else Continue (move_up model)
   | Down ->
-      let width = effective_width model in
-      let wrapped = wrap_lines width model.lines in
-      let row, _col =
-        terminal_to_internal width model.lines
-          (model.cursor_row, model.cursor_col)
-      in
-      let at_bottom = row = List.length wrapped - 1 in
-      if at_bottom || Option.is_some model.flipping_through_history then
+      if at_last_line model || Option.is_some model.flipping_through_history then
         Continue (shift_history model ~amount:(-1))
       else Continue (move_down model)
   | Paste text -> Continue (insert_paste model text)
@@ -730,9 +734,17 @@ let universal_corrections key model =
   in
   { s with previous_key = Some key; flipping_through_history }
 
+let sync_internal_coords model =
+  let width = effective_width model in
+  let cursor_line, cursor_pos =
+    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
+  in
+  { model with cursor_line; cursor_pos }
+
 let update key model =
   { model with scroll_amount = 0 }
   |> handle_resize model.term_width
+  |> sync_internal_coords
   |> apply_key key
   |> function
   | Continue s -> Continue (universal_corrections key s)

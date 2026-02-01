@@ -88,6 +88,8 @@ let make_init () : Frontend_types.model =
     lex_cache = Update.lex_cache_for_lines lines;
     cursor_row = 0;
     cursor_col = 0;
+    cursor_line = 0;
+    cursor_pos = 0;
     prompt_top_row = row;
     term_width;
     term_height;

@@ -12,8 +12,12 @@ type lex_line = {
 type model = {
   lines : Unicode_string.t list;
   lex_cache : lex_line list;
+  (* Terminal coordinates - deprecated, will be removed *)
   cursor_row : int;
   cursor_col : int;
+  (* Internal coordinates - source of truth *)
+  cursor_line : int;  (* logical line index, 0-indexed *)
+  cursor_pos : int;   (* grapheme position within line *)
   prompt_top_row : int;
   term_width : int;
   term_height : int;
