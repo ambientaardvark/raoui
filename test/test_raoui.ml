@@ -56,6 +56,7 @@ let style_to_string = function
   | `Constant -> "Constant"
   | `Ident -> "Ident"
   | `Bracket -> "Bracket"
+  | `Function -> "Function"
 
 let pp_span fmt (style, text) =
   Format.fprintf fmt "(%s,%S)" (style_to_string style) text

@@ -18,6 +18,7 @@ type style =
   | `Constant
   | `Ident
   | `Bracket
+  | `Function
   ]
 
 (** A styled span of text *)

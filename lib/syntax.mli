@@ -6,6 +6,9 @@ val token_to_lexeme : R_lexer.token -> string
 (** Convert a token to a styled span *)
 val token_to_span : R_lexer.token -> Terminal_ops.span
 
+(** Convert a token list to spans, with lookahead for function detection *)
+val tokens_to_spans : R_lexer.token list -> Terminal_ops.span list
+
 (** Highlight a line of R code, returning styled spans and new mode *)
 val highlight_line :
   R_lexer.mode -> string -> Terminal_ops.span list * R_lexer.mode

@@ -13,6 +13,7 @@ type style =
   | `Constant
   | `Ident
   | `Bracket
+  | `Function
   ]
 type span = style * string
 type term_output = span list
@@ -44,6 +45,7 @@ let style_to_ansi = function
   | `Accent -> "\x1b[36m"   (* cyan *)
   | `Error -> "\x1b[31m"    (* red *)
   | `Keyword -> "\x1b[35m"  (* magenta *)
+  | `Function -> "\x1b[35m"  (* magenta *)
   | `String -> "\x1b[32m"   (* green *)
   | `Number -> "\x1b[33m"   (* yellow *)
   | `Comment -> "\x1b[90m"  (* bright black/gray *)
