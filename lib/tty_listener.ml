@@ -13,6 +13,7 @@ type key =
   | Enter
   | Escape
   | Paste of string
+  | Other of string
   | Unknown of string
 
 let escape_timeout_sec = 0.05
@@ -91,6 +92,8 @@ let parse_escape clock stdin =
   | None -> Escape
   | Some '[' -> parse_csi_sequence stdin
   | Some '\n' -> Ctrl '\r' (* newline on linux *)
+  | Some 'b' -> Other "last word"
+  | Some 'f' -> Other "next word"
   | Some c -> Unknown (Printf.sprintf "\x1b%c" c)
 
 let await_input ~clock ~stdin =

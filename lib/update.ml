@@ -23,8 +23,7 @@ let lexer_update start end_ model =
           | [] -> List.rev acc
         else if i > end_ && R_lexer.(mode = Normal) then
           match cache with
-          | cached :: cache_rest
-            when R_lexer.(cached.start_mode = Normal) ->
+          | cached :: cache_rest when R_lexer.(cached.start_mode = Normal) ->
               List.rev acc @ (cached :: cache_rest)
           | _ ->
               let text = Unicode_string.to_string line in
@@ -39,7 +38,10 @@ let lexer_update start end_ model =
           let cache_rest = match cache with _ :: tl -> tl | [] -> [] in
           loop (i + 1) end_mode rest cache_rest (entry :: acc)
   in
-  { model with lex_cache = loop 0 R_lexer.Normal model.lines model.lex_cache [] }
+  {
+    model with
+    lex_cache = loop 0 R_lexer.Normal model.lines model.lex_cache [];
+  }
 
 let insert_char model c =
   let width = effective_width model in
@@ -259,6 +261,82 @@ let move_cursor_to_end model =
   in
   { model with cursor_row = new_row; cursor_col = new_col }
 
+let go_to_line_start model = { model with cursor_col = 0 }
+
+let go_to_line_end model =
+  let width = effective_width model in
+  let row, _ =
+    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
+  in
+  let line_width = List.nth model.lines row |> Unicode_string.length in
+  let new_row, new_col =
+    internal_to_terminal width model.lines (row, line_width)
+  in
+  { model with cursor_row = new_row; cursor_col = new_col }
+
+let is_word_char s =
+  if String.length s > 1 then true
+  else
+    let c = String.get s 0 in
+    Char.Ascii.is_alphanum c
+
+let go_to_next_word model =
+  let rec loop seen_word model =
+    let width = effective_width model in
+    let row, col_idx =
+      terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
+    in
+    let line = List.nth model.lines row in
+    if Unicode_string.length line < col_idx + 1 then model
+    else
+      let cursor_char = Unicode_string.cluster_at line col_idx in
+      if is_word_char cursor_char then
+        let new_mod = move_right model in
+        if
+          model.cursor_col = new_mod.cursor_col
+          && model.cursor_row = new_mod.cursor_row
+        then model
+        else loop true new_mod
+      else if seen_word then model
+      else
+        let new_mod = move_right model in
+        if
+          model.cursor_col = new_mod.cursor_col
+          && model.cursor_row = new_mod.cursor_row
+        then model
+        else loop false new_mod
+  in
+  loop false model
+
+let go_to_last_word model =
+  let rec loop seen_word model =
+    let width = effective_width model in
+    let row, col_idx =
+      terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
+    in
+    let lookahead_col = col_idx - 1 in
+    let line = List.nth model.lines row in
+    if lookahead_col < 0 then model
+    else
+      let cursor_char = Unicode_string.cluster_at line lookahead_col in
+      if is_word_char cursor_char then
+        let new_mod = move_left model in
+        if
+          model.cursor_col = new_mod.cursor_col
+          && model.cursor_row = new_mod.cursor_row
+        then model
+        else loop true new_mod
+      else if seen_word then model
+      else
+        let new_mod = move_left model in
+        if
+          model.cursor_col = new_mod.cursor_col
+          && model.cursor_row = new_mod.cursor_row
+        then model
+        else loop false new_mod
+  in
+  loop false model
+
 let shift_history model ~amount =
   let original_prompt =
     if model.place_in_history = 0 then model.lines
@@ -317,8 +395,7 @@ let update_balance (parens, brackets, braces) tokens =
       | R_lexer.RIGHT_BRACE -> (p, b, max 0 (r - 1))
       | R_lexer.LAMBDA -> (p, b, r)
       | _ -> (p, b, r))
-    (parens, brackets, braces)
-    tokens
+    (parens, brackets, braces) tokens
 
 let check_keyword_continuation tokens =
   let rec last_non_ws = function
@@ -339,8 +416,7 @@ let check_keyword_continuation tokens =
         | R_lexer.KEYWORD R_lexer.REPEAT -> true
         | R_lexer.KEYWORD R_lexer.IN -> true
         | R_lexer.OPERATOR _ -> true
-        | R_lexer.LEFT_PAREN | R_lexer.LEFT_BRACKET | R_lexer.LEFT_BRACE ->
-            true
+        | R_lexer.LEFT_PAREN | R_lexer.LEFT_BRACKET | R_lexer.LEFT_BRACE -> true
         | R_lexer.PUNCTUATION "," -> true
         | _ -> false)
   in
@@ -363,27 +439,29 @@ let check_keyword_continuation tokens =
     | _ -> None
   in
   let rec scan control header_open paren_depth body_present = function
-    | [] -> (match control with Some _ -> not body_present | None -> false)
+    | [] -> ( match control with Some _ -> not body_present | None -> false)
     | tok :: rest ->
         let control, header_open, paren_depth, body_present =
           match control_of_token tok with
           | Some c ->
               let header_open = needs_paren c in
               (Some c, header_open, 0, false)
-          | None ->
-              (match control, header_open with
-               | Some _, true ->
-                   (match tok with
-                    | R_lexer.LEFT_PAREN -> (control, header_open, paren_depth + 1, body_present)
-                    | R_lexer.RIGHT_PAREN ->
-                        let new_depth = max 0 (paren_depth - 1) in
-                        let header_open = new_depth > 0 in
-                        (control, header_open, new_depth, body_present)
-                    | _ -> (control, header_open, paren_depth, body_present))
-               | Some _, false ->
-                   if body_present || is_ignorable tok then (control, header_open, paren_depth, body_present)
-                   else (control, header_open, paren_depth, true)
-               | None, _ -> (control, header_open, paren_depth, body_present))
+          | None -> (
+              match (control, header_open) with
+              | Some _, true -> (
+                  match tok with
+                  | R_lexer.LEFT_PAREN ->
+                      (control, header_open, paren_depth + 1, body_present)
+                  | R_lexer.RIGHT_PAREN ->
+                      let new_depth = max 0 (paren_depth - 1) in
+                      let header_open = new_depth > 0 in
+                      (control, header_open, new_depth, body_present)
+                  | _ -> (control, header_open, paren_depth, body_present))
+              | Some _, false ->
+                  if body_present || is_ignorable tok then
+                    (control, header_open, paren_depth, body_present)
+                  else (control, header_open, paren_depth, true)
+              | None, _ -> (control, header_open, paren_depth, body_present))
         in
         scan control header_open paren_depth body_present rest
   in
@@ -500,6 +578,10 @@ let apply_key key model =
   | Ctrl 'u' -> Continue (delete_before_cursor model)
   | Ctrl '\r' -> Continue (insert_newline model)
   | Ctrl 'p' -> Continue (shift_history model ~amount:1)
+  | Ctrl 'a' -> Continue (go_to_line_start model)
+  | Ctrl 'e' -> Continue (go_to_line_end model)
+  | Other "next word" -> Continue (go_to_next_word model)
+  | Other "last word" -> Continue (go_to_last_word model)
   | Char c -> Continue (insert_char model c)
   | Backspace -> Continue (delete_char model)
   | Left -> Continue (move_left model)
