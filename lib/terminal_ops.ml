@@ -1,6 +1,19 @@
 open Base
 
-type style = [ `Raw | `Plain | `Accent | `Error ]
+type style =
+  [ `Raw
+  | `Plain
+  | `Accent
+  | `Error
+  | `Keyword
+  | `String
+  | `Number
+  | `Comment
+  | `Operator
+  | `Constant
+  | `Ident
+  | `Bracket
+  ]
 type span = style * string
 type term_output = span list
 type direction = Left of int | Right of int | Up of int | Down of int
@@ -30,6 +43,14 @@ let style_to_ansi = function
   | `Plain -> "\x1b[0m"     (* reset to default *)
   | `Accent -> "\x1b[36m"   (* cyan *)
   | `Error -> "\x1b[31m"    (* red *)
+  | `Keyword -> "\x1b[35m"  (* magenta *)
+  | `String -> "\x1b[32m"   (* green *)
+  | `Number -> "\x1b[33m"   (* yellow *)
+  | `Comment -> "\x1b[90m"  (* bright black/gray *)
+  | `Operator -> "\x1b[36m" (* cyan *)
+  | `Constant -> "\x1b[34m" (* blue *)
+  | `Ident -> "\x1b[0m"     (* default *)
+  | `Bracket -> "\x1b[0m"   (* default *)
 
 let render_spans_to_buf buf spans =
   List.iter spans ~f:(fun (style, text) ->

@@ -5,7 +5,20 @@ open Base
     to different terminal types (ANSI, etc.) *)
 
 (** Style for terminal output *)
-type style = [ `Raw | `Plain | `Accent | `Error ]
+type style =
+  [ `Raw
+  | `Plain
+  | `Accent
+  | `Error
+  | `Keyword
+  | `String
+  | `Number
+  | `Comment
+  | `Operator
+  | `Constant
+  | `Ident
+  | `Bracket
+  ]
 
 (** A styled span of text *)
 type span = style * string
