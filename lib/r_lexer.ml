@@ -115,7 +115,7 @@ let read_double_quote prev buf =
     | '"' -> (STRING ((acc |> List.rev |> String.concat "") ^ "\""), Normal)
     | any -> loop (Utf8.lexeme buf :: acc) buf
     | eof ->
-        if acc = [ prev ] then (EOF, In_double_quote prev)
+        if acc = [ "" ] then (EOF, In_double_quote "")
         else (STRING (acc |> List.rev |> String.concat ""), In_double_quote "")
     | _ -> failwith "unreachable"
   in

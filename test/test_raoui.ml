@@ -845,6 +845,132 @@ let test_lex_cache_multiline_mode_change () =
       check_lex_cache ~msg:"lex cache matches after multiline edit" new_model
   | _ -> Alcotest.fail "Expected Continue"
 
+(* Matched bracket insertion/deletion tests *)
+let test_insert_matched_paren () =
+  let width = 40 in
+  let model = initial_model width in
+  match Update.update (Tty_listener.Char '(') model with
+  | Continue new_model ->
+      Alcotest.(check string) "inserts pair" "()" (first_line_str new_model);
+      Alcotest.(check int) "cursor between" 1 new_model.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_insert_matched_bracket () =
+  let width = 40 in
+  let model = initial_model width in
+  match Update.update (Tty_listener.Char '[') model with
+  | Continue new_model ->
+      Alcotest.(check string) "inserts pair" "[]" (first_line_str new_model);
+      Alcotest.(check int) "cursor between" 1 new_model.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_insert_matched_brace () =
+  let width = 40 in
+  let model = initial_model width in
+  match Update.update (Tty_listener.Char '{') model with
+  | Continue new_model ->
+      Alcotest.(check string) "inserts pair" "{}" (first_line_str new_model);
+      Alcotest.(check int) "cursor between" 1 new_model.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_insert_matched_quote () =
+  let width = 40 in
+  let model = initial_model width in
+  match Update.update (Tty_listener.Char '"') model with
+  | Continue new_model ->
+      Alcotest.(check string) "inserts pair" "\"\"" (first_line_str new_model);
+      Alcotest.(check int) "cursor between" 1 new_model.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_skip_closing_paren () =
+  let width = 40 in
+  let model =
+    { (with_lines (initial_model width) [ us "()" ]) with cursor_col = 1 }
+  in
+  match Update.update (Tty_listener.Char ')') model with
+  | Continue new_model ->
+      Alcotest.(check string) "no extra char" "()" (first_line_str new_model);
+      Alcotest.(check int) "cursor moved past" 2 new_model.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_skip_closing_quote () =
+  let width = 40 in
+  let model =
+    { (with_lines (initial_model width) [ us "\"\"" ]) with cursor_col = 1 }
+  in
+  match Update.update (Tty_listener.Char '"') model with
+  | Continue new_model ->
+      Alcotest.(check string) "no extra char" "\"\"" (first_line_str new_model);
+      Alcotest.(check int) "cursor moved past" 2 new_model.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_delete_matched_paren () =
+  let width = 40 in
+  let model =
+    { (with_lines (initial_model width) [ us "()" ]) with cursor_col = 1 }
+  in
+  match Update.update Tty_listener.Backspace model with
+  | Continue new_model ->
+      Alcotest.(check string) "both deleted" "" (first_line_str new_model);
+      Alcotest.(check int) "cursor at start" 0 new_model.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_delete_matched_bracket () =
+  let width = 40 in
+  let model =
+    { (with_lines (initial_model width) [ us "[]" ]) with cursor_col = 1 }
+  in
+  match Update.update Tty_listener.Backspace model with
+  | Continue new_model ->
+      Alcotest.(check string) "both deleted" "" (first_line_str new_model);
+      Alcotest.(check int) "cursor at start" 0 new_model.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_delete_matched_brace () =
+  let width = 40 in
+  let model =
+    { (with_lines (initial_model width) [ us "{}" ]) with cursor_col = 1 }
+  in
+  match Update.update Tty_listener.Backspace model with
+  | Continue new_model ->
+      Alcotest.(check string) "both deleted" "" (first_line_str new_model);
+      Alcotest.(check int) "cursor at start" 0 new_model.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_delete_matched_quote () =
+  let width = 40 in
+  let model =
+    { (with_lines (initial_model width) [ us "\"\"" ]) with cursor_col = 1 }
+  in
+  match Update.update Tty_listener.Backspace model with
+  | Continue new_model ->
+      Alcotest.(check string) "both deleted" "" (first_line_str new_model);
+      Alcotest.(check int) "cursor at start" 0 new_model.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_delete_unmatched_paren () =
+  let width = 40 in
+  (* cursor between ( and x, not a matched pair *)
+  let model =
+    { (with_lines (initial_model width) [ us "(x)" ]) with cursor_col = 1 }
+  in
+  match Update.update Tty_listener.Backspace model with
+  | Continue new_model ->
+      Alcotest.(check string) "only ( deleted" "x)" (first_line_str new_model);
+      Alcotest.(check int) "cursor at start" 0 new_model.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_matched_insert_with_content () =
+  let width = 40 in
+  let model =
+    { (with_lines (initial_model width) [ us "abc" ]) with cursor_col = 1 }
+  in
+  match Update.update (Tty_listener.Char '(') model with
+  | Continue new_model ->
+      Alcotest.(check string) "pair inserted" "a()bc" (first_line_str new_model);
+      Alcotest.(check int) "cursor between" 2 new_model.cursor_col
+  | _ -> Alcotest.fail "Expected Continue"
+
 let () =
   let open Alcotest in
   run "Raoui"
@@ -958,5 +1084,21 @@ let () =
           test_case "Single line edit" `Quick test_lex_cache_single_line_edit;
           test_case "Multiline mode change" `Quick
             test_lex_cache_multiline_mode_change;
+        ] );
+      ( "matched_brackets",
+        [
+          test_case "Insert matched paren" `Quick test_insert_matched_paren;
+          test_case "Insert matched bracket" `Quick test_insert_matched_bracket;
+          test_case "Insert matched brace" `Quick test_insert_matched_brace;
+          test_case "Insert matched quote" `Quick test_insert_matched_quote;
+          test_case "Skip closing paren" `Quick test_skip_closing_paren;
+          test_case "Skip closing quote" `Quick test_skip_closing_quote;
+          test_case "Delete matched paren" `Quick test_delete_matched_paren;
+          test_case "Delete matched bracket" `Quick test_delete_matched_bracket;
+          test_case "Delete matched brace" `Quick test_delete_matched_brace;
+          test_case "Delete matched quote" `Quick test_delete_matched_quote;
+          test_case "Delete unmatched paren" `Quick test_delete_unmatched_paren;
+          test_case "Matched insert with content" `Quick
+            test_matched_insert_with_content;
         ] );
     ]

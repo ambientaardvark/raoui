@@ -251,6 +251,69 @@ let move_down model =
     }
   else model
 
+let insert_matched_start model c =
+  let after1 = insert_char model c in
+  match c with
+  | '[' -> move_left (insert_char after1 ']')
+  | '(' -> move_left (insert_char after1 ')')
+  | '{' -> move_left (insert_char after1 '}')
+  | _ -> after1
+
+let insert_matched_end model c =
+  let width = effective_width model in
+  let row, col =
+    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
+  in
+  let line = List.nth model.lines row in
+  if col = Unicode_string.length line then insert_char model c
+  else
+    let lookahead_char = Unicode_string.cluster_at line col in
+    if String.get lookahead_char 0 = c then move_right model
+    else insert_char model c
+
+let insert_matched_same model c =
+  let width = effective_width model in
+  let row, col =
+    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
+  in
+  let line = List.nth model.lines row in
+  if col = Unicode_string.length line then
+    insert_char (insert_char model c) c |> move_left
+  else
+    let lookahead_char = Unicode_string.cluster_at line col in
+    if String.get lookahead_char 0 = c then move_right model
+    else insert_char (insert_char model c) c |> move_left
+
+let user_input_char model c =
+  match c with
+  | '[' | '{' | '(' -> insert_matched_start model c
+  | ']' | '}' | ')' -> insert_matched_end model c
+  | '\'' | '"' -> insert_matched_same model c
+  | _ -> insert_char model c
+
+let user_input_delete model =
+  let width = effective_width model in
+  let row, col =
+    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
+  in
+  let line = List.nth model.lines row in
+  let len = Unicode_string.length line in
+  if col = 0 || col >= len then delete_char model
+  else
+    let char_before = String.get (Unicode_string.cluster_at line (col - 1)) 0 in
+    let char_at = String.get (Unicode_string.cluster_at line col) 0 in
+    let is_matched_pair =
+      match char_before with
+      | '(' -> char_at = ')'
+      | '[' -> char_at = ']'
+      | '{' -> char_at = '}'
+      | '"' -> char_at = '"'
+      | '\'' -> char_at = '\''
+      | _ -> false
+    in
+    if is_matched_pair then model |> move_right |> delete_char |> delete_char
+    else delete_char model
+
 let move_cursor_to_end model =
   let width = effective_width model in
   let last_line_idx = List.length model.lines - 1 in
@@ -630,8 +693,8 @@ let apply_key key model =
   | Ctrl 'e' -> Continue (go_to_line_end model)
   | Other "next word" -> Continue (go_to_next_word model)
   | Other "last word" -> Continue (go_to_last_word model)
-  | Char c -> Continue (insert_char model c)
-  | Backspace -> Continue (delete_char model)
+  | Char c -> Continue (user_input_char model c)
+  | Backspace -> Continue (user_input_delete model)
   | Left -> Continue (move_left model)
   | Right -> Continue (move_right model)
   | Up ->
