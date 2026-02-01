@@ -28,7 +28,7 @@ type t = {
   mutable saw_busy : bool;
 }
 
-let kernel_path =
+let kernel_path () =
   let candidates =
     [
       "vendor/ark-0.1.227-linux-x64/ark";
@@ -76,6 +76,7 @@ let start_kernel () =
     Caml_unix.dup2 dev_null Caml_unix.stderr;
     Caml_unix.close dev_null
   in
+  let kernel_path = kernel_path () in
   Core_unix.fork_exec ~prog:kernel_path ~preexec_fn
     ~argv:
       [

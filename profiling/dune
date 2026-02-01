@@ -1,0 +1,4 @@
+(executable
+ (name bench)
+ (libraries raoui)
+ (ocamlopt_flags (:standard -g)))

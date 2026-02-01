@@ -170,13 +170,28 @@ let insert_string t ~pos str =
   match of_string str with
   | Error e -> Error e
   | Ok _ ->
+    let len = length t in
     let byte_pos =
-      if pos >= length t then String.length t.bytes
+      if pos >= len then String.length t.bytes
       else t.offsets.(pos)
     in
-    let before = String.sub t.bytes 0 byte_pos in
-    let after = String.sub t.bytes byte_pos (String.length t.bytes - byte_pos) in
-    of_string (before ^ str ^ after)
+    let after_bytes = String.sub t.bytes byte_pos (String.length t.bytes - byte_pos) in
+    (* Only parse inserted + after, reuse everything before *)
+    match of_string (str ^ after_bytes) with
+    | Error _ -> Error Invalid_utf8
+    | Ok suffix ->
+      let prefix_len = min pos len in
+      Ok {
+        bytes = String.sub t.bytes 0 byte_pos ^ suffix.bytes;
+        offsets = Array.concat [
+          Array.sub t.offsets 0 prefix_len;
+          Array.map (fun o -> o + byte_pos) suffix.offsets
+        ];
+        widths = Array.concat [
+          Array.sub t.widths 0 prefix_len;
+          suffix.widths
+        ];
+      }
 
 let delete t pos =
   if pos < 0 || pos >= length t then t
@@ -216,9 +231,11 @@ let sub t ~start ~len =
       if start + actual_len >= length t then String.length t.bytes
       else t.offsets.(start + actual_len)
     in
-    match of_string (String.sub t.bytes byte_start (byte_stop - byte_start)) with
-    | Ok t' -> t'
-    | Error _ -> empty
+    {
+      bytes = String.sub t.bytes byte_start (byte_stop - byte_start);
+      offsets = Array.init actual_len (fun i -> t.offsets.(start + i) - byte_start);
+      widths = Array.sub t.widths start actual_len;
+    }
 
 let append a b =
   if is_empty a then b

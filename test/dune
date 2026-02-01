@@ -9,3 +9,7 @@
 (test
  (name test_unicode_string)
  (libraries raoui alcotest))
+
+(test
+ (name test_r_lexer)
+ (libraries raoui alcotest))

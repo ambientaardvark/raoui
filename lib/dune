@@ -1,3 +1,20 @@
 (library
  (name raoui)
- (libraries unix eio eio_main zmq yojson cryptokit base stdio core_unix ptime uutf uuseg uucp))
+ (libraries
+  unix
+  eio
+  eio_main
+  zmq
+  yojson
+  cryptokit
+  base
+  stdio
+  core_unix
+  ptime
+  uutf
+  uuseg
+  uucp
+  sedlex)
+ (preprocess
+  (per_module
+   ((pps sedlex.ppx) r_lexer))))
