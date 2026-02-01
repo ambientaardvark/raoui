@@ -259,37 +259,42 @@ let delete_char_after_cursor model =
   else delete_char after_move_right
 
 let submit model =
-  let text =
-    String.concat "\n" (List.map Unicode_string.to_string model.lines)
-  in
-  let width = effective_width model in
-  let wrapped = wrap_lines width model.lines in
-  let total_rows = List.length wrapped in
-  let output_row = model.prompt_top_row + total_rows in
-  let new_prompt_top = output_row + 1 in
-  let scroll_amount =
-    if new_prompt_top > model.term_height then
-      model.term_height - new_prompt_top
-    else 0
-  in
-  let new_model =
-    {
-      model with
-      awaiting_response = true;
-      repl_cursor = (output_row + scroll_amount, 1);
-      prompt_top_row = new_prompt_top + scroll_amount;
-      previous_prompt_top_row = new_prompt_top + scroll_amount;
-      lines = [ Unicode_string.empty ];
-      cursor_row = 0;
-      cursor_col = 0;
-      prompt_box_height = 1;
-      prompt_history = model.lines :: model.prompt_history;
-      original_prompt = None;
-      place_in_history = 0;
-      scroll_amount;
-    }
-  in
-  Submit (text, new_model)
+  (* Check if expression needs continuation *)
+  let lines_as_strings = List.map Unicode_string.to_string model.lines in
+  let cont = Syntax.check_lines lines_as_strings in
+  if cont.needs_continuation then
+    (* Insert newline instead of submitting *)
+    Continue (insert_newline model)
+  else
+    let text = String.concat "\n" lines_as_strings in
+    let width = effective_width model in
+    let wrapped = wrap_lines width model.lines in
+    let total_rows = List.length wrapped in
+    let output_row = model.prompt_top_row + total_rows in
+    let new_prompt_top = output_row + 1 in
+    let scroll_amount =
+      if new_prompt_top > model.term_height then
+        model.term_height - new_prompt_top
+      else 0
+    in
+    let new_model =
+      {
+        model with
+        awaiting_response = true;
+        repl_cursor = (output_row + scroll_amount, 1);
+        prompt_top_row = new_prompt_top + scroll_amount;
+        previous_prompt_top_row = new_prompt_top + scroll_amount;
+        lines = [ Unicode_string.empty ];
+        cursor_row = 0;
+        cursor_col = 0;
+        prompt_box_height = 1;
+        prompt_history = model.lines :: model.prompt_history;
+        original_prompt = None;
+        place_in_history = 0;
+        scroll_amount;
+      }
+    in
+    Submit (text, new_model)
 
 let handle_vertical_cursor_movement model =
   let width = effective_width model in
