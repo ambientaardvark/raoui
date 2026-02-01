@@ -467,12 +467,30 @@ let check_keyword_continuation tokens =
   in
   trailing || scan None false 0 false tokens
 
+let last_significant_token tokens =
+  let rec loop = function
+    | [] -> None
+    | R_lexer.WHITESPACE _ :: rest -> loop rest
+    | R_lexer.COMMENT _ :: rest -> loop rest
+    | tok :: _ -> Some tok
+  in
+  loop (List.rev tokens)
+
+let ends_with_operator tokens =
+  match last_significant_token tokens with
+  | Some (R_lexer.OPERATOR _) -> true
+  | _ -> false
+
+type contunue_indent_signal = Submit | Continuation of int
+
 let rec needs_continuation balance = function
-  | [] -> false
+  | [] -> Submit
   | [ tokens ] ->
       let parens, brackets, braces = update_balance balance tokens in
       let unclosed = parens > 0 || brackets > 0 || braces > 0 in
-      unclosed || check_keyword_continuation tokens
+      if check_keyword_continuation tokens then Continuation 2
+      else if unclosed then Continuation 0
+      else Submit
   | tokens :: rest ->
       let balance = update_balance balance tokens in
       needs_continuation balance rest
@@ -480,42 +498,72 @@ let rec needs_continuation balance = function
 let submit model =
   (* Check if expression needs continuation *)
   let token_lines = List.map (fun l -> l.tokens) model.lex_cache in
-  if needs_continuation (0, 0, 0) token_lines then
-    (* Insert newline instead of submitting *)
-    Continue (insert_newline model)
-  else
-    let text =
-      String.concat "\n" (List.map Unicode_string.to_string model.lines)
-    in
-    let width = effective_width model in
-    let wrapped = wrap_lines width model.lines in
-    let total_rows = List.length wrapped in
-    let output_row = model.prompt_top_row + total_rows in
-    let new_prompt_top = output_row + 1 in
-    let scroll_amount =
-      if new_prompt_top > model.term_height then
-        model.term_height - new_prompt_top
-      else 0
-    in
-    let new_model =
-      {
-        model with
-        awaiting_response = true;
-        repl_cursor = (output_row + scroll_amount, 1);
-        prompt_top_row = new_prompt_top + scroll_amount;
-        previous_prompt_top_row = new_prompt_top + scroll_amount;
-        lines = [ Unicode_string.empty ];
-        lex_cache = lex_cache_for_lines [ Unicode_string.empty ];
-        cursor_row = 0;
-        cursor_col = 0;
-        prompt_box_height = 1;
-        prompt_history = model.lines :: model.prompt_history;
-        original_prompt = None;
-        place_in_history = 0;
-        scroll_amount;
-      }
-    in
-    Submit (text, new_model)
+  match needs_continuation (0, 0, 0) token_lines with
+  | Continuation indent_to_add ->
+      let width = effective_width model in
+      let row, _ =
+        terminal_to_internal width model.lines
+          (model.cursor_row, model.cursor_col)
+      in
+      let indent_to_add =
+        if indent_to_add = 2 then
+          let current_tokens = (List.nth model.lex_cache row).tokens in
+          let prev_tokens =
+            if row > 0 then (List.nth model.lex_cache (row - 1)).tokens else []
+          in
+          if ends_with_operator current_tokens && ends_with_operator prev_tokens
+          then 0
+          else indent_to_add
+        else indent_to_add
+      in
+      let line = List.nth model.lines row in
+      let rec get_indentation i s =
+        if i >= String.length s then i + 1
+        else if String.get s i = ' ' then get_indentation (i + 1) s
+        else i + 1
+      in
+      let indentation = get_indentation 0 (Unicode_string.to_string line) in
+      let rec repeat_n_times n f m =
+        if n = 0 then m else repeat_n_times (n - 1) f (f m)
+      in
+      Continue
+        (model |> insert_newline
+        |> repeat_n_times
+             (indentation + indent_to_add - 1)
+             (fun m -> insert_char m ' '))
+  | Submit ->
+      let text =
+        String.concat "\n" (List.map Unicode_string.to_string model.lines)
+      in
+      let width = effective_width model in
+      let wrapped = wrap_lines width model.lines in
+      let total_rows = List.length wrapped in
+      let output_row = model.prompt_top_row + total_rows in
+      let new_prompt_top = output_row + 1 in
+      let scroll_amount =
+        if new_prompt_top > model.term_height then
+          model.term_height - new_prompt_top
+        else 0
+      in
+      let new_model =
+        {
+          model with
+          awaiting_response = true;
+          repl_cursor = (output_row + scroll_amount, 1);
+          prompt_top_row = new_prompt_top + scroll_amount;
+          previous_prompt_top_row = new_prompt_top + scroll_amount;
+          lines = [ Unicode_string.empty ];
+          lex_cache = lex_cache_for_lines [ Unicode_string.empty ];
+          cursor_row = 0;
+          cursor_col = 0;
+          prompt_box_height = 1;
+          prompt_history = model.lines :: model.prompt_history;
+          original_prompt = None;
+          place_in_history = 0;
+          scroll_amount;
+        }
+      in
+      Submit (text, new_model)
 
 let handle_vertical_cursor_movement model =
   let width = effective_width model in
