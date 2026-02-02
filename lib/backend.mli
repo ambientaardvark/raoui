@@ -19,6 +19,9 @@ val poll_ready : t -> bool
 (** Send input to the backend. Returns immediately. *)
 val submit : t -> string -> unit
 
+(** Send code to the backend which should be executed in the background *)
+val background_submit: t -> string -> unit
+
 (** Block until next response chunk is available.
     Caller should keep calling until receiving Done, Shutdown, or Internal_error.
     R_error is NOT terminal - more chunks may follow (and Done will follow). *)

@@ -18,6 +18,8 @@ type response_chunk =
 
 type completion = string
 
+type submission = User of string | Background of string
+
 type t = {
   ctx : Zmq.Context.t;
   shell : [ `Dealer ] Zmq.Socket.t;
@@ -26,8 +28,9 @@ type t = {
   ark_pid : Core.Pid.t;
   session_id : string;
   mutable saw_busy : bool;
+  mutable surpressing_responses : bool;
   mutable ready : bool;
-  mutable pending_submit : string option;
+  mutable pending_submit : submission option;
   connection_file : string;
 }
 
@@ -175,13 +178,14 @@ let create () =
     key;
     session_id;
     saw_busy = false;
+    surpressing_responses = false;
     ready = false;
     pending_submit = None;
     connection_file;
   }
 
 let recv_message socket =
-  let message = Zmq.Socket.recv_all socket in
+  let message = Zmq.Socket.recv_all socket ~block:false in
   let rec read_message parts =
     match parts with
     | delim :: _signature :: header :: _parent_h :: _metadata :: content
@@ -196,10 +200,14 @@ let recv_message socket =
   Yojson.Basic.(from_string header, from_string content)
 
 let send_execute_request t input =
+  let code = match input with
+  | User c -> c
+  | Background c -> t.surpressing_responses <- true; c
+  in
   let content =
     `Assoc
       [
-        ("code", `String input);
+        ("code", `String code);
         ("silent", `Bool false);
         ("store_history", `Bool true);
         ("user_expressions", `Assoc []);
@@ -246,8 +254,13 @@ let poll_ready t =
     t.ready
 
 let submit t input =
-  if t.ready then send_execute_request t input
-  else t.pending_submit <- Some input
+  if t.ready then send_execute_request t (User input)
+  else t.pending_submit <- Some (User input)
+
+let background_submit t input =
+  if t.ready then send_execute_request t (Background input)
+  else t.pending_submit <- Some (Background input)
+
 
 let parse_response response_field =
   match Yojson.Basic.Util.member "text/plain" response_field with
@@ -264,39 +277,47 @@ let pretty_print_error error_data =
 let await_response t =
   let open Yojson.Basic.Util in
   let rec loop () =
-    let header, content =
-      try recv_message t.iopub
-      with Unix.Unix_error (Unix.EINTR, _, _) -> raise Stdlib.Exit
-    in
-    let message_type = header |> member "msg_type" |> to_string in
-    log (Printf.sprintf "recv: %s (saw_busy=%b)" message_type t.saw_busy);
-    match message_type with
-    | "status" -> (
-        let new_status = content |> member "execution_state" |> to_string in
-        log (Printf.sprintf "  status: %s" new_status);
-        match new_status with
-        | "starting" -> loop ()
-        | "busy" ->
-            t.saw_busy <- true;
+    Eio.Fiber.yield ();
+    match recv_message t.iopub with
+    | exception Unix.Unix_error (Unix.EAGAIN, _, _) -> loop ()
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> raise Stdlib.Exit
+    | (header, content) -> (
+        let message_type = header |> member "msg_type" |> to_string in
+        log (Printf.sprintf "recv: %s (saw_busy=%b)" message_type t.saw_busy);
+        match message_type with
+        | "status" -> (
+            let new_status = content |> member "execution_state" |> to_string in
+            log (Printf.sprintf "  status: %s" new_status);
+            match new_status with
+            | "starting" -> loop ()
+            | "busy" ->
+                t.saw_busy <- true;
+                loop ()
+            | "idle" ->
+                t.surpressing_responses <- false;
+                if t.saw_busy then (t.saw_busy <- false; Done) else loop ()
+            | s ->
+                Internal_error
+                  (Printf.sprintf "Unexpected status from backend: %s" s))
+        | "stream" -> (
+            if t.surpressing_responses then loop ()
+            else
+              let to_print = content |> member "text" |> to_string in
+              match content |> member "name" |> to_string with
+              | "stdout" -> Stdout to_print
+              | "stderr" -> loop () (* skip ark's internal logging *)
+              | _ -> Internal_error "invalid response channel")
+        | "execute_result" ->
+            if t.surpressing_responses then loop ()
+            else Result (content |> member "data" |> parse_response)
+        | "error" ->
+            if t.surpressing_responses then loop ()
+            else R_error (pretty_print_error content)
+        | "iopub_welcome" ->
+            t.ready <- true;
+            flush_pending t;
             loop ()
-        | "idle" when t.saw_busy ->
-            t.saw_busy <- false;
-            Done
-        | "idle" -> loop ()
-        | s ->
-            Internal_error
-              (Printf.sprintf "Unexpected status from backend: %s" s))
-    | "stream" -> (
-        let to_print = content |> member "text" |> to_string in
-        match content |> member "name" |> to_string with
-        | "stdout" -> Stdout to_print
-        | "stderr" -> loop () (* skip ark's internal logging *)
-        | _ -> Internal_error "invalid response channel")
-    | "execute_result" -> Result (content |> member "data" |> parse_response)
-    | "error" ->
-        R_error (pretty_print_error content)
-        (* NOT terminal - caller keeps calling *)
-    | _ -> loop ()
+        | _ -> loop ())
   in
   try loop () with
   | Stdlib.Exit -> Shutdown

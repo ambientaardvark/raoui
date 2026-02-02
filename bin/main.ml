@@ -159,23 +159,17 @@ let handle_response model response =
 let run env backend =
   let clock = Eio.Stdenv.clock env in
   let stdin = Eio.Stdenv.stdin env in
+  let init_width, _ = get_term_dimensions () in
+  Backend.background_submit backend (Printf.sprintf "options(width=%d)" init_width);
   let rec loop model =
     let _ = Backend.poll_ready backend in
     print_string (View.view model);
     Out_channel.flush stdout;
     let msg =
-      if model.awaiting_response then
         Eio.Fiber.any
           [
             (fun () -> Key (Tty_listener.await_input ~clock ~stdin));
             (fun () -> Response (Backend.await_response backend));
-            (fun () ->
-              Term_size (await_dim_change model.term_width model.term_height));
-          ]
-      else
-        Eio.Fiber.any
-          [
-            (fun () -> Key (Tty_listener.await_input ~clock ~stdin));
             (fun () ->
               Term_size (await_dim_change model.term_width model.term_height));
           ]
@@ -187,7 +181,10 @@ let run env backend =
         | `Continue new_model -> loop new_model)
     | Response Backend.Shutdown -> ()
     | Response r -> loop (handle_response model r)
-    | Term_size (term_width, _) -> loop { model with term_width }
+    | Term_size (term_width, _) ->
+        Backend.background_submit backend
+          (Printf.sprintf "options(width=%d)" term_width);
+        loop { model with term_width }
   in
   loop (make_init ())
 

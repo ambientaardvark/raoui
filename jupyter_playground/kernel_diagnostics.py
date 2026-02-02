@@ -279,6 +279,7 @@ def print_message_log(messages):
             summary = str(content)[:60]
 
         print(f"  {elapsed_ms:7.1f}ms  {msg_type:25s}  {summary}")
+        print(f"\n\n{content}\n\n")
 
 
 def run_scenario(kernel, name, code, interrupt_after_ms=None):
