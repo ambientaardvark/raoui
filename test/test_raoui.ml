@@ -849,6 +849,21 @@ let test_lex_cache_multiline_mode_change () =
       check_lex_cache ~msg:"lex cache matches after multiline edit" new_model
   | _ -> Alcotest.fail "Expected Continue"
 
+let test_lex_delete_empty_line: unit -> unit = fun () ->
+  let width = 80 in
+  let lines = List.map us ["a"; "b"; ""; "c"; "d"] in
+  let model =
+  with_cursor_internal
+    (with_lines (initial_model width) lines) ~line:2 ~pos:0 in
+  match Update.update (Tty_listener.Backspace) model with
+  | Continue new_model ->
+    let lexemes = List.concat_map (fun line -> List.map Syntax.token_to_lexeme line.tokens) new_model.lex_cache in
+    Alcotest.(check string) "First letter is a" "a" (List.nth lexemes 0);
+    Alcotest.(check string) "Second letter is b" "b" (List.nth lexemes 1);
+    Alcotest.(check string) "Third letter is c" "c" (List.nth lexemes 2);
+    Alcotest.(check string) "Fourth letter is d" "d" (List.nth lexemes 3)
+  | _ -> Alcotest.fail "expected continue"
+
 (* Matched bracket insertion/deletion tests *)
 let test_insert_matched_paren () =
   let width = 40 in
@@ -1138,6 +1153,7 @@ let () =
           test_case "Single line edit" `Quick test_lex_cache_single_line_edit;
           test_case "Multiline mode change" `Quick
             test_lex_cache_multiline_mode_change;
+          test_case "Delete empty line" `Quick test_lex_delete_empty_line;
         ] );
       ( "matched_brackets",
         [

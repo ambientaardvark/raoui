@@ -12,6 +12,9 @@ let lex_cache_for_lines lines =
   loop R_lexer.Normal [] lines
 
 let lexer_update start end_ model =
+  if List.length model.lines <> List.length model.lex_cache then
+    { model with lex_cache = lex_cache_for_lines model.lines }
+  else
   let rec loop i mode lines cache acc =
     match lines with
     | [] -> List.rev acc
@@ -23,7 +26,8 @@ let lexer_update start end_ model =
           | [] -> List.rev acc
         else if i > end_ && R_lexer.(mode = Normal) then
           match cache with
-          | cached :: cache_rest when R_lexer.(cached.start_mode = Normal) ->
+          | cached :: cache_rest
+            when R_lexer.(cached.start_mode = Normal) ->
               List.rev acc @ (cached :: cache_rest)
           | _ ->
               let text = Unicode_string.to_string line in
@@ -110,7 +114,7 @@ let delete_char model =
         cursor_row = new_row;
         cursor_col = new_col;
       }
-      |> lexer_update new_line_idx new_line_idx
+      |> lexer_update new_line_idx (new_line_idx + 1)
   else
     let line = current_line model in
     let new_line = Unicode_string.delete line (model.cursor_pos - 1) in
