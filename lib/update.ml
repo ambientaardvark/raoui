@@ -15,37 +15,36 @@ let lexer_update start end_ model =
   if List.length model.lines <> List.length model.lex_cache then
     { model with lex_cache = lex_cache_for_lines model.lines }
   else
-  let rec loop i mode lines cache acc =
-    match lines with
-    | [] -> List.rev acc
-    | line :: rest ->
-        if i < start then
-          match cache with
-          | cached :: cache_rest ->
-              loop (i + 1) cached.end_mode rest cache_rest (cached :: acc)
-          | [] -> List.rev acc
-        else if i > end_ && R_lexer.(mode = Normal) then
-          match cache with
-          | cached :: cache_rest
-            when R_lexer.(cached.start_mode = Normal) ->
-              List.rev acc @ (cached :: cache_rest)
-          | _ ->
-              let text = Unicode_string.to_string line in
-              let tokens, end_mode = R_lexer.lex_line mode text in
-              let entry = { text; tokens; start_mode = mode; end_mode } in
-              let cache_rest = match cache with _ :: tl -> tl | [] -> [] in
-              loop (i + 1) end_mode rest cache_rest (entry :: acc)
-        else
-          let text = Unicode_string.to_string line in
-          let tokens, end_mode = R_lexer.lex_line mode text in
-          let entry = { text; tokens; start_mode = mode; end_mode } in
-          let cache_rest = match cache with _ :: tl -> tl | [] -> [] in
-          loop (i + 1) end_mode rest cache_rest (entry :: acc)
-  in
-  {
-    model with
-    lex_cache = loop 0 R_lexer.Normal model.lines model.lex_cache [];
-  }
+    let rec loop i mode lines cache acc =
+      match lines with
+      | [] -> List.rev acc
+      | line :: rest ->
+          if i < start then
+            match cache with
+            | cached :: cache_rest ->
+                loop (i + 1) cached.end_mode rest cache_rest (cached :: acc)
+            | [] -> List.rev acc
+          else if i > end_ && R_lexer.(mode = Normal) then
+            match cache with
+            | cached :: cache_rest when R_lexer.(cached.start_mode = Normal) ->
+                List.rev acc @ (cached :: cache_rest)
+            | _ ->
+                let text = Unicode_string.to_string line in
+                let tokens, end_mode = R_lexer.lex_line mode text in
+                let entry = { text; tokens; start_mode = mode; end_mode } in
+                let cache_rest = match cache with _ :: tl -> tl | [] -> [] in
+                loop (i + 1) end_mode rest cache_rest (entry :: acc)
+          else
+            let text = Unicode_string.to_string line in
+            let tokens, end_mode = R_lexer.lex_line mode text in
+            let entry = { text; tokens; start_mode = mode; end_mode } in
+            let cache_rest = match cache with _ :: tl -> tl | [] -> [] in
+            loop (i + 1) end_mode rest cache_rest (entry :: acc)
+    in
+    {
+      model with
+      lex_cache = loop 0 R_lexer.Normal model.lines model.lex_cache [];
+    }
 
 (* Cursor context primitives - use internal coordinates *)
 let current_line model = List.nth model.lines model.cursor_line
@@ -58,7 +57,8 @@ let char_at model =
 
 let char_before model =
   if model.cursor_pos = 0 then None
-  else Some (Unicode_string.cluster_at (current_line model) (model.cursor_pos - 1))
+  else
+    Some (Unicode_string.cluster_at (current_line model) (model.cursor_pos - 1))
 
 let at_line_start model = model.cursor_pos = 0
 let at_line_end model = model.cursor_pos >= line_length model
@@ -71,7 +71,9 @@ let same_cursor_pos m1 m2 =
 let insert_char model c =
   let width = effective_width model in
   let line = current_line model in
-  match Unicode_string.insert_string line ~pos:model.cursor_pos (String.make 1 c) with
+  match
+    Unicode_string.insert_string line ~pos:model.cursor_pos (String.make 1 c)
+  with
   | Error _ -> model (* Invalid UTF-8 byte, ignore it *)
   | Ok new_line ->
       let new_lines = update_line model.lines model.cursor_line new_line in
@@ -99,7 +101,8 @@ let delete_char model =
       let new_lines =
         model.lines
         |> List.filteri (fun i _ -> i <> model.cursor_line)
-        |> List.mapi (fun i line -> if i = model.cursor_line - 1 then merged else line)
+        |> List.mapi (fun i line ->
+            if i = model.cursor_line - 1 then merged else line)
       in
       let new_line_idx = model.cursor_line - 1 in
       let new_pos = Unicode_string.length prev_line in
@@ -123,7 +126,8 @@ let delete_char model =
     let new_row, new_col =
       internal_to_terminal width new_lines (model.cursor_line, new_pos)
     in
-    { model with
+    {
+      model with
       lines = new_lines;
       cursor_pos = new_pos;
       cursor_row = new_row;
@@ -144,7 +148,8 @@ let insert_newline model =
   let new_row, new_col =
     internal_to_terminal width new_lines (new_line_idx, 0)
   in
-  { model with
+  {
+    model with
     lines = new_lines;
     cursor_line = new_line_idx;
     cursor_pos = 0;
@@ -200,7 +205,8 @@ let insert_paste model text =
   let new_row, new_col =
     internal_to_terminal width new_lines (final_line_idx, final_pos)
   in
-  { model with
+  {
+    model with
     lines = new_lines;
     cursor_line = final_line_idx;
     cursor_pos = final_pos;
@@ -216,7 +222,12 @@ let move_left model =
     let new_row, new_col =
       internal_to_terminal width model.lines (model.cursor_line, new_pos)
     in
-    { model with cursor_pos = new_pos; cursor_row = new_row; cursor_col = new_col }
+    {
+      model with
+      cursor_pos = new_pos;
+      cursor_row = new_row;
+      cursor_col = new_col;
+    }
   else if not (at_first_line model) then
     let new_line = model.cursor_line - 1 in
     let prev_line = List.nth model.lines new_line in
@@ -224,7 +235,8 @@ let move_left model =
     let new_row, new_col =
       internal_to_terminal width model.lines (new_line, new_pos)
     in
-    { model with
+    {
+      model with
       cursor_line = new_line;
       cursor_pos = new_pos;
       cursor_row = new_row;
@@ -239,13 +251,19 @@ let move_right model =
     let new_row, new_col =
       internal_to_terminal width model.lines (model.cursor_line, new_pos)
     in
-    { model with cursor_pos = new_pos; cursor_row = new_row; cursor_col = new_col }
+    {
+      model with
+      cursor_pos = new_pos;
+      cursor_row = new_row;
+      cursor_col = new_col;
+    }
   else if not (at_last_line model) then
     let new_line = model.cursor_line + 1 in
     let new_row, new_col =
       internal_to_terminal width model.lines (new_line, 0)
     in
-    { model with
+    {
+      model with
       cursor_line = new_line;
       cursor_pos = 0;
       cursor_row = new_row;
@@ -326,8 +344,7 @@ let insert_matched_end model c =
     | _ -> insert_char model c
 
 let insert_matched_same model c =
-  if at_line_end model then
-    insert_char (insert_char model c) c |> move_left
+  if at_line_end model then insert_char (insert_char model c) c |> move_left
   else
     match char_at model with
     | Some s when String.get s 0 = c -> move_right model
@@ -356,7 +373,8 @@ let user_input_delete model =
           | '\'' -> a = '\''
           | _ -> false
         in
-        if is_matched_pair then model |> move_right |> delete_char |> delete_char
+        if is_matched_pair then
+          model |> move_right |> delete_char |> delete_char
         else delete_char model
     | _ -> delete_char model
 
@@ -368,15 +386,15 @@ let move_cursor_to_end model =
   let new_row, new_col =
     internal_to_terminal width model.lines (last_line_idx, new_pos)
   in
-  { model with
+  {
+    model with
     cursor_line = last_line_idx;
     cursor_pos = new_pos;
     cursor_row = new_row;
     cursor_col = new_col;
   }
 
-let go_to_line_start model =
-  { model with cursor_pos = 0; cursor_col = 0 }
+let go_to_line_start model = { model with cursor_pos = 0; cursor_col = 0 }
 
 let go_to_line_end model =
   let width = effective_width model in
@@ -384,7 +402,12 @@ let go_to_line_end model =
   let new_row, new_col =
     internal_to_terminal width model.lines (model.cursor_line, new_pos)
   in
-  { model with cursor_pos = new_pos; cursor_row = new_row; cursor_col = new_col }
+  {
+    model with
+    cursor_pos = new_pos;
+    cursor_row = new_row;
+    cursor_col = new_col;
+  }
 
 let is_word_char s =
   if String.length s > 1 then true
@@ -401,13 +424,11 @@ let go_to_next_word model =
       | Some cursor_char ->
           if is_word_char cursor_char then
             let new_mod = move_right model in
-            if same_cursor_pos model new_mod then model
-            else loop true new_mod
+            if same_cursor_pos model new_mod then model else loop true new_mod
           else if seen_word then model
           else
             let new_mod = move_right model in
-            if same_cursor_pos model new_mod then model
-            else loop false new_mod
+            if same_cursor_pos model new_mod then model else loop false new_mod
   in
   loop false model
 
@@ -420,13 +441,11 @@ let go_to_last_word model =
       | Some cursor_char ->
           if is_word_char cursor_char then
             let new_mod = move_left model in
-            if same_cursor_pos model new_mod then model
-            else loop true new_mod
+            if same_cursor_pos model new_mod then model else loop true new_mod
           else if seen_word then model
           else
             let new_mod = move_left model in
-            if same_cursor_pos model new_mod then model
-            else loop false new_mod
+            if same_cursor_pos model new_mod then model else loop false new_mod
   in
   loop false model
 
@@ -460,10 +479,15 @@ let delete_before_cursor model =
   if at_line_start model then delete_char model
   else
     let line = current_line model in
-    let new_line = Unicode_string.delete_range line ~start:0 ~len:model.cursor_pos in
+    let new_line =
+      Unicode_string.delete_range line ~start:0 ~len:model.cursor_pos
+    in
     let new_lines = update_line model.lines model.cursor_line new_line in
-    let new_row, new_col = internal_to_terminal width new_lines (model.cursor_line, 0) in
-    { model with
+    let new_row, new_col =
+      internal_to_terminal width new_lines (model.cursor_line, 0)
+    in
+    {
+      model with
       lines = new_lines;
       cursor_pos = 0;
       cursor_row = new_row;
@@ -494,8 +518,7 @@ type continuation_state = {
 
 type continuation_signal = Submit | Continue_with_indent of int
 
-let token_lexeme_len token =
-  String.length (Syntax.token_to_lexeme token)
+let token_lexeme_len token = String.length (Syntax.token_to_lexeme token)
 
 let tokens_with_positions tokens =
   let rec loop pos acc = function
@@ -539,9 +562,8 @@ let pending_for_keyword = function
   | _ -> None
 
 let is_expr_token = function
-  | R_lexer.NUMBER _ | R_lexer.STRING _ | R_lexer.CONSTANT _
-  | R_lexer.IDENT _ | R_lexer.BACKTICK_IDENT _ | R_lexer.LAMBDA
-  | R_lexer.UNKNOWN _ ->
+  | R_lexer.NUMBER _ | R_lexer.STRING _ | R_lexer.CONSTANT _ | R_lexer.IDENT _
+  | R_lexer.BACKTICK_IDENT _ | R_lexer.LAMBDA | R_lexer.UNKNOWN _ ->
       true
   | R_lexer.KEYWORD kw -> not (is_control_keyword kw)
   | R_lexer.LEFT_PAREN | R_lexer.LEFT_BRACKET -> true
@@ -559,8 +581,7 @@ let update_pending_for_header pending tok =
   | None -> None
   | Some p when p.needs_header && not p.header_done -> (
       match tok with
-      | R_lexer.LEFT_PAREN ->
-          Some { p with header_depth = p.header_depth + 1 }
+      | R_lexer.LEFT_PAREN -> Some { p with header_depth = p.header_depth + 1 }
       | R_lexer.RIGHT_PAREN ->
           if p.header_depth > 0 then
             let depth = p.header_depth - 1 in
@@ -587,8 +608,7 @@ let fold_continuation_state tokens =
         | R_lexer.RIGHT_PAREN ->
             let pending = update_pending_for_header state.pending tok in
             { state with parens = max 0 (state.parens - 1); pending }
-        | R_lexer.LEFT_BRACKET ->
-            { state with brackets = state.brackets + 1 }
+        | R_lexer.LEFT_BRACKET -> { state with brackets = state.brackets + 1 }
         | R_lexer.RIGHT_BRACKET ->
             { state with brackets = max 0 (state.brackets - 1) }
         | R_lexer.LEFT_BRACE ->
@@ -603,7 +623,13 @@ let fold_continuation_state tokens =
       | _ -> state
   in
   let initial =
-    { parens = 0; brackets = 0; braces = 0; last_significant = None; pending = None }
+    {
+      parens = 0;
+      brackets = 0;
+      braces = 0;
+      last_significant = None;
+      pending = None;
+    }
   in
   List.fold_left step initial tokens
 
@@ -647,39 +673,38 @@ let insert_spaces count model =
 let expand_empty_brackets model =
   let line = current_line model in
   let base_indent = leading_spaces (Unicode_string.to_string line) in
-  model
-  |> insert_newline
+  model |> insert_newline
   |> insert_spaces (base_indent + continuation_indent_size)
-  |> insert_newline
-  |> insert_spaces base_indent
-  |> move_up
-  |> go_to_line_end
+  |> insert_newline |> insert_spaces base_indent |> move_up |> go_to_line_end
+
+let at_empty_line model =
+  "" = (model |> current_line |> Unicode_string.to_string |> String.trim)
 
 let continuation_signal model =
-  let tokens = tokens_before_cursor model in
-  let state = fold_continuation_state tokens in
-  let mid_string = R_lexer.(mode_at_cursor model <> Normal) in
-  let unclosed =
-    state.parens > 0 || state.brackets > 0 || state.braces > 0
-  in
-  let trailing =
-    match state.last_significant with
-    | Some tok -> is_trailing_token tok
-    | None -> false
-  in
-  let incomplete = Option.is_some state.pending in
-  if unclosed || trailing || incomplete || mid_string then
-    let operator_cont =
+  if at_empty_line model then Submit
+  else
+    let tokens = tokens_before_cursor model in
+    let state = fold_continuation_state tokens in
+    let mid_string = R_lexer.(mode_at_cursor model <> Normal) in
+    let unclosed = state.parens > 0 || state.brackets > 0 || state.braces > 0 in
+    let trailing =
       match state.last_significant with
-      | Some (R_lexer.OPERATOR _) -> true
-      | _ -> false
+      | Some tok -> is_trailing_token tok
+      | None -> false
     in
-    let indent_levels =
-      state.braces + state.parens + state.brackets
-      + (if operator_cont then 1 else 0)
-    in
-    Continue_with_indent indent_levels
-  else Submit
+    let incomplete = Option.is_some state.pending in
+    if unclosed || trailing || incomplete || mid_string then
+      let operator_cont =
+        match state.last_significant with
+        | Some (R_lexer.OPERATOR _) -> true
+        | _ -> false
+      in
+      let indent_levels =
+        state.braces + state.parens + state.brackets
+        + if operator_cont then 1 else 0
+      in
+      Continue_with_indent indent_levels
+    else Submit
 
 let submit model =
   if inside_empty_brackets model then Continue (expand_empty_brackets model)
@@ -698,40 +723,40 @@ let submit model =
           (model |> insert_newline
           |> repeat_n_times indent_spaces (fun m -> insert_char m ' '))
     | Submit ->
-      let text =
-        String.concat "\n" (List.map Unicode_string.to_string model.lines)
-      in
-      let width = effective_width model in
-      let wrapped = wrap_lines width model.lines in
-      let total_rows = List.length wrapped in
-      let output_row = model.prompt_top_row + total_rows in
-      let new_prompt_top = output_row + 1 in
-      let scroll_amount =
-        if new_prompt_top > model.term_height then
-          model.term_height - new_prompt_top
-        else 0
-      in
-      let new_model =
-        {
-          model with
-          awaiting_response = true;
-          repl_cursor = (output_row + scroll_amount, 1);
-          prompt_top_row = new_prompt_top + scroll_amount;
-          previous_prompt_top_row = new_prompt_top + scroll_amount;
-          lines = [ Unicode_string.empty ];
-          lex_cache = lex_cache_for_lines [ Unicode_string.empty ];
-          cursor_row = 0;
-          cursor_col = 0;
-          cursor_line = 0;
-          cursor_pos = 0;
-          prompt_box_height = 1;
-          prompt_history = model.lines :: model.prompt_history;
-          original_prompt = None;
-          place_in_history = 0;
-          scroll_amount;
-        }
-      in
-      Submit (text, new_model)
+        let text =
+          String.concat "\n" (List.map Unicode_string.to_string model.lines)
+        in
+        let width = effective_width model in
+        let wrapped = wrap_lines width model.lines in
+        let total_rows = List.length wrapped in
+        let output_row = model.prompt_top_row + total_rows in
+        let new_prompt_top = output_row + 1 in
+        let scroll_amount =
+          if new_prompt_top > model.term_height then
+            model.term_height - new_prompt_top
+          else 0
+        in
+        let new_model =
+          {
+            model with
+            awaiting_response = true;
+            repl_cursor = (output_row + scroll_amount, 1);
+            prompt_top_row = new_prompt_top + scroll_amount;
+            previous_prompt_top_row = new_prompt_top + scroll_amount;
+            lines = [ Unicode_string.empty ];
+            lex_cache = lex_cache_for_lines [ Unicode_string.empty ];
+            cursor_row = 0;
+            cursor_col = 0;
+            cursor_line = 0;
+            cursor_pos = 0;
+            prompt_box_height = 1;
+            prompt_history = model.lines :: model.prompt_history;
+            original_prompt = None;
+            place_in_history = 0;
+            scroll_amount;
+          }
+        in
+        Submit (text, new_model)
 
 let handle_vertical_cursor_movement model =
   let width = effective_width model in
@@ -769,7 +794,8 @@ let handle_resize new_width model =
     let model = { model with term_width = new_width } in
     let new_eff_width = effective_width model in
     let new_row, new_col =
-      internal_to_terminal new_eff_width model.lines (model.cursor_line, model.cursor_pos)
+      internal_to_terminal new_eff_width model.lines
+        (model.cursor_line, model.cursor_pos)
     in
     { model with cursor_row = new_row; cursor_col = new_col }
 
@@ -797,12 +823,12 @@ let apply_key key model =
   | Left -> Continue (move_left model)
   | Right -> Continue (move_right model)
   | Up ->
-      if at_first_line model || Option.is_some model.flipping_through_history then
-        Continue (shift_history model ~amount:1)
+      if at_first_line model || Option.is_some model.flipping_through_history
+      then Continue (shift_history model ~amount:1)
       else Continue (move_up model)
   | Down ->
-      if at_last_line model || Option.is_some model.flipping_through_history then
-        Continue (shift_history model ~amount:(-1))
+      if at_last_line model || Option.is_some model.flipping_through_history
+      then Continue (shift_history model ~amount:(-1))
       else Continue (move_down model)
   | Paste text -> Continue (insert_paste model text)
   | _ -> Continue model
@@ -826,8 +852,7 @@ let sync_internal_coords model =
 let update key model =
   { model with scroll_amount = 0 }
   |> handle_resize model.term_width
-  |> sync_internal_coords
-  |> apply_key key
+  |> sync_internal_coords |> apply_key key
   |> function
   | Continue s -> Continue (universal_corrections key s)
   | other -> other
