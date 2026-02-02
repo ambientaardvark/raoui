@@ -991,6 +991,40 @@ let test_matched_insert_with_content () =
       Alcotest.(check int) "cursor between" 2 new_model.cursor_col
   | _ -> Alcotest.fail "Expected Continue"
 
+let test_empty_brace_expands_on_enter () =
+  let width = 40 in
+  let model =
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "{}" ])
+      ~line:0 ~pos:1
+  in
+  match Update.update Tty_listener.Enter model with
+  | Continue new_model ->
+      Alcotest.(check (list string))
+        "expanded lines"
+        [ "{"; "  "; "}" ]
+        (to_strings new_model.lines);
+      Alcotest.(check int) "cursor line" 1 new_model.cursor_line;
+      Alcotest.(check int) "cursor pos" 2 new_model.cursor_pos
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_brace_continuation_keeps_indent () =
+  let width = 40 in
+  let model =
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "{"; us "  foo <- 1"; us "}" ])
+      ~line:1 ~pos:10
+  in
+  match Update.update Tty_listener.Enter model with
+  | Continue new_model ->
+      Alcotest.(check (list string))
+        "lines after enter"
+        [ "{"; "  foo <- 1"; "  "; "}" ]
+        (to_strings new_model.lines);
+      Alcotest.(check int) "cursor line" 2 new_model.cursor_line;
+      Alcotest.(check int) "cursor pos" 2 new_model.cursor_pos
+  | _ -> Alcotest.fail "Expected Continue"
+
 let () =
   let open Alcotest in
   run "Raoui"
@@ -1120,5 +1154,9 @@ let () =
           test_case "Delete unmatched paren" `Quick test_delete_unmatched_paren;
           test_case "Matched insert with content" `Quick
             test_matched_insert_with_content;
+          test_case "Empty brace expands on enter" `Quick
+            test_empty_brace_expands_on_enter;
+          test_case "Brace continuation keeps indent" `Quick
+            test_brace_continuation_keeps_indent;
         ] );
     ]

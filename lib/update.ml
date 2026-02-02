@@ -512,20 +512,10 @@ let cursor_byte_offset model =
     |> Unicode_string.byte_length
 
 let tokens_before_cursor model =
-  let prev_tokens =
-    model.lex_cache
-    |> List.filteri (fun i _ -> i < model.cursor_line)
-    |> List.map (fun l -> l.tokens)
-    |> List.concat
-  in
-  let current_tokens = (List.nth model.lex_cache model.cursor_line).tokens in
-  let cursor_byte = cursor_byte_offset model in
-  let current_before =
-    tokens_with_positions current_tokens
-    |> List.filter (fun (_, _, end_pos) -> end_pos <= cursor_byte)
-    |> List.map (fun (tok, _, _) -> tok)
-  in
-  prev_tokens @ current_before
+  model.lex_cache
+  |> List.filteri (fun i _ -> i <= model.cursor_line)
+  |> List.map (fun l -> l.tokens)
+  |> List.concat
 
 let is_ignorable = function
   | R_lexer.WHITESPACE _ | R_lexer.COMMENT _ -> true
@@ -635,8 +625,6 @@ let inside_empty_brackets model =
     |> Option.map (fun (tok, _, _) -> tok)
   in
   match (token_before, token_after) with
-  | Some R_lexer.LEFT_PAREN, Some R_lexer.RIGHT_PAREN -> true
-  | Some R_lexer.LEFT_BRACKET, Some R_lexer.RIGHT_BRACKET -> true
   | Some R_lexer.LEFT_BRACE, Some R_lexer.RIGHT_BRACE -> true
   | _ -> false
 
@@ -648,45 +636,20 @@ let leading_spaces s =
   in
   loop 0
 
-let spaces_us n =
-  match Unicode_string.of_string (String.make n ' ') with
-  | Ok u -> u
-  | Error _ -> Unicode_string.empty
+let insert_spaces count model =
+  let rec loop m n = if n <= 0 then m else loop (insert_char m ' ') (n - 1) in
+  loop model count
 
 let expand_empty_brackets model =
   let line = current_line model in
-  let before, after = Unicode_string.split line model.cursor_pos in
   let base_indent = leading_spaces (Unicode_string.to_string line) in
-  let inner_indent = base_indent + continuation_indent_size in
-  let inner_line = spaces_us inner_indent in
-  let after_line = Unicode_string.append (spaces_us base_indent) after in
-  let rec take n = function
-    | [] -> []
-    | x :: xs -> if n <= 0 then [] else x :: take (n - 1) xs
-  in
-  let rec drop n = function
-    | [] -> []
-    | xs when n <= 0 -> xs
-    | _ :: xs -> drop (n - 1) xs
-  in
-  let prefix = take model.cursor_line model.lines in
-  let suffix = drop (model.cursor_line + 1) model.lines in
-  let new_lines = prefix @ [ before; inner_line; after_line ] @ suffix in
-  let new_cursor_line = model.cursor_line + 1 in
-  let new_cursor_pos = inner_indent in
-  let new_row, new_col =
-    internal_to_terminal (effective_width model) new_lines
-      (new_cursor_line, new_cursor_pos)
-  in
-  {
-    model with
-    lines = new_lines;
-    lex_cache = lex_cache_for_lines new_lines;
-    cursor_line = new_cursor_line;
-    cursor_pos = new_cursor_pos;
-    cursor_row = new_row;
-    cursor_col = new_col;
-  }
+  model
+  |> insert_newline
+  |> insert_spaces (base_indent + continuation_indent_size)
+  |> insert_newline
+  |> insert_spaces base_indent
+  |> move_up
+  |> go_to_line_end
 
 let continuation_signal model =
   let tokens = tokens_before_cursor model in
@@ -707,7 +670,10 @@ let continuation_signal model =
       | Some (R_lexer.OPERATOR _) -> true
       | _ -> false
     in
-    let indent_levels = state.braces + (if operator_cont then 1 else 0) in
+    let indent_levels =
+      state.braces + state.parens + state.brackets
+      + (if operator_cont then 1 else 0)
+    in
     Continue_with_indent indent_levels
   else Submit
 
@@ -719,7 +685,7 @@ let submit model =
         let line = current_line model in
         let base_indent = leading_spaces (Unicode_string.to_string line) in
         let indent_spaces =
-          base_indent + (indent_levels * continuation_indent_size)
+          max base_indent (indent_levels * continuation_indent_size)
         in
         let rec repeat_n_times n f m =
           if n <= 0 then m else repeat_n_times (n - 1) f (f m)
@@ -770,10 +736,9 @@ let handle_vertical_cursor_movement model =
     |> max model.prompt_box_height
   in
   let scrolls_from_expansion =
-    if
-      new_height > model.prompt_box_height
-      && model.term_height < new_height + model.prompt_top_row - 1
-    then -1
+    if new_height > model.prompt_box_height then
+      let bottom = model.prompt_top_row + new_height - 1 in
+      if bottom > model.term_height then model.term_height - bottom else 0
     else 0
   in
   let prompt_top_after_expansion =
