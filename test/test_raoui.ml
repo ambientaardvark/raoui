@@ -45,6 +45,12 @@ let initial_model width =
 let with_lines model lines =
   { model with lines; lex_cache = Update.lex_cache_for_lines lines }
 
+let with_cursor_internal model ~line ~pos =
+  let row, col =
+    internal_to_terminal (effective_width model) model.lines (line, pos)
+  in
+  { model with cursor_line = line; cursor_pos = pos; cursor_row = row; cursor_col = col }
+
 let style_to_string = function
   | `Raw -> "Raw"
   | `Plain -> "Plain"
@@ -526,11 +532,9 @@ let test_cancel_while_awaiting () =
 let test_backspace_while_awaiting () =
   let width = 10 in
   let model =
-    {
-      (with_lines (initial_model width) [ us "ab" ]) with
-      awaiting_response = true;
-      cursor_col = 2;
-    }
+    with_cursor_internal
+      { (with_lines (initial_model width) [ us "ab" ]) with awaiting_response = true }
+      ~line:0 ~pos:2
   in
 
   match Update.update Tty_listener.Backspace model with
@@ -552,7 +556,9 @@ let test_left_at_start () =
 let test_right_at_end () =
   let width = 10 in
   let model =
-    { (with_lines (initial_model width) [ us "ab" ]) with cursor_col = 2 }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "ab" ])
+      ~line:0 ~pos:2
   in
 
   match Update.update Tty_listener.Right model with
@@ -563,7 +569,9 @@ let test_right_at_end () =
 let test_cursor_moves_over_wide_grapheme () =
   let width = 10 in
   let model =
-    { (with_lines (initial_model width) [ us "a中b" ]) with cursor_col = 0 }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "a中b" ])
+      ~line:0 ~pos:0
   in
   let model =
     match Update.update Tty_listener.Right model with
@@ -587,7 +595,9 @@ let test_cursor_moves_over_wide_grapheme () =
 let test_cursor_moves_over_emoji_zwj () =
   let width = 10 in
   let model =
-    { (with_lines (initial_model width) [ us "a👩🏻‍⚕️b" ]) with cursor_col = 0 }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "a👩🏻‍⚕️b" ])
+      ~line:0 ~pos:0
   in
   let model =
     match Update.update Tty_listener.Right model with
@@ -621,11 +631,9 @@ let test_backspace_at_start () =
 let test_backspace_merges_lines () =
   let width = 10 in
   let model =
-    {
-      (with_lines (initial_model width) [ us "hello"; us "world" ]) with
-      cursor_row = 1;
-      cursor_col = 0;
-    }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "hello"; us "world" ])
+      ~line:1 ~pos:0
   in
 
   match Update.update Tty_listener.Backspace model with
@@ -638,7 +646,9 @@ let test_backspace_merges_lines () =
 let test_newline_splits_line () =
   let width = 10 in
   let model =
-    { (with_lines (initial_model width) [ us "helloworld" ]) with cursor_col = 5 }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "helloworld" ])
+      ~line:0 ~pos:5
   in
 
   match Update.update (Tty_listener.Ctrl '\r') model with
@@ -660,7 +670,9 @@ let test_ctrl_d_exit_on_empty () =
 let test_ctrl_d_deletes_char () =
   let width = 10 in
   let model =
-    { (with_lines (initial_model width) [ us "ab" ]) with cursor_col = 0 }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "ab" ])
+      ~line:0 ~pos:0
   in
 
   match Update.update (Tty_listener.Ctrl 'd') model with
@@ -671,11 +683,9 @@ let test_ctrl_d_deletes_char () =
 let test_submit_multiline () =
   let width = 20 in
   let model =
-    {
-      (with_lines (initial_model width) [ us "c(1,"; us "2,"; us "3)" ]) with
-      cursor_row = 2;
-      cursor_col = 2;
-    }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "c(1,"; us "2,"; us "3)" ])
+      ~line:2 ~pos:2
   in
 
   match Update.submit model with
@@ -690,11 +700,9 @@ let test_submit_continuation_if_paren () =
   let width = 20 in
   let line = us "if (x)" in
   let model =
-    {
-      (with_lines (initial_model width) [ line ]) with
-      cursor_row = 0;
-      cursor_col = Unicode_string.length line;
-    }
+    with_cursor_internal
+      (with_lines (initial_model width) [ line ])
+      ~line:0 ~pos:(Unicode_string.length line)
   in
   match Update.submit model with
   | Continue new_model ->
@@ -707,11 +715,9 @@ let test_submit_continuation_function_paren () =
   let width = 20 in
   let line = us "function(x)" in
   let model =
-    {
-      (with_lines (initial_model width) [ line ]) with
-      cursor_row = 0;
-      cursor_col = Unicode_string.length line;
-    }
+    with_cursor_internal
+      (with_lines (initial_model width) [ line ])
+      ~line:0 ~pos:(Unicode_string.length line)
   in
   match Update.submit model with
   | Continue new_model ->
@@ -724,11 +730,9 @@ let test_submit_if_braced_single_line () =
   let width = 20 in
   let line = us "if (x) { 1 }" in
   let model =
-    {
-      (with_lines (initial_model width) [ line ]) with
-      cursor_row = 0;
-      cursor_col = Unicode_string.length line;
-    }
+    with_cursor_internal
+      (with_lines (initial_model width) [ line ])
+      ~line:0 ~pos:(Unicode_string.length line)
   in
   match Update.submit model with
   | Submit (text, _new_model) ->
@@ -739,11 +743,9 @@ let test_submit_lambda_body_same_line () =
   let width = 40 in
   let line = us "map_dbl(li, \\(x) x + 1)" in
   let model =
-    {
-      (with_lines (initial_model width) [ line ]) with
-      cursor_row = 0;
-      cursor_col = Unicode_string.length line;
-    }
+    with_cursor_internal
+      (with_lines (initial_model width) [ line ])
+      ~line:0 ~pos:(Unicode_string.length line)
   in
   match Update.submit model with
   | Submit (text, _new_model) ->
@@ -778,7 +780,9 @@ let test_paste_multiline () =
 let test_paste_at_cursor () =
   let width = 40 in
   let model =
-    { (with_lines (initial_model width) [ us "helloworld" ]) with cursor_col = 5 }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "helloworld" ])
+      ~line:0 ~pos:5
   in
   match Update.update (Tty_listener.Paste "XXX") model with
   | Continue new_model ->
@@ -791,7 +795,9 @@ let test_paste_at_cursor () =
 let test_paste_multiline_at_cursor () =
   let width = 40 in
   let model =
-    { (with_lines (initial_model width) [ us "helloworld" ]) with cursor_col = 5 }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "helloworld" ])
+      ~line:0 ~pos:5
   in
   match Update.update (Tty_listener.Paste "A\nB\nC") model with
   | Continue new_model ->
@@ -820,11 +826,9 @@ let test_lex_cache_single_line_edit () =
   let width = 80 in
   let line = us "if (x" in
   let model =
-    {
-      (with_lines (initial_model width) [ line ]) with
-      cursor_row = 0;
-      cursor_col = Unicode_string.length line;
-    }
+    with_cursor_internal
+      (with_lines (initial_model width) [ line ])
+      ~line:0 ~pos:(Unicode_string.length line)
   in
   match Update.update (Tty_listener.Char ')') model with
   | Continue new_model ->
@@ -836,11 +840,9 @@ let test_lex_cache_multiline_mode_change () =
   let line0 = us "\"abc" in
   let line1 = us "def\"" in
   let model =
-    {
-      (with_lines (initial_model width) [ line0; line1 ]) with
-      cursor_row = 0;
-      cursor_col = Unicode_string.length line0;
-    }
+    with_cursor_internal
+      (with_lines (initial_model width) [ line0; line1 ])
+      ~line:0 ~pos:(Unicode_string.length line0)
   in
   match Update.update (Tty_listener.Char '"') model with
   | Continue new_model ->
@@ -887,7 +889,9 @@ let test_insert_matched_quote () =
 let test_skip_closing_paren () =
   let width = 40 in
   let model =
-    { (with_lines (initial_model width) [ us "()" ]) with cursor_col = 1 }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "()" ])
+      ~line:0 ~pos:1
   in
   match Update.update (Tty_listener.Char ')') model with
   | Continue new_model ->
@@ -898,7 +902,9 @@ let test_skip_closing_paren () =
 let test_skip_closing_quote () =
   let width = 40 in
   let model =
-    { (with_lines (initial_model width) [ us "\"\"" ]) with cursor_col = 1 }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "\"\"" ])
+      ~line:0 ~pos:1
   in
   match Update.update (Tty_listener.Char '"') model with
   | Continue new_model ->
@@ -909,7 +915,9 @@ let test_skip_closing_quote () =
 let test_delete_matched_paren () =
   let width = 40 in
   let model =
-    { (with_lines (initial_model width) [ us "()" ]) with cursor_col = 1 }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "()" ])
+      ~line:0 ~pos:1
   in
   match Update.update Tty_listener.Backspace model with
   | Continue new_model ->
@@ -920,7 +928,9 @@ let test_delete_matched_paren () =
 let test_delete_matched_bracket () =
   let width = 40 in
   let model =
-    { (with_lines (initial_model width) [ us "[]" ]) with cursor_col = 1 }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "[]" ])
+      ~line:0 ~pos:1
   in
   match Update.update Tty_listener.Backspace model with
   | Continue new_model ->
@@ -931,7 +941,9 @@ let test_delete_matched_bracket () =
 let test_delete_matched_brace () =
   let width = 40 in
   let model =
-    { (with_lines (initial_model width) [ us "{}" ]) with cursor_col = 1 }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "{}" ])
+      ~line:0 ~pos:1
   in
   match Update.update Tty_listener.Backspace model with
   | Continue new_model ->
@@ -942,7 +954,9 @@ let test_delete_matched_brace () =
 let test_delete_matched_quote () =
   let width = 40 in
   let model =
-    { (with_lines (initial_model width) [ us "\"\"" ]) with cursor_col = 1 }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "\"\"" ])
+      ~line:0 ~pos:1
   in
   match Update.update Tty_listener.Backspace model with
   | Continue new_model ->
@@ -954,7 +968,9 @@ let test_delete_unmatched_paren () =
   let width = 40 in
   (* cursor between ( and x, not a matched pair *)
   let model =
-    { (with_lines (initial_model width) [ us "(x)" ]) with cursor_col = 1 }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "(x)" ])
+      ~line:0 ~pos:1
   in
   match Update.update Tty_listener.Backspace model with
   | Continue new_model ->
@@ -965,7 +981,9 @@ let test_delete_unmatched_paren () =
 let test_matched_insert_with_content () =
   let width = 40 in
   let model =
-    { (with_lines (initial_model width) [ us "abc" ]) with cursor_col = 1 }
+    with_cursor_internal
+      (with_lines (initial_model width) [ us "abc" ])
+      ~line:0 ~pos:1
   in
   match Update.update (Tty_listener.Char '(') model with
   | Continue new_model ->
