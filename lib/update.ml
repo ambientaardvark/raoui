@@ -685,7 +685,6 @@ let continuation_signal model =
   else
     let tokens = tokens_before_cursor model in
     let state = fold_continuation_state tokens in
-    let mid_string = R_lexer.(mode_at_cursor model <> Normal) in
     let unclosed = state.parens > 0 || state.brackets > 0 || state.braces > 0 in
     let trailing =
       match state.last_significant with
@@ -693,7 +692,7 @@ let continuation_signal model =
       | None -> false
     in
     let incomplete = Option.is_some state.pending in
-    if unclosed || trailing || incomplete || mid_string then
+    if unclosed || trailing || incomplete then
       let operator_cont =
         match state.last_significant with
         | Some (R_lexer.OPERATOR _) -> true
