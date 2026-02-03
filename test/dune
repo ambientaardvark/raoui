@@ -15,5 +15,9 @@
  (libraries raoui alcotest))
 
 (test
+ (name test_syntax)
+ (libraries raoui alcotest))
+
+(test
  (name test_ark_integration)
  (libraries raoui alcotest eio_main))
