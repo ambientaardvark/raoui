@@ -32,7 +32,7 @@ let disable_bracketed_paste () =
   print_string "\x1b[?2004l";
   Out_channel.flush stdout
 
-let clear_log () = Out_channel.write_all "debug_log.txt" ~data:""
+let clear_log () = Out_channel.write_all "/Users/alanlee/Documents/Programs/raoui/debug_log.txt" ~data:""
 
 let get_cursor_position () =
   print_string "\x1b[6n";

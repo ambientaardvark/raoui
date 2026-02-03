@@ -4,7 +4,7 @@ open Frontend_types
 module Term = Terminal_ops.Make(struct let term_type = "ansi" end)
 
 let log message =
-  let oc = Stdlib.open_out_gen [Open_append; Open_creat] 0o666 "debug_log.txt" in
+  let oc = Stdlib.open_out_gen [Open_append; Open_creat] 0o666 "/Users/alanlee/Documents/Programs/raoui/debug_log.txt" in
   Stdlib.Fun.protect
     ~finally:(fun () -> Stdlib.close_out oc)
     (fun () -> Stdlib.Printf.fprintf oc "%s\n" message)

@@ -1,0 +1,11 @@
+#!/bin/bash
+
+cp -f _build/default/bin/main.exe ~/bin/raoui
+# Copy ark alongside raoui
+if [ -f "vendor/ark-0.1.223-darwin-universal/ark" ]; then
+    cp -f vendor/ark-0.1.223-darwin-universal/ark ~/bin/ark
+elif [ -f "vendor/ark-0.1.227-linux-x64/ark" ]; then
+    cp -f vendor/ark-0.1.227-linux-x64/ark ~/bin/ark
+fi
+# Copy R startup script
+cp -f r_scripts/startup.R ~/bin/startup.R
