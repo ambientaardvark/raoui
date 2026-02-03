@@ -186,10 +186,10 @@ let run env backend =
         | `Continue new_model -> loop new_model)
     | Response Backend.Shutdown -> ()
     | Response r -> loop (handle_response model r)
-    | Term_size (term_width, _) ->
+    | Term_size (term_width, term_height) ->
         Backend.background_submit backend
           (Printf.sprintf "options(width=%d)" term_width);
-        loop { model with term_width }
+        loop { model with term_width; term_height }
   in
   loop model_after_cached
 
