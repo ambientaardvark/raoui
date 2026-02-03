@@ -34,6 +34,7 @@ type model = {
   original_prompt : Unicode_string.t list option;
   place_in_history : int;
   flipping_through_history : int option;
+  running_in_ide : bool;
 }
 
 type update_result =

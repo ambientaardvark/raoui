@@ -105,3 +105,13 @@ let await_input ~clock ~stdin =
   | Some '\r' | Some '\n' -> Enter
   | Some c when Char.code c < 32 -> Ctrl (Char.chr (Char.code c + 96))
   | Some c -> Char c
+
+let drain_to_keys ~clock ~stdin =
+  let rec loop acc =
+    let ready, _, _ = Unix.select [ Unix.stdin ] [] [] 0.0 in
+    if ready = [] then List.rev acc
+    else
+      let key = await_input ~clock ~stdin in
+      loop (key :: acc)
+  in
+  loop []

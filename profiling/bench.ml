@@ -41,6 +41,7 @@ let make_model () =
     original_prompt = None;
     place_in_history = 0;
     flipping_through_history = None;
+    running_in_ide = false;
   }
 
 let iterations = 10_000

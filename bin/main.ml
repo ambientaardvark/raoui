@@ -34,19 +34,7 @@ let disable_bracketed_paste () =
 
 let clear_log () = Out_channel.write_all "debug_log.txt" ~data:""
 
-let drain_stdin () =
-  let buf = Bytes.create 256 in
-  let rec loop () =
-    let ready, _, _ = Unix.select [ Unix.stdin ] [] [] 0.0 in
-    if List.is_empty ready then ()
-    else
-      let _ = Unix.read Unix.stdin buf 0 256 in
-      loop ()
-  in
-  loop ()
-
 let get_cursor_position () =
-  drain_stdin ();
   print_string "\x1b[6n";
   Out_channel.flush stdout;
   let buf = Buffer.create 16 in
@@ -83,6 +71,11 @@ let make_init () : Frontend_types.model =
   let row, _col = get_cursor_position () in
   let term_width, term_height = get_term_dimensions () in
   let lines = [ Unicode_string.empty ] in
+  let running_in_ide =
+    match Stdlib.Sys.getenv_opt "TERM_PROGRAM" with
+    | Some "vscode" -> true
+    | _ -> false
+  in
   {
     lines;
     lex_cache = Update.lex_cache_for_lines lines;
@@ -106,6 +99,7 @@ let make_init () : Frontend_types.model =
     original_prompt = None;
     place_in_history = 0;
     flipping_through_history = None;
+    running_in_ide;
   }
 
 let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
@@ -159,8 +153,19 @@ let handle_response model response =
 let run env backend =
   let clock = Eio.Stdenv.clock env in
   let stdin = Eio.Stdenv.stdin env in
-  let init_width, _ = get_term_dimensions () in
+  let cached_keys = Tty_listener.drain_to_keys ~clock ~stdin in
+  let init_model = make_init () in
+  let init_width = init_model.term_width in
   Backend.background_submit backend (Printf.sprintf "options(width=%d)" init_width);
+  let model_after_cached =
+    Stdlib.List.fold_left
+      (fun m key ->
+        match handle_key backend m key with
+        | `Exit -> m
+        | `Continue m' -> m')
+      init_model
+      cached_keys
+  in
   let rec loop model =
     let _ = Backend.poll_ready backend in
     print_string (View.view model);
@@ -186,7 +191,7 @@ let run env backend =
           (Printf.sprintf "options(width=%d)" term_width);
         loop { model with term_width }
   in
-  loop (make_init ())
+  loop model_after_cached
 
 let () =
   clear_log ();

@@ -17,3 +17,5 @@ type key =
   | Unknown of string
 
 val await_input : clock:_ Eio.Time.clock -> stdin:_ Eio.Flow.source -> key
+
+val drain_to_keys : clock:_ Eio.Time.clock -> stdin:_ Eio.Flow.source -> key list
