@@ -450,29 +450,22 @@ let go_to_last_word model =
   loop false model
 
 let shift_history model ~amount =
-  let original_prompt =
-    if model.place_in_history = 0 then model.lines
-    else Option.get model.original_prompt
+  let result =
+    if amount > 0 then
+      History.go_back model.history ~current_prompt:model.lines ()
+    else
+      History.go_forwards model.history
   in
-  let update_to lines place =
-    {
-      model with
-      lines;
-      lex_cache = lex_cache_for_lines lines;
-      place_in_history = place;
-      flipping_through_history = Some 2;
-      original_prompt = Some original_prompt;
-    }
-    |> move_cursor_to_end
-  in
-  let destination = model.place_in_history + amount in
-  match destination with
-  | d when d < 0 && model.place_in_history = 0 -> model
-  | d when d < 0 -> update_to original_prompt 0
-  | d -> (
-      match List.nth_opt (original_prompt :: model.prompt_history) d with
-      | None -> model
-      | Some new_prompt_text -> update_to new_prompt_text d)
+  match result with
+  | Some lines ->
+      {
+        model with
+        lines;
+        lex_cache = lex_cache_for_lines lines;
+        flipping_through_history = Some 2;
+      }
+      |> move_cursor_to_end
+  | None -> model
 
 let delete_before_cursor model =
   let width = effective_width model in
@@ -735,6 +728,7 @@ let submit model =
             model.term_height - new_prompt_top
           else 0
         in
+        History.add_to_history model.history model.lines;
         let new_model =
           {
             model with
@@ -749,9 +743,6 @@ let submit model =
             cursor_line = 0;
             cursor_pos = 0;
             prompt_box_height = 1;
-            prompt_history = model.lines :: model.prompt_history;
-            original_prompt = None;
-            place_in_history = 0;
             scroll_amount;
           }
         in

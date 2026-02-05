@@ -67,6 +67,13 @@ let rec await_dim_change prev_width prev_height =
     await_dim_change w h)
   else (w, h)
 
+let history_path =
+  match Stdlib.Sys.getenv_opt "HOME" with
+  | Some home -> home ^ "/.raoui_history.db"
+  | None -> ".raoui_history.db"
+
+let history = lazy (History.init history_path)
+
 let make_init () : Frontend_types.model =
   let row, _col = get_cursor_position () in
   let term_width, term_height = get_term_dimensions () in
@@ -95,9 +102,7 @@ let make_init () : Frontend_types.model =
     repl_output = None;
     repl_cursor = (row, 1);
     scroll_amount = 0;
-    prompt_history = [];
-    original_prompt = None;
-    place_in_history = 0;
+    history = Lazy.force history;
     flipping_through_history = None;
     running_in_ide;
   }
@@ -206,4 +211,5 @@ let () =
       disable_bracketed_paste ();
       print_endline "";
       restore_mode orig;
+      if Lazy.is_val history then History.close (Lazy.force history);
       Backend.deinit backend)

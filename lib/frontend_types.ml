@@ -30,9 +30,7 @@ type model = {
   repl_output : Terminal_ops.span list option;
   repl_cursor : int * int;
   scroll_amount : int;
-  prompt_history : Unicode_string.t list list;
-  original_prompt : Unicode_string.t list option;
-  place_in_history : int;
+  history : History.t;
   flipping_through_history : int option;
   running_in_ide : bool;
 }

@@ -36,9 +36,7 @@ let initial_model width =
     repl_output = None;
     repl_cursor = (0, 1);
     scroll_amount = 0;
-    prompt_history = [];
-    original_prompt = None;
-    place_in_history = 0;
+    history = History.init ":memory:";
     flipping_through_history = None;
     running_in_ide = false;
   }
