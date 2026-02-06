@@ -2,6 +2,6 @@ _build
 .zed
 .vscode
 .claude
-_DS_Store
+.DS_Store
 debug_log.txt
 vendor/
