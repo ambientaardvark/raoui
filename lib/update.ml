@@ -857,6 +857,7 @@ let process_response model =
         | Backend.Result s -> [ (`Raw, s) ]
         | Backend.R_error s -> [ (`Error, s) ]
         | Backend.Internal_error s -> [ (`Error, "Internal error: " ^ s) ]
+        | Backend.Restarted s -> [ (`Error, s) ]
         | Backend.Done -> []
         | Backend.Shutdown -> []
       in
@@ -865,7 +866,7 @@ let process_response model =
         (* Keep waiting for more output until we get a terminal response *)
         | Backend.Stdout _ | Backend.Result _ | Backend.R_error _ -> true
         (* Terminal responses *)
-        | Backend.Done | Backend.Shutdown | Backend.Internal_error _ -> false
+        | Backend.Done | Backend.Shutdown | Backend.Internal_error _ | Backend.Restarted _ -> false
       in
       {
         model with
