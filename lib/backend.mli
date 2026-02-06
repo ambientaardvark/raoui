@@ -7,6 +7,7 @@ type response_chunk =
   | Internal_error of string (** OCaml or ark kernel failure *)
   | Done                     (** reached idle - terminal *)
   | Shutdown                 (** SIGINT - terminal *)
+  | Restarted of string      (** backend restarted after disconnect *)
 
 type completion = string
 
@@ -32,6 +33,8 @@ val cancel : t -> unit
 
 (** Block until completions are available. Race this with input. *)
 val get_completions : t -> string -> cursor_pos:int -> completion list
+
+val restart : t -> unit
 
 val deinit : t -> unit
 

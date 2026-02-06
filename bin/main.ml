@@ -190,6 +190,10 @@ let run env backend =
         | `Exit -> ()
         | `Continue new_model -> loop new_model)
     | Response Backend.Shutdown -> ()
+    | Response (Backend.Restarted _ as r) ->
+        Backend.background_submit backend
+          (Printf.sprintf "options(width=%d)" model.term_width);
+        loop (handle_response model r)
     | Response r -> loop (handle_response model r)
     | Term_size (term_width, term_height) ->
         Backend.background_submit backend
