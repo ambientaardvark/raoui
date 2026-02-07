@@ -10,7 +10,7 @@ val go_back :
   t -> ?current_prompt:Unicode_string.t list -> unit -> Unicode_string.t list option
 (** older message. if at end return None *)
 
-val go_forwards : t -> Unicode_string.t list option
+val go_forwards : t -> ?current_prompt:Unicode_string.t list -> unit -> Unicode_string.t list option
 (** newer message. if at start return None *)
 
 val get_all : t -> string array
