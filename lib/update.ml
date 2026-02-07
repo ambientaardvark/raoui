@@ -454,7 +454,7 @@ let shift_history model ~amount =
     if amount > 0 then
       History.go_back model.history ~current_prompt:model.lines ()
     else
-      History.go_forwards model.history
+      History.go_forwards model.history ~current_prompt:model.lines ()
   in
   match result with
   | Some lines ->

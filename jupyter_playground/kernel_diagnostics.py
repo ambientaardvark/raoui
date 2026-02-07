@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 import zmq
 
-KERNEL_PATH = '/Users/alanlee/Documents/Programs/raoui/vendor/ark-0.1.223-darwin-universal/ark'
+KERNEL_PATH = '/Users/alanlee/Documents/Programs/raoui/vendor/modified-ark/ark'
 CONNECTION_FILE = '/tmp/kernel.json'
 
 
@@ -227,6 +227,42 @@ class Kernel:
 
         return messages
 
+    def complete_and_log(self, code, cursor_pos=None, timeout_ms=5000):
+        """
+        Send a complete_request and return all messages received on both channels.
+        """
+        if cursor_pos is None:
+            cursor_pos = len(code)
+
+        self.drain_all()
+
+        self._send('complete_request', {
+            'code': code,
+            'cursor_pos': cursor_pos,
+        })
+
+        start_time = time.time()
+        messages = []
+
+        while (time.time() - start_time) * 1000 < timeout_ms:
+            msg = self._recv(self.iopub, timeout_ms=100)
+            if msg:
+                elapsed = (time.time() - start_time) * 1000
+                messages.append((elapsed, msg['header']['msg_type'], msg['content']))
+
+            shell_msg = self._recv(self.shell, timeout_ms=100)
+            if shell_msg:
+                elapsed = (time.time() - start_time) * 1000
+                mt = shell_msg['header']['msg_type']
+                messages.append((elapsed, f"[shell] {mt}", shell_msg['content']))
+                if mt == 'complete_reply':
+                    break
+
+        if (time.time() - start_time) * 1000 >= timeout_ms:
+            messages.append((timeout_ms, ">>> TIMEOUT <<<", {}))
+
+        return messages
+
     def shutdown(self):
         if self.proc:
             self.proc.terminate()
@@ -279,7 +315,6 @@ def print_message_log(messages):
             summary = str(content)[:60]
 
         print(f"  {elapsed_ms:7.1f}ms  {msg_type:25s}  {summary}")
-        print(f"\n\n{content}\n\n")
 
 
 def run_scenario(kernel, name, code, interrupt_after_ms=None):
@@ -361,6 +396,39 @@ if __name__ == '__main__':
 
     for name, code, interrupt_ms in interrupt_scenarios:
         run_scenario(kernel, name, code, interrupt_after_ms=interrupt_ms)
+
+    # Completion scenarios
+    print("\n" + "="*60)
+    print("COMPLETION SCENARIOS")
+    print("="*60)
+
+    completion_scenarios = [
+        ("Complete 'pri'", "pri", 3),
+        ("Complete 'data.fra'", "data.fra", 8),
+        ("Complete 'libra'", "libra", 5),
+        ("Complete 'ggplot2::aes_st'", "ggplot2::aes_st", 15),
+        ("Complete empty string", "", 0),
+    ]
+
+    for name, code, cursor_pos in completion_scenarios:
+        print(f"\n{'='*60}")
+        print(f"SCENARIO: {name}")
+        print(f"CODE: {repr(code)}, cursor_pos: {cursor_pos}")
+        print(f"{'='*60}")
+        messages = kernel.complete_and_log(code, cursor_pos=cursor_pos)
+        print_message_log(messages)
+        # Print full content of the complete_reply if we got one
+        for _, mt, content in messages:
+            if 'complete_reply' in mt:
+                matches = content.get('matches', [])
+                print(f"  status: {content.get('status')}")
+                print(f"  matches ({len(matches)}): {matches[:20]}")
+                if len(matches) > 20:
+                    print(f"  ... and {len(matches) - 20} more")
+                print(f"  cursor_start: {content.get('cursor_start')}")
+                print(f"  cursor_end: {content.get('cursor_end')}")
+        msg_types = [m[1] for m in messages]
+        print(f"\nMessage sequence: {' -> '.join(msg_types)}")
 
     # Stdin scenario - run last with short timeout since it will block
     # Note: This will timeout because readline waits for input
