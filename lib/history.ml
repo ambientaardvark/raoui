@@ -3,6 +3,7 @@ open Sqlite3
 type t = {
   database : db;
   mutable history : string array;
+  mutable loaded_all : bool;
   mutable current_index : int;
   mutable current_prompt : Unicode_string.t list option;
 }
@@ -71,6 +72,10 @@ let rec go_back t ?current_prompt () =
      | Some p -> t.current_prompt <- Some p
      | None -> ());
   let idx = t.current_index in
+  if idx >= Array.length t.history && not t.loaded_all then begin
+    t.history <- query_all t.database;
+    t.loaded_all <- true
+  end;
   if idx < Array.length t.history then begin
     t.current_index <- idx + 1;
     if matches_prompt t.current_prompt t.history.(idx) then
@@ -105,10 +110,11 @@ let add_to_history t lines =
   (match step stmt with Rc.DONE -> () | rc -> failwith (Rc.to_string rc));
   t.current_index <- 0;
   t.current_prompt <- None;
+  t.loaded_all <- false;
   t.history <- Array.append [|command|] t.history
 
 let init file =
   let database = db_open file in
   create_table database;
   let history = query_recent database in
-  { database; history; current_index = 0; current_prompt = None }
+  { database; history; loaded_all = false; current_index = 0; current_prompt = None }
