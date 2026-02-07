@@ -2,24 +2,24 @@ open Sqlite3
 
 type t = {
   database : db;
-  mutable first_few : string list;
-  initial_first_few_length : int;
-  mutable cache : string array option;
+  mutable history : string array;
   mutable current_index : int;
   mutable current_prompt : Unicode_string.t list option;
 }
 
-let get_recent database =
+let query_recent database =
   let stmt =
-    prepare database "SELECT command FROM commands ORDER BY id DESC LIMIT 100"
+    prepare database
+      "SELECT command FROM commands ORDER BY id DESC LIMIT 200"
   in
-  let _rc, results =
-    fold stmt ~init:[] ~f:(fun acc row ->
+  let results = Dynarray.create () in
+  let _rc =
+    iter stmt ~f:(fun row ->
         match row.(0) with
-        | Data.TEXT s -> s :: acc
+        | Data.TEXT s -> Dynarray.add_last results s
         | _ -> failwith "unexpected data type in history")
   in
-  List.rev results
+  Dynarray.to_array results
 
 let query_all database =
   let stmt = prepare database "SELECT command FROM commands ORDER BY id DESC" in
@@ -47,43 +47,48 @@ let to_us s =
   String.split_on_char '\n' s
   |> List.map (fun s -> Unicode_string.of_string s |> Result.get_ok)
 
-let get_cached_idx t idx =
-  let cache =
-    match t.cache with
-    | Some cache -> cache
-    | None ->
-        let all_commands = query_all t.database in
-        t.cache <- Some all_commands;
-        all_commands
+let contains_substring needle haystack =
+  let needle =
+    List.map Unicode_string.to_string needle |> String.concat "\n"
   in
-  if idx < Array.length cache then Some cache.(idx) else None
+  let needle_len = String.length needle in
+  let haystack_len = String.length haystack in
+  let rec loop i =
+    if i + needle_len > haystack_len then false
+    else if String.sub haystack i needle_len = needle then true
+    else loop (i + 1)
+  in
+  loop 0
 
-let get_history_entry t idx =
-  let first_few_length = List.length t.first_few in
-  if idx < first_few_length then
-    List.nth_opt t.first_few idx |> Option.map to_us
-  else
-    let extras = first_few_length - t.initial_first_few_length in
-    get_cached_idx t (idx - extras) |> Option.map to_us
+let matches_prompt prompt entry =
+  match prompt with
+  | None -> true
+  | Some needle -> contains_substring needle entry
 
-let go_back t ?current_prompt () =
+let rec go_back t ?current_prompt () =
   (if t.current_index = 0 then
      match current_prompt with
      | Some p -> t.current_prompt <- Some p
      | None -> ());
   let idx = t.current_index in
-  match get_history_entry t idx with
-  | Some _ as r ->
-      t.current_index <- idx + 1;
-      r
-  | None -> None
+  if idx < Array.length t.history then begin
+    t.current_index <- idx + 1;
+    if matches_prompt t.current_prompt t.history.(idx) then
+      Some (to_us t.history.(idx))
+    else
+      go_back t ()
+  end
+  else None
 
-let go_forwards t =
+let rec go_forwards t =
   if t.current_index <= 0 then None
   else begin
     t.current_index <- t.current_index - 1;
     if t.current_index = 0 then t.current_prompt
-    else get_history_entry t (t.current_index - 1)
+    else if matches_prompt t.current_prompt t.history.(t.current_index - 1) then
+      Some (to_us t.history.(t.current_index - 1))
+    else
+      go_forwards t
   end
 
 let get_all t = query_all t.database
@@ -100,18 +105,10 @@ let add_to_history t lines =
   (match step stmt with Rc.DONE -> () | rc -> failwith (Rc.to_string rc));
   t.current_index <- 0;
   t.current_prompt <- None;
-  t.cache <- None;
-  t.first_few <- command :: t.first_few
+  t.history <- Array.append [|command|] t.history
 
 let init file =
   let database = db_open file in
   create_table database;
-  let first_few = get_recent database in
-  {
-    database;
-    first_few;
-    initial_first_few_length = List.length first_few;
-    cache = None;
-    current_index = 0;
-    current_prompt = None;
-  }
+  let history = query_recent database in
+  { database; history; current_index = 0; current_prompt = None }
