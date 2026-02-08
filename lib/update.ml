@@ -778,7 +778,7 @@ let handle_vertical_cursor_movement model =
     scroll_amount = scrolls;
   }
 
-let handle_resize new_width model =
+let handle_width_change new_width model =
   if model.term_width = new_width then model
   else
     let model = { model with term_width = new_width } in
@@ -788,6 +788,18 @@ let handle_resize new_width model =
         (model.cursor_line, model.cursor_pos)
     in
     { model with cursor_row = new_row; cursor_col = new_col }
+
+let handle_height_change new_height model =
+  let height_diff = new_height - model.term_height in
+  if height_diff = 0 then model
+  else
+    { model with term_height = new_height; prompt_top_row = model.prompt_top_row - 10 }
+
+let handle_resize new_width new_height model =
+  model
+  |> handle_height_change new_height
+  |> handle_width_change new_width
+
 
 let is_empty_input model =
   match model.lines with [ line ] -> Unicode_string.is_empty line | _ -> false
@@ -841,7 +853,7 @@ let sync_internal_coords model =
 
 let update key model =
   { model with scroll_amount = 0 }
-  |> handle_resize model.term_width
+  |> handle_resize model.term_width model.term_height
   |> sync_internal_coords |> apply_key key
   |> function
   | Continue s -> Continue (universal_corrections key s)
