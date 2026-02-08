@@ -9,19 +9,13 @@ type response_chunk =
 
 type completion = string
 
-let log message =
-  let oc =
-    Stdlib.open_out_gen [ Open_append; Open_creat ] 0o666 "/Users/alanlee/Documents/Programs/raoui/debug_log.txt"
-  in
-  Stdlib.Fun.protect
-    ~finally:(fun () -> Stdlib.close_out oc)
-    (fun () -> Stdlib.Printf.fprintf oc "%s\n" message)
 
 type t = {
   sw : Eio.Switch.t;
   mutable busy : bool;
   mutable suppressing : bool;
   mutable pending_bg : string list;
+  mutable stashed : (int * int * string) option;
 }
 
 let r_home () =
@@ -36,7 +30,7 @@ let create ~sw () =
   let home = r_home () in
   let rc = Rffi.init home in
   if rc <> 0 then failwith "Failed to initialize R runtime";
-  { sw; busy = false; suppressing = false; pending_bg = [] }
+  { sw; busy = false; suppressing = false; pending_bg = []; stashed = None }
 
 let poll_ready _t = true
 
@@ -77,22 +71,41 @@ let map_kind kind payload =
   | _ -> Internal_error (Printf.sprintf "Unknown message kind: %d" kind)
 
 let await_response t =
+  let pop () =
+    match t.stashed with
+    | Some msg -> t.stashed <- None; Some msg
+    | None -> Rffi.rb_pop ()
+  in
+  let handle_done () =
+    t.busy <- false;
+    t.suppressing <- false;
+    flush_pending t
+  in
+  let rec drain buf =
+    match Rffi.rb_pop () with
+    | Some (k, _, p) when k = 0 || k = 1 ->
+      Buffer.add_string buf p;
+      drain buf
+    | other ->
+      t.stashed <- other;
+      Stdout (Buffer.contents buf)
+  in
   let rec loop () =
     Eio.Fiber.yield ();
-    match Rffi.rb_pop () with
+    match pop () with
     | None -> loop ()
     | Some (kind, _flags, payload) ->
-      log (Printf.sprintf "rb_pop: kind=%d len=%d payload=%S" kind (String.length payload) payload);
       if t.suppressing && kind <> 5 then loop ()
       else begin
-        let chunk = map_kind kind payload in
-        match chunk with
-        | Done ->
-          t.busy <- false;
-          t.suppressing <- false;
-          flush_pending t;
+        match kind with
+        | 0 | 1 ->
+          let buf = Buffer.create 256 in
+          Buffer.add_string buf payload;
+          drain buf
+        | 5 ->
+          handle_done ();
           if t.busy then loop () else Done
-        | other -> other
+        | _ -> map_kind kind payload
       end
   in
   loop ()
