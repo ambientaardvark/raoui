@@ -115,7 +115,17 @@ let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
    progress bars with \r) - get_cursor_position won't reflect actual extent. *)
 let print_repl_output model =
   match model.repl_output with
-  | None | Some [] -> { model with repl_output = None }
+  | None -> model
+  | Some [] ->
+      (* Done — check if subprocess output moved the cursor *)
+      let new_row, new_col = get_cursor_position () in
+      let next_prompt_row = if Int.equal new_col 1 then new_row else new_row + 1 in
+      {
+        model with
+        repl_output = None;
+        repl_cursor = (new_row, new_col);
+        prompt_top_row = max model.prompt_top_row next_prompt_row;
+      }
   | Some spans ->
       let row, col = model.repl_cursor in
       print_string (cursor_to row col);

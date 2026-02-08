@@ -97,10 +97,15 @@ let view_ops model =
     add Clear_to_eol
   done;
 
-  (* Position cursor *)
-  let cursor_abs_row = model.prompt_top_row + model.cursor_row in
-  let cursor_abs_col = prompt_width + model.cursor_col + 1 in
-  add (Cursor_to (cursor_abs_row, cursor_abs_col));
+  (* Position cursor: in output area during eval, in prompt otherwise *)
+  if model.awaiting_response then begin
+    let row, col = model.repl_cursor in
+    add (Cursor_to (row, col))
+  end else begin
+    let cursor_abs_row = model.prompt_top_row + model.cursor_row in
+    let cursor_abs_col = prompt_width + model.cursor_col + 1 in
+    add (Cursor_to (cursor_abs_row, cursor_abs_col))
+  end;
 
   ops
 
