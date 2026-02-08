@@ -9,6 +9,14 @@ type response_chunk =
 
 type completion = string
 
+let log message =
+  let oc =
+    Stdlib.open_out_gen [ Open_append; Open_creat ] 0o666 "/Users/alanlee/Documents/Programs/raoui/debug_log.txt"
+  in
+  Stdlib.Fun.protect
+    ~finally:(fun () -> Stdlib.close_out oc)
+    (fun () -> Stdlib.Printf.fprintf oc "%s\n" message)
+
 type t = {
   sw : Eio.Switch.t;
   mutable busy : bool;
@@ -74,6 +82,7 @@ let await_response t =
     match Rffi.rb_pop () with
     | None -> loop ()
     | Some (kind, _flags, payload) ->
+      log (Printf.sprintf "rb_pop: kind=%d len=%d payload=%S" kind (String.length payload) payload);
       if t.suppressing && kind <> 5 then loop ()
       else begin
         let chunk = map_kind kind payload in

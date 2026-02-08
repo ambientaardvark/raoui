@@ -122,11 +122,11 @@ let print_repl_output model =
       print_string "\x1b[J";
       print_string (Terminal_ops.render_spans spans);
       Out_channel.flush stdout;
-      let new_row, _ = get_cursor_position () in
+      let new_row, new_col = get_cursor_position () in
       {
         model with
         repl_output = None;
-        repl_cursor = (new_row, 1);
+        repl_cursor = (new_row, new_col);
         prompt_top_row = max model.prompt_top_row (new_row + 1);
       }
 
