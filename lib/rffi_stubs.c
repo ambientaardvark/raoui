@@ -7,6 +7,8 @@
 #include "r_bridge.h"
 #include "ring_buffer.h"
 
+#define CAML_RFFI_POP_BUF_CAP (1024u * 1024u)
+
 CAMLprim value caml_rffi_init(value v_r_home) {
     int rc = rffi_init(String_val(v_r_home));
     return Val_int(rc);
@@ -29,6 +31,11 @@ CAMLprim value caml_rffi_shutdown(value v_unit) {
     return Val_unit;
 }
 
+CAMLprim value caml_rffi_interrupt(value v_unit) {
+    (void)v_unit;
+    return Val_int(rffi_interrupt());
+}
+
 CAMLprim value caml_rffi_rb_has_data(value v_unit) {
     (void)v_unit;
     return Val_bool(rffi_rb_has_data());
@@ -41,16 +48,21 @@ CAMLprim value caml_rffi_rb_pop(value v_unit) {
     CAMLlocal3(v_some, v_tuple, v_payload);
 
     uint8_t kind, flags;
-    char buf[65536];
+    char *buf = malloc(CAML_RFFI_POP_BUF_CAP);
     uint32_t out_len;
+    if (!buf) {
+        CAMLreturn(Val_int(0)); /* None */
+    }
 
-    int rc = rffi_rb_pop(&kind, &flags, buf, sizeof(buf), &out_len);
-    if (rc == RB_EMPTY) {
+    int rc = rffi_rb_pop(&kind, &flags, buf, CAML_RFFI_POP_BUF_CAP, &out_len);
+    if (rc == RB_EMPTY || rc == RB_ERROR) {
+        free(buf);
         CAMLreturn(Val_int(0)); /* None */
     }
 
     v_payload = caml_alloc_string(out_len);
     memcpy(Bytes_val(v_payload), buf, out_len);
+    free(buf);
 
     v_tuple = caml_alloc_tuple(3);
     Store_field(v_tuple, 0, Val_int(kind));

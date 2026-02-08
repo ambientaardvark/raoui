@@ -1,6 +1,7 @@
 external init : string -> int = "caml_rffi_init"
 external eval : string -> int = "caml_rffi_eval"
 external shutdown : unit -> unit = "caml_rffi_shutdown"
+external interrupt : unit -> int = "caml_rffi_interrupt"
 external rb_has_data : unit -> bool = "caml_rffi_rb_has_data"
 external rb_pop : unit -> (int * int * string) option = "caml_rffi_rb_pop"
 external rb_reset : unit -> unit = "caml_rffi_rb_reset"

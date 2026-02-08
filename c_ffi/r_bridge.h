@@ -11,6 +11,9 @@ int rffi_init(const char *r_home);
    Returns 0 on success, -1 on error (error details in ring buffer). */
 int rffi_eval(const char *code);
 
+/* Request interruption of currently-running R evaluation. */
+int rffi_interrupt(void);
+
 /* Shutdown R and free ring buffer. */
 void rffi_shutdown(void);
 

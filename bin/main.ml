@@ -123,11 +123,12 @@ let print_repl_output model =
       print_string (Terminal_ops.render_spans spans);
       Out_channel.flush stdout;
       let new_row, new_col = get_cursor_position () in
+      let next_prompt_row = if Int.equal new_col 1 then new_row else new_row + 1 in
       {
         model with
         repl_output = None;
         repl_cursor = (new_row, new_col);
-        prompt_top_row = max model.prompt_top_row (new_row + 1);
+        prompt_top_row = max model.prompt_top_row next_prompt_row;
       }
 
 type msg =

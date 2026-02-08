@@ -4,6 +4,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(__APPLE__)
+#define LIBR_BASENAME "libR.dylib"
+#else
+#define LIBR_BASENAME "libR.so"
+#endif
+
 /* ---- R types ---- */
 
 typedef void *SEXP;
@@ -57,6 +63,7 @@ static const char *(*R_CHAR_fn)(SEXP) = NULL;
 static SEXP *R_GlobalEnv_ptr = NULL;
 static SEXP *R_NilValue_ptr  = NULL;
 static int  *R_SignalHandlers_ptr = NULL;
+static int  *R_interrupts_pending_ptr = NULL;
 
 /* ---- Callback function pointers (loaded via dlsym) ---- */
 
@@ -98,7 +105,7 @@ static void cb_show_message(const char *s) {
 
 static int load_libr(const char *r_home) {
     char path[1024];
-    snprintf(path, sizeof(path), "%s/lib/libR.dylib", r_home);
+    snprintf(path, sizeof(path), "%s/lib/%s", r_home, LIBR_BASENAME);
 
     libR = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
     if (!libR) {
@@ -142,6 +149,7 @@ static int load_symbols(void) {
     LOAD_SYM(R_GlobalEnv_ptr, "R_GlobalEnv");
     LOAD_SYM(R_NilValue_ptr, "R_NilValue");
     LOAD_SYM(R_SignalHandlers_ptr, "R_SignalHandlers");
+    LOAD_SYM(R_interrupts_pending_ptr, "R_interrupts_pending");
 
     /* Callback pointers */
     LOAD_SYM(ptr_R_WriteConsole, "ptr_R_WriteConsole");
@@ -187,6 +195,8 @@ int rffi_init(const char *r_home) {
 }
 
 int rffi_eval(const char *code) {
+    *R_interrupts_pending_ptr = 0;
+
     SEXP code_sexp = Rf_protect(Rf_mkString(code));
 
     ParseStatus parse_status;
@@ -245,6 +255,14 @@ int rffi_eval(const char *code) {
     rb_push(&g_rb, RB_MSG_DONE, 0, NULL, 0);
     Rf_unprotect(2);
     return error_occurred ? -1 : 0;
+}
+
+int rffi_interrupt(void) {
+    if (!R_interrupts_pending_ptr) {
+        return -1;
+    }
+    *R_interrupts_pending_ptr = 1;
+    return 0;
 }
 
 void rffi_shutdown(void) {

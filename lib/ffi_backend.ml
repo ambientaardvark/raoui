@@ -19,12 +19,40 @@ type t = {
 }
 
 let r_home () =
+  let has_libr home =
+    let libdir = Filename.concat home "lib" in
+    Stdlib.Sys.file_exists (Filename.concat libdir "libR.dylib")
+    || Stdlib.Sys.file_exists (Filename.concat libdir "libR.so")
+  in
+  let discover_with_r () =
+    try
+      let ic = Unix.open_process_in "R RHOME 2>/dev/null" in
+      let line =
+        try Some (input_line ic) with End_of_file -> None
+      in
+      let status = Unix.close_process_in ic in
+      match status, line with
+      | Unix.WEXITED 0, Some h when String.length h > 0 -> Some h
+      | _ -> None
+    with _ -> None
+  in
   match Stdlib.Sys.getenv_opt "R_HOME" with
-  | Some h -> h
+  | Some h when has_libr h -> h
+  | Some _ -> failwith "R_HOME is set but does not contain lib/libR"
   | None ->
-    let default = "/Library/Frameworks/R.framework/Resources" in
-    if Stdlib.Sys.file_exists default then default
-    else failwith "R_HOME not set and no R installation found"
+    (match discover_with_r () with
+    | Some h when has_libr h -> h
+    | _ ->
+      let candidates =
+        [
+          "/Library/Frameworks/R.framework/Resources";
+          "/usr/lib/R";
+          "/usr/local/lib/R";
+        ]
+      in
+      match List.find_opt has_libr candidates with
+      | Some h -> h
+      | None -> failwith "R_HOME not set and could not discover libR")
 
 let create ~sw () =
   let home = r_home () in
@@ -110,7 +138,7 @@ let await_response t =
   in
   loop ()
 
-let cancel _t = () (* TODO: interrupt R eval *)
+let cancel _t = ignore (Rffi.interrupt ())
 let get_completions _t _input ~cursor_pos:_ = []
 let restart _t = ()
 let deinit _t = Rffi.shutdown ()
