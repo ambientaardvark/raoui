@@ -84,3 +84,9 @@ CAMLprim value caml_rffi_rb_reset(value v_unit) {
     rffi_rb_reset();
     return Val_unit;
 }
+
+CAMLprim value caml_rffi_signal_passthrough(value v_unit) {
+    (void)v_unit;
+    rffi_signal_passthrough();
+    return Val_unit;
+}

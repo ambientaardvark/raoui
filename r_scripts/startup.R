@@ -1,6 +1,26 @@
 options(cli.num_colors = 256)
 options(crayon.enabled = TRUE)
 
+# Wrap system/system2 so the REPL can enter passthrough mode
+local({
+    orig_system <- base::system
+    orig_system2 <- base::system2
+    unlockBinding("system", baseenv())
+    unlockBinding("system2", baseenv())
+    assign("system", function(command, ...) {
+        .Call("raoui_enter_passthrough")
+        on.exit(.Call("raoui_exit_passthrough"))
+        orig_system(command, ...)
+    }, envir = baseenv())
+    assign("system2", function(command, ...) {
+        .Call("raoui_enter_passthrough")
+        on.exit(.Call("raoui_exit_passthrough"))
+        orig_system2(command, ...)
+    }, envir = baseenv())
+    lockBinding("system", baseenv())
+    lockBinding("system2", baseenv())
+})
+
 # VSCode integration
 local({
     if (Sys.getenv("TERM_PROGRAM") == "vscode" && Sys.getenv("VSCODE_INIT_R") != "") {

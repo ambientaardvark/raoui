@@ -872,13 +872,15 @@ let process_response model =
         | Ffi_backend.Restarted s -> [ (`Error, s) ]
         | Ffi_backend.Done -> []
         | Ffi_backend.Shutdown -> []
+        | Ffi_backend.Passthrough | Ffi_backend.Passthrough_end -> []
       in
       let awaiting_response =
         match response with
         (* Keep waiting for more output until we get a terminal response *)
         | Ffi_backend.Stdout _ | Ffi_backend.Result _ | Ffi_backend.R_error _ -> true
         (* Terminal responses *)
-        | Ffi_backend.Done | Ffi_backend.Shutdown | Ffi_backend.Internal_error _ | Ffi_backend.Restarted _ -> false
+        | Ffi_backend.Done | Ffi_backend.Shutdown | Ffi_backend.Internal_error _ | Ffi_backend.Restarted _
+        | Ffi_backend.Passthrough | Ffi_backend.Passthrough_end -> false
       in
       {
         model with

@@ -166,12 +166,18 @@ let handle_response model response =
   |> Update.process_response |> print_repl_output
   |> Update.handle_vertical_cursor_movement
 
-let run env backend =
+let run env backend ~orig_termios =
   let clock = Eio.Stdenv.clock env in
   let stdin = Eio.Stdenv.stdin env in
   let cached_keys = Tty_listener.drain_to_keys ~clock ~stdin in
   let init_model = make_init () in
   let init_width = init_model.term_width in
+  let startup_file =
+    let dir = Stdlib.Filename.dirname Stdlib.Sys.executable_name in
+    let bundled = Stdlib.Filename.concat dir "startup.R" in
+    if Stdlib.Sys.file_exists bundled then bundled else "r_scripts/startup.R"
+  in
+  Ffi_backend.background_submit backend (Printf.sprintf "source('%s')" startup_file);
   Ffi_backend.background_submit backend (Printf.sprintf "options(width=%d)" init_width);
   let model_after_cached =
     Stdlib.List.fold_left
@@ -201,6 +207,25 @@ let run env backend =
         | `Exit -> ()
         | `Continue new_model -> loop new_model)
     | Response Ffi_backend.Shutdown -> ()
+    | Response Ffi_backend.Passthrough ->
+        restore_mode orig_termios;
+        disable_bracketed_paste ();
+        Ffi_backend.signal_passthrough ();
+        let rec passthrough_loop () =
+          Eio.Fiber.yield ();
+          match Ffi_backend.await_response backend with
+          | Ffi_backend.Passthrough_end ->
+              ignore (set_raw_mode ());
+              enable_bracketed_paste ();
+              let new_row, _new_col = get_cursor_position () in
+              let next_prompt_row = new_row + 1 in
+              loop { model with
+                prompt_top_row = next_prompt_row;
+                repl_cursor = (next_prompt_row, 1);
+              }
+          | _ -> passthrough_loop ()
+        in
+        passthrough_loop ()
     | Response (Ffi_backend.Restarted _ as r) ->
         Ffi_backend.background_submit backend
           (Printf.sprintf "options(width=%d)" model.term_width);
@@ -222,7 +247,7 @@ let () =
   set_solid_cursor ();
   enable_bracketed_paste ();
   Stdlib.Fun.protect
-    (fun () -> run env backend)
+    (fun () -> run env backend ~orig_termios:orig)
     ~finally:(fun () ->
       disable_bracketed_paste ();
       print_endline "";

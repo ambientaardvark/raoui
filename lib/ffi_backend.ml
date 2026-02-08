@@ -6,6 +6,8 @@ type response_chunk =
   | Done
   | Shutdown
   | Restarted of string
+  | Passthrough
+  | Passthrough_end
 
 type completion = string
 
@@ -106,6 +108,8 @@ let map_kind kind payload =
   | 3 (* R_ERROR *)        -> R_error payload
   | 4 (* INTERNAL_ERROR *) -> Internal_error payload
   | 5 (* DONE *)           -> Done
+  | 8 (* PASSTHROUGH *)    -> Passthrough
+  | 9 (* PASSTHROUGH_END *)-> Passthrough_end
   | _ -> Internal_error (Printf.sprintf "Unknown message kind: %d" kind)
 
 let await_response t =
@@ -133,7 +137,7 @@ let await_response t =
     match pop () with
     | None -> loop ()
     | Some (kind, _flags, payload) ->
-      if t.suppressing && kind <> 5 then loop ()
+      if t.suppressing && kind <> 5 && kind <> 8 && kind <> 9 then loop ()
       else begin
         match kind with
         | 0 | 1 ->
@@ -148,6 +152,7 @@ let await_response t =
   in
   loop ()
 
+let signal_passthrough () = Rffi.signal_passthrough ()
 let cancel _t = ignore (Rffi.interrupt ())
 let get_completions _t _input ~cursor_pos:_ = []
 let restart _t = ()

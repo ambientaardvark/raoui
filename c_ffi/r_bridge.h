@@ -25,4 +25,7 @@ uint64_t rffi_rb_dropped_messages(void);
 uint64_t rffi_rb_dropped_bytes(void);
 void     rffi_rb_reset(void);
 
+/* Signal the passthrough gate so the R thread can proceed with system(). */
+void rffi_signal_passthrough(void);
+
 #endif /* R_BRIDGE_H */

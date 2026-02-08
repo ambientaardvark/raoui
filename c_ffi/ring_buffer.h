@@ -14,6 +14,8 @@
 #define RB_MSG_DONE           5
 #define RB_MSG_IMAGE          6
 #define RB_MSG_NOTICE         7
+#define RB_MSG_PASSTHROUGH    8
+#define RB_MSG_PASSTHROUGH_END 9
 
 /* Message flags */
 #define RB_FLAG_NONE      0

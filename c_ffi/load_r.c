@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
+#include <unistd.h>
 
 #if defined(__APPLE__)
 #define LIBR_BASENAME "libR.dylib"
@@ -26,6 +28,7 @@ typedef enum {
 
 static ring_buffer_t g_rb;
 static void *libR = NULL;
+static atomic_int passthrough_gate = 0;
 
 /* ---- Function pointers (loaded via dlsym) ---- */
 
@@ -74,6 +77,12 @@ static void (**ptr_R_ShowMessage)(const char *) = NULL;
 static FILE **R_Consolefile_ptr = NULL;
 static FILE **R_Outputfile_ptr = NULL;
 
+/* DLL registration (for .Call from R) */
+typedef struct { const char *name; void *fun; int numArgs; } R_CallMethodDef_t;
+static void *(*R_getEmbeddingDllInfo_fn)(void) = NULL;
+static int  (*R_registerRoutines_fn)(void *, const void *,
+              const R_CallMethodDef_t *, const void *, const void *) = NULL;
+
 /* Cached R symbol for withVisible */
 static SEXP withVisible_sym = NULL;
 
@@ -91,6 +100,25 @@ static void cb_flush_console(void) {
 
 static void cb_show_message(const char *s) {
     rb_push(&g_rb, RB_MSG_STDERR, 0, s, (uint32_t)strlen(s));
+}
+
+/* ---- Passthrough for system() ---- */
+
+static SEXP raoui_enter_passthrough(void) {
+    rb_push(&g_rb, RB_MSG_PASSTHROUGH, 0, NULL, 0);
+    while (!atomic_load(&passthrough_gate))
+        usleep(1000);
+    atomic_store(&passthrough_gate, 0);
+    return *R_NilValue_ptr;
+}
+
+static SEXP raoui_exit_passthrough(void) {
+    rb_push(&g_rb, RB_MSG_PASSTHROUGH_END, 0, NULL, 0);
+    return *R_NilValue_ptr;
+}
+
+void rffi_signal_passthrough(void) {
+    atomic_store(&passthrough_gate, 1);
 }
 
 /* ---- Symbol loading ---- */
@@ -159,6 +187,10 @@ static int load_symbols(void) {
     LOAD_SYM(R_Consolefile_ptr, "R_Consolefile");
     LOAD_SYM(R_Outputfile_ptr, "R_Outputfile");
 
+    /* DLL registration */
+    LOAD_SYM(R_getEmbeddingDllInfo_fn, "R_getEmbeddingDllInfo");
+    LOAD_SYM(R_registerRoutines_fn, "R_registerRoutines");
+
     return 0;
 }
 
@@ -190,6 +222,17 @@ int rffi_init(const char *r_home) {
     setup_Rmainloop();
 
     withVisible_sym = Rf_install("withVisible");
+
+    /* Register .Call-able passthrough functions */
+    void *dll = R_getEmbeddingDllInfo_fn();
+    R_CallMethodDef_t callMethods[] = {
+        {"raoui_enter_passthrough",
+         (void *)raoui_enter_passthrough, 0},
+        {"raoui_exit_passthrough",
+         (void *)raoui_exit_passthrough, 0},
+        {NULL, NULL, 0}
+    };
+    R_registerRoutines_fn(dll, NULL, callMethods, NULL, NULL);
 
     return 0;
 }

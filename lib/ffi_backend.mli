@@ -8,6 +8,8 @@ type response_chunk =
   | Done
   | Shutdown
   | Restarted of string
+  | Passthrough
+  | Passthrough_end
 
 type completion = string
 
@@ -16,6 +18,7 @@ val poll_ready : t -> bool
 val submit : t -> string -> unit
 val background_submit : t -> string -> unit
 val await_response : t -> response_chunk
+val signal_passthrough : unit -> unit
 val cancel : t -> unit
 val get_completions : t -> string -> cursor_pos:int -> completion list
 val restart : t -> unit
