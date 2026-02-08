@@ -1,0 +1,5 @@
+(foreign_library
+ (archive_name r_ffi_c)
+ (language c)
+ (names ring_buffer load_r)
+ (flags (:standard -std=c99 -Wall -Wextra)))

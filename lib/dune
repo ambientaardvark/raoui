@@ -16,6 +16,12 @@
   uucp
   sqlite3
   sedlex)
+ (foreign_stubs
+  (language c)
+  (names rffi_stubs)
+  (include_dirs ../c_ffi)
+  (flags (:standard -std=c99)))
+ (foreign_archives ../c_ffi/r_ffi_c)
  (preprocess
   (per_module
    ((pps sedlex.ppx) r_lexer))))

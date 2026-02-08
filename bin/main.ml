@@ -132,21 +132,21 @@ let print_repl_output model =
 
 type msg =
   | Key of Tty_listener.key
-  | Response of Backend.response_chunk
+  | Response of Ffi_backend.response_chunk
   | Term_size of (int * int)
 
 let handle_key backend model key =
   match Update.update key model with
   | Frontend_types.Exit -> `Exit
   | Frontend_types.Cancel ->
-      Backend.cancel backend;
+      Ffi_backend.cancel backend;
       Out_channel.flush stdout;
       `Continue (make_init ())
   | Frontend_types.Submit (text, _) when String.equal (String.strip text) "q()"
     ->
       `Exit
   | Frontend_types.Submit (text, new_model) ->
-      Backend.submit backend text;
+      Ffi_backend.submit backend text;
       `Continue new_model
   | Frontend_types.Continue new_model -> `Continue new_model
 
@@ -161,7 +161,7 @@ let run env backend =
   let cached_keys = Tty_listener.drain_to_keys ~clock ~stdin in
   let init_model = make_init () in
   let init_width = init_model.term_width in
-  Backend.background_submit backend (Printf.sprintf "options(width=%d)" init_width);
+  Ffi_backend.background_submit backend (Printf.sprintf "options(width=%d)" init_width);
   let model_after_cached =
     Stdlib.List.fold_left
       (fun m key ->
@@ -172,14 +172,14 @@ let run env backend =
       cached_keys
   in
   let rec loop model =
-    let _ = Backend.poll_ready backend in
+    let _ = Ffi_backend.poll_ready backend in
     print_string (View.view model);
     Out_channel.flush stdout;
     let msg =
         Eio.Fiber.any
           [
             (fun () -> Key (Tty_listener.await_input ~clock ~stdin));
-            (fun () -> Response (Backend.await_response backend));
+            (fun () -> Response (Ffi_backend.await_response backend));
             (fun () ->
               Term_size (await_dim_change model.term_width model.term_height));
           ]
@@ -189,14 +189,14 @@ let run env backend =
         match handle_key backend model key with
         | `Exit -> ()
         | `Continue new_model -> loop new_model)
-    | Response Backend.Shutdown -> ()
-    | Response (Backend.Restarted _ as r) ->
-        Backend.background_submit backend
+    | Response Ffi_backend.Shutdown -> ()
+    | Response (Ffi_backend.Restarted _ as r) ->
+        Ffi_backend.background_submit backend
           (Printf.sprintf "options(width=%d)" model.term_width);
         loop (handle_response model r)
     | Response r -> loop (handle_response model r)
     | Term_size (term_width, term_height) ->
-        Backend.background_submit backend
+        Ffi_backend.background_submit backend
           (Printf.sprintf "options(width=%d)" term_width);
         loop { model with term_width; term_height }
   in
@@ -205,7 +205,8 @@ let run env backend =
 let () =
   clear_log ();
   Eio_main.run @@ fun env ->
-  let backend = Backend.create () in
+  Eio.Switch.run @@ fun sw ->
+  let backend = Ffi_backend.create ~sw () in
   let orig = set_raw_mode () in
   set_solid_cursor ();
   enable_bracketed_paste ();
@@ -216,4 +217,4 @@ let () =
       print_endline "";
       restore_mode orig;
       if Lazy.is_val history then History.close (Lazy.force history);
-      Backend.deinit backend)
+      Ffi_backend.deinit backend)

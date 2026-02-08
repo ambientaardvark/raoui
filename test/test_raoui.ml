@@ -205,7 +205,7 @@ let test_process_response_done () =
   let model =
     {
       (initial_model width) with
-      backend_response = Some Backend.Done;
+      backend_response = Some Ffi_backend.Done;
       awaiting_response = true;
     }
   in
@@ -225,7 +225,7 @@ let test_process_response_stdout () =
   let model =
     {
       (initial_model width) with
-      backend_response = Some (Backend.Stdout "hello\n");
+      backend_response = Some (Ffi_backend.Stdout "hello\n");
       awaiting_response = true;
     }
   in
@@ -243,7 +243,7 @@ let test_process_response_result () =
   let model =
     {
       (initial_model width) with
-      backend_response = Some (Backend.Result "[1] 42");
+      backend_response = Some (Ffi_backend.Result "[1] 42");
       awaiting_response = true;
     }
   in
@@ -261,7 +261,7 @@ let test_process_response_r_error () =
   let model =
     {
       (initial_model width) with
-      backend_response = Some (Backend.R_error "Error: object 'x' not found");
+      backend_response = Some (Ffi_backend.R_error "Error: object 'x' not found");
       awaiting_response = true;
     }
   in
@@ -281,7 +281,7 @@ let test_process_response_internal_error () =
   let model =
     {
       (initial_model width) with
-      backend_response = Some (Backend.Internal_error "kernel crashed");
+      backend_response = Some (Ffi_backend.Internal_error "kernel crashed");
       awaiting_response = true;
     }
   in
@@ -335,7 +335,7 @@ let test_process_response_clears_scroll () =
   let model =
     {
       (initial_model width) with
-      backend_response = Some Backend.Done;
+      backend_response = Some Ffi_backend.Done;
       scroll_amount = -5;
     }
   in
@@ -354,7 +354,7 @@ let test_r_error_followed_by_done () =
   let model =
     {
       (initial_model width) with
-      backend_response = Some (Backend.R_error "Error: oops");
+      backend_response = Some (Ffi_backend.R_error "Error: oops");
       awaiting_response = true;
     }
   in
@@ -365,7 +365,7 @@ let test_r_error_followed_by_done () =
     "still awaiting after R_error" true model.awaiting_response;
 
   (* Then Done arrives *)
-  let model = { model with backend_response = Some Backend.Done } in
+  let model = { model with backend_response = Some Ffi_backend.Done } in
   let model = Update.process_response model in
 
   (* NOW we're done awaiting *)

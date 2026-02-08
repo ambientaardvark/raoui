@@ -853,20 +853,20 @@ let process_response model =
   | Some response ->
       let repl_output =
         match response with
-        | Backend.Stdout s -> [ (`Raw, s) ]
-        | Backend.Result s -> [ (`Raw, s) ]
-        | Backend.R_error s -> [ (`Error, s) ]
-        | Backend.Internal_error s -> [ (`Error, "Internal error: " ^ s) ]
-        | Backend.Restarted s -> [ (`Error, s) ]
-        | Backend.Done -> []
-        | Backend.Shutdown -> []
+        | Ffi_backend.Stdout s -> [ (`Raw, s) ]
+        | Ffi_backend.Result s -> [ (`Raw, s) ]
+        | Ffi_backend.R_error s -> [ (`Error, s) ]
+        | Ffi_backend.Internal_error s -> [ (`Error, "Internal error: " ^ s) ]
+        | Ffi_backend.Restarted s -> [ (`Error, s) ]
+        | Ffi_backend.Done -> []
+        | Ffi_backend.Shutdown -> []
       in
       let awaiting_response =
         match response with
         (* Keep waiting for more output until we get a terminal response *)
-        | Backend.Stdout _ | Backend.Result _ | Backend.R_error _ -> true
+        | Ffi_backend.Stdout _ | Ffi_backend.Result _ | Ffi_backend.R_error _ -> true
         (* Terminal responses *)
-        | Backend.Done | Backend.Shutdown | Backend.Internal_error _ | Backend.Restarted _ -> false
+        | Ffi_backend.Done | Ffi_backend.Shutdown | Ffi_backend.Internal_error _ | Ffi_backend.Restarted _ -> false
       in
       {
         model with
