@@ -12,9 +12,10 @@ type completion = string
 
 type t = {
   sw : Eio.Switch.t;
+  mutable ready : bool;
   mutable busy : bool;
   mutable suppressing : bool;
-  mutable pending_bg : string list;
+  pending : [ `User of string | `Background of string ] Queue.t;
   mutable stashed : (int * int * string) option;
 }
 
@@ -54,14 +55,6 @@ let r_home () =
       | Some h -> h
       | None -> failwith "R_HOME not set and could not discover libR")
 
-let create ~sw () =
-  let home = r_home () in
-  let rc = Rffi.init home in
-  if rc <> 0 then failwith "Failed to initialize R runtime";
-  { sw; busy = false; suppressing = false; pending_bg = []; stashed = None }
-
-let poll_ready _t = true
-
 let start_eval t code =
   t.busy <- true;
   Rffi.rb_reset ();
@@ -69,24 +62,41 @@ let start_eval t code =
     Eio_unix.run_in_systhread (fun () -> ignore (Rffi.eval code));
     `Stop_daemon)
 
+let flush_pending t =
+  match Queue.pop t.pending with
+  | `User code ->
+    t.suppressing <- false;
+    start_eval t code
+  | `Background code ->
+    t.suppressing <- true;
+    start_eval t code
+  | exception Queue.Empty -> ()
+
+let create ~sw () =
+  let home = r_home () in
+  let t = { sw; ready = false; busy = false; suppressing = false;
+            pending = Queue.create (); stashed = None } in
+  Eio.Fiber.fork_daemon ~sw (fun () ->
+    let rc = Eio_unix.run_in_systhread (fun () -> Rffi.init home) in
+    if rc <> 0 then failwith "Failed to initialize R runtime";
+    t.ready <- true;
+    flush_pending t;
+    `Stop_daemon);
+  t
+
+let poll_ready t = t.ready
+
 let submit t code =
   t.suppressing <- false;
-  start_eval t code
+  if t.ready && not t.busy then start_eval t code
+  else Queue.push (`User code) t.pending
 
 let background_submit t code =
-  if t.busy then t.pending_bg <- t.pending_bg @ [ code ]
-  else begin
+  if t.ready && not t.busy then begin
     t.suppressing <- true;
     start_eval t code
-  end
-
-let flush_pending t =
-  match t.pending_bg with
-  | [] -> ()
-  | code :: rest ->
-    t.pending_bg <- rest;
-    t.suppressing <- true;
-    start_eval t code
+  end else
+    Queue.push (`Background code) t.pending
 
 let map_kind kind payload =
   match kind with

@@ -10,7 +10,11 @@
 #define CAML_RFFI_POP_BUF_CAP (1024u * 1024u)
 
 CAMLprim value caml_rffi_init(value v_r_home) {
-    int rc = rffi_init(String_val(v_r_home));
+    char *home = strdup(String_val(v_r_home));
+    caml_release_runtime_system();
+    int rc = rffi_init(home);
+    caml_acquire_runtime_system();
+    free(home);
     return Val_int(rc);
 }
 
