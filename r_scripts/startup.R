@@ -1,7 +1,28 @@
 options(cli.num_colors = 256)
 options(crayon.enabled = TRUE)
 
-# Wrap system/system2 so the REPL can enter passthrough mode
+# Graphics: use httpgd (thread-safe) instead of Quartz (main-thread only)
+local({
+    if (requireNamespace("httpgd", quietly = TRUE)) {
+        opened <- FALSE
+        options(device = function(...) {
+            httpgd::hgd(...)
+            if (!opened) {
+                httpgd::hgd_browse()
+                opened <<- TRUE
+            }
+        })
+    } else {
+        message("Install httpgd for plot support: install.packages('httpgd')")
+        plot_file <- file.path(tempdir(), "raoui_plot.png")
+        options(device = function(...) {
+            grDevices::png(plot_file, width = 800, height = 600, ...)
+        })
+    }
+})
+
+# Wrap system/system2 so the REPL can enter passthrough mode,
+# and set a pager that does the same (for ?help, page(), etc.)
 local({
     orig_system <- base::system
     orig_system2 <- base::system2
@@ -19,6 +40,15 @@ local({
     }, envir = baseenv())
     lockBinding("system", baseenv())
     lockBinding("system2", baseenv())
+
+    options(pager = function(files, header, title, delete.file) {
+        .Call("raoui_enter_passthrough")
+        on.exit(.Call("raoui_exit_passthrough"))
+        for (f in files) {
+            orig_system(paste("less -R", shQuote(f)))
+        }
+        if (delete.file) file.remove(files)
+    })
 })
 
 # VSCode integration

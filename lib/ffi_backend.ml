@@ -145,8 +145,9 @@ let await_response t =
           Buffer.add_string buf payload;
           drain buf
         | 5 ->
+          let was_suppressing = t.suppressing in
           handle_done ();
-          if t.busy then loop () else Done
+          if t.busy || was_suppressing then loop () else Done
         | _ -> map_kind kind payload
       end
   in

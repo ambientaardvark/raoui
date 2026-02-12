@@ -1,6 +1,6 @@
 # RAOUI
 
-An interactive R REPL written in OCaml. Executes R code via the Ark kernel using the Jupyter/ZMQ protocol.
+An interactive R REPL written in OCaml. Embeds R directly via FFI (dynamically loading libR).
 
 ## Build & Run
 
@@ -14,14 +14,23 @@ dune test
 
 Follows an Elm-style MVU (Model-View-Update) pattern with Eio fibers for concurrency.
 
-**Key modules:**
+**Frontend:**
 - `Frontend_types` - Model definition (lines, cursor, history, terminal state)
 - `Update` - Handles input events, updates model state
 - `View` - Renders model to terminal operations
-- `Terminal_ops` - Abstraction over ANSI escape sequences
+- `Terminal_ops` / `Escape_seq` - ANSI escape sequence abstraction
 - `Tty_listener` - Parses raw TTY input into key events
-- `Backend` - ZMQ communication with Ark kernel (execute_request/iopub)
+- `Unicode_string` - UTF-8 string type with grapheme cluster and display-width awareness
+- `R_lexer` / `Syntax` - Sedlex-based R lexer and syntax highlighting
+- `History` - SQLite-backed command history with fuzzy prefix search (`~/.raoui_history.db`)
 
-**Event loop (`main.ml`):** Races three fibers—user input, backend response, and terminal resize—then dispatches to the appropriate handler.
+**Backend (FFI):**
+- `Ffi_backend` - Submits R code, polls a ring buffer for results, handles output suppression for background submissions and passthrough mode for `system()` calls
+- `Rffi` - OCaml external declarations for the C FFI
+- `rffi_stubs.c` - OCaml↔C glue; releases the OCaml runtime lock during blocking calls so Eio can keep scheduling
+- `c_ffi/load_r.c` - Dynamically loads libR (`dlopen`/`dlsym`), initializes R, runs eval in a worker thread, captures stdout/stderr via callbacks
+- `c_ffi/ring_buffer.c` - Pthread-mutex-protected ring buffer for thread-safe R→OCaml message passing
 
-**Coordinate systems:** Internal coordinates (line index, column) differ from terminal coordinates (row, column) due to line wrapping. Conversion functions in `Frontend_types` handle this.
+**Event loop (`main.ml`):** Races three Eio fibers—user input, backend response, and terminal resize—then dispatches to `Update`. Handles passthrough mode: when R calls `system()`, raw mode is suspended so the subprocess can control the terminal directly.
+
+**Coordinate systems:** Internal coordinates (line index, grapheme column) differ from terminal coordinates (row, column) due to line wrapping and variable-width characters. Conversion functions in `Frontend_types` handle this.

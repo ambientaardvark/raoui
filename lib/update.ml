@@ -877,7 +877,7 @@ let process_response model =
       let awaiting_response =
         match response with
         (* Keep waiting for more output until we get a terminal response *)
-        | Ffi_backend.Stdout _ | Ffi_backend.Result _ | Ffi_backend.R_error _ -> true
+        | Ffi_backend.Stdout _ | Ffi_backend.Result _ | Ffi_backend.R_error _ -> model.awaiting_response
         (* Terminal responses *)
         | Ffi_backend.Done | Ffi_backend.Shutdown | Ffi_backend.Internal_error _ | Ffi_backend.Restarted _
         | Ffi_backend.Passthrough | Ffi_backend.Passthrough_end -> false
