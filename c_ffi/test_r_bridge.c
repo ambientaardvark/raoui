@@ -50,50 +50,50 @@ int main(void) {
     }
 
     printf("Initializing R from %s...\n", r_home);
-    if (rffi_init(r_home) != 0) {
-        fprintf(stderr, "rffi_init failed\n");
+    if (rffi_start(r_home) != 0) {
+        fprintf(stderr, "rffi_start failed\n");
         return 1;
     }
     printf("R initialized.\n\n");
 
     /* Test 1: simple print */
     printf("--- Test 1: simple print ---\n");
-    rffi_eval("print('hello world')");
+    rffi_submit("print('hello world')");
     drain();
 
     /* Test 2: visible result (auto-print) */
     printf("\n--- Test 2: auto-print visible result ---\n");
-    rffi_eval("1 + 1");
+    rffi_submit("1 + 1");
     drain();
 
     /* Test 3: invisible assignment (no output) */
     printf("\n--- Test 3: invisible assignment ---\n");
-    rffi_eval("x <- 42");
+    rffi_submit("x <- 42");
     drain();
 
     /* Test 4: multi-statement */
     printf("\n--- Test 4: multi-statement ---\n");
-    rffi_eval("x <- 10\ny <- 20\nx + y");
+    rffi_submit("x <- 10\ny <- 20\nx + y");
     drain();
 
     /* Test 5: eval error */
     printf("\n--- Test 5: eval error ---\n");
-    rffi_eval("stop('intentional error')");
+    rffi_submit("stop('intentional error')");
     drain();
 
     /* Test 6: parse error */
     printf("\n--- Test 6: parse error ---\n");
-    rffi_eval("1 +");
+    rffi_submit("1 +");
     drain();
 
     /* Test 7: warning */
     printf("\n--- Test 7: warning ---\n");
-    rffi_eval("log(-1)");
+    rffi_submit("log(-1)");
     drain();
 
     /* Test 8: cat output */
     printf("\n--- Test 8: cat ---\n");
-    rffi_eval("cat('line1\\nline2\\n')");
+    rffi_submit("cat('line1\\nline2\\n')");
     drain();
 
     printf("\nAll tests completed.\n");

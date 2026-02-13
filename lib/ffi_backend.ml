@@ -13,7 +13,6 @@ type completion = string
 
 
 type t = {
-  sw : Eio.Switch.t;
   mutable ready : bool;
   mutable busy : bool;
   mutable suppressing : bool;
@@ -59,10 +58,7 @@ let r_home () =
 
 let start_eval t code =
   t.busy <- true;
-  Rffi.rb_reset ();
-  Eio.Fiber.fork_daemon ~sw:t.sw (fun () ->
-    Eio_unix.run_in_systhread (fun () -> ignore (Rffi.eval code));
-    `Stop_daemon)
+  Rffi.submit code
 
 let flush_pending t =
   match Queue.pop t.pending with
@@ -76,7 +72,7 @@ let flush_pending t =
 
 let create ~sw () =
   let home = r_home () in
-  let t = { sw; ready = false; busy = false; suppressing = false;
+  let t = { ready = false; busy = false; suppressing = false;
             pending = Queue.create (); stashed = None } in
   Eio.Fiber.fork_daemon ~sw (fun () ->
     let rc = Eio_unix.run_in_systhread (fun () -> Rffi.init home) in

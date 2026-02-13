@@ -4,12 +4,14 @@
 #include "ring_buffer.h"
 #include <stdint.h>
 
-/* Initialize R runtime + ring buffer. Returns 0 on success. */
-int rffi_init(const char *r_home);
+/* Start the R worker thread. Blocks until R is initialized.
+   Returns 0 on success. The thread runs a loop that processes
+   submitted commands and R events between evaluations. */
+int rffi_start(const char *r_home);
 
-/* Evaluate R code. Pushes output chunks to ring buffer, ending with RB_MSG_DONE.
-   Returns 0 on success, -1 on error (error details in ring buffer). */
-int rffi_eval(const char *code);
+/* Submit code to the R worker thread for evaluation.
+   Non-blocking: just posts to the command queue. */
+void rffi_submit(const char *code);
 
 /* Request interruption of currently-running R evaluation. */
 int rffi_interrupt(void);

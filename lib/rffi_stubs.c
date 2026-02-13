@@ -9,24 +9,21 @@
 
 #define CAML_RFFI_POP_BUF_CAP (1024u * 1024u)
 
+/* Releases the OCaml runtime lock while blocking on R initialization,
+   so the Eio scheduler can keep running. */
 CAMLprim value caml_rffi_init(value v_r_home) {
     char *home = strdup(String_val(v_r_home));
     caml_release_runtime_system();
-    int rc = rffi_init(home);
+    int rc = rffi_start(home);
     caml_acquire_runtime_system();
     free(home);
     return Val_int(rc);
 }
 
-/* Releases the OCaml runtime lock so the Eio scheduler can
-   poll the ring buffer on the main thread while R computes. */
-CAMLprim value caml_rffi_eval(value v_code) {
-    char *code = strdup(String_val(v_code));
-    caml_release_runtime_system();
-    int rc = rffi_eval(code);
-    caml_acquire_runtime_system();
-    free(code);
-    return Val_int(rc);
+/* Non-blocking: just posts to the R worker thread's command queue. */
+CAMLprim value caml_rffi_submit(value v_code) {
+    rffi_submit(String_val(v_code));
+    return Val_unit;
 }
 
 CAMLprim value caml_rffi_shutdown(value v_unit) {

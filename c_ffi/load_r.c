@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdatomic.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 #if defined(__APPLE__)
 #define LIBR_BASENAME "libR.dylib"
@@ -29,6 +30,19 @@ typedef enum {
 static ring_buffer_t g_rb;
 static void *libR = NULL;
 static atomic_int passthrough_gate = 0;
+
+/* Worker thread */
+static pthread_t r_thread;
+static pthread_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t init_cond = PTHREAD_COND_INITIALIZER;
+static int init_done = 0;
+static int init_result = -1;
+
+/* Command queue */
+static pthread_mutex_t cmd_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t cmd_cond = PTHREAD_COND_INITIALIZER;
+static char *pending_cmd = NULL;
+static atomic_int shutdown_flag = 0;
 
 /* ---- Function pointers (loaded via dlsym) ---- */
 
@@ -60,6 +74,13 @@ static int  (*Rf_asLogical)(SEXP) = NULL;
 /* String conversion */
 static SEXP        (*Rf_asChar)(SEXP) = NULL;
 static const char *(*R_CHAR_fn)(SEXP) = NULL;
+
+/* Event processing (optional — may be NULL on some platforms) */
+static int  (*R_ToplevelExec_fn)(void (*)(void *), void *) = NULL;
+static void (*R_ProcessEvents_fn)(void) = NULL;
+static void *(*R_checkActivity_fn)(int, int) = NULL;
+static void (*R_runHandlers_fn)(void *, void *) = NULL;
+static void **R_InputHandlers_ptr = NULL;
 
 /* ---- Global variable pointers (loaded via dlsym) ---- */
 
@@ -191,15 +212,36 @@ static int load_symbols(void) {
     LOAD_SYM(R_getEmbeddingDllInfo_fn, "R_getEmbeddingDllInfo");
     LOAD_SYM(R_registerRoutines_fn, "R_registerRoutines");
 
+    /* Event processing (optional — not fatal if missing) */
+    *(void **)&R_ToplevelExec_fn   = dlsym(libR, "R_ToplevelExec");
+    *(void **)&R_ProcessEvents_fn  = dlsym(libR, "R_ProcessEvents");
+    *(void **)&R_checkActivity_fn  = dlsym(libR, "R_checkActivity");
+    *(void **)&R_runHandlers_fn    = dlsym(libR, "R_runHandlers");
+    *(void **)&R_InputHandlers_ptr = dlsym(libR, "R_InputHandlers");
+
     return 0;
 }
 
-/* ---- Public API ---- */
+/* ---- Event processing (keeps httpgd, later, etc. alive) ---- */
 
-int rffi_init(const char *r_home) {
-    if (rb_init(&g_rb, 1024 * 1024) != 0)
-        return -1;
+static void process_events_inner(void *data) {
+    (void)data;
+    if (R_ProcessEvents_fn)
+        R_ProcessEvents_fn();
+    if (R_checkActivity_fn && R_runHandlers_fn && R_InputHandlers_ptr) {
+        void *what = R_checkActivity_fn(0, 1);
+        if (what) R_runHandlers_fn(*R_InputHandlers_ptr, what);
+    }
+}
 
+static void process_events(void) {
+    if (R_ToplevelExec_fn)
+        R_ToplevelExec_fn(process_events_inner, NULL);
+}
+
+/* ---- R initialization (called on the R worker thread) ---- */
+
+static int init_r(const char *r_home) {
     setenv("R_HOME", r_home, 1);
 
     if (load_libr(r_home) != 0)
@@ -237,7 +279,9 @@ int rffi_init(const char *r_home) {
     return 0;
 }
 
-int rffi_eval(const char *code) {
+/* ---- Eval (called on the R worker thread) ---- */
+
+static int eval_code(const char *code) {
     *R_interrupts_pending_ptr = 0;
 
     SEXP code_sexp = Rf_protect(Rf_mkString(code));
@@ -300,6 +344,82 @@ int rffi_eval(const char *code) {
     return error_occurred ? -1 : 0;
 }
 
+/* ---- Worker thread ---- */
+
+static void *r_thread_func(void *arg) {
+    char *r_home = (char *)arg;
+
+    int rc = init_r(r_home);
+    free(r_home);
+
+    /* Signal init complete */
+    pthread_mutex_lock(&init_mutex);
+    init_result = rc;
+    init_done = 1;
+    pthread_cond_signal(&init_cond);
+    pthread_mutex_unlock(&init_mutex);
+
+    if (rc != 0) return NULL;
+
+    /* Worker loop: wait for commands, process R events while idle */
+    while (!atomic_load(&shutdown_flag)) {
+        pthread_mutex_lock(&cmd_mutex);
+        if (!pending_cmd && !atomic_load(&shutdown_flag)) {
+            struct timeval tv;
+            gettimeofday(&tv, NULL);
+            struct timespec ts;
+            ts.tv_sec = tv.tv_sec;
+            ts.tv_nsec = tv.tv_usec * 1000 + 100000000; /* +100ms */
+            if (ts.tv_nsec >= 1000000000) {
+                ts.tv_sec++;
+                ts.tv_nsec -= 1000000000;
+            }
+            pthread_cond_timedwait(&cmd_cond, &cmd_mutex, &ts);
+        }
+
+        if (pending_cmd) {
+            char *code = pending_cmd;
+            pending_cmd = NULL;
+            pthread_mutex_unlock(&cmd_mutex);
+            rb_reset(&g_rb);
+            eval_code(code);
+            free(code);
+        } else {
+            pthread_mutex_unlock(&cmd_mutex);
+        }
+
+        process_events();
+    }
+
+    return NULL;
+}
+
+/* ---- Public API ---- */
+
+int rffi_start(const char *r_home) {
+    if (rb_init(&g_rb, 1024 * 1024) != 0)
+        return -1;
+
+    pthread_create(&r_thread, NULL, r_thread_func, strdup(r_home));
+
+    /* Block until R initialization completes on the worker thread */
+    pthread_mutex_lock(&init_mutex);
+    while (!init_done)
+        pthread_cond_wait(&init_cond, &init_mutex);
+    int rc = init_result;
+    pthread_mutex_unlock(&init_mutex);
+
+    return rc;
+}
+
+void rffi_submit(const char *code) {
+    pthread_mutex_lock(&cmd_mutex);
+    free(pending_cmd);
+    pending_cmd = strdup(code);
+    pthread_cond_signal(&cmd_cond);
+    pthread_mutex_unlock(&cmd_mutex);
+}
+
 int rffi_interrupt(void) {
     if (!R_interrupts_pending_ptr) {
         return -1;
@@ -309,6 +429,9 @@ int rffi_interrupt(void) {
 }
 
 void rffi_shutdown(void) {
+    atomic_store(&shutdown_flag, 1);
+    pthread_cond_signal(&cmd_cond);
+    pthread_join(r_thread, NULL);
     rb_deinit(&g_rb);
     if (libR) {
         dlclose(libR);
