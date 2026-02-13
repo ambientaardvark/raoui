@@ -91,25 +91,28 @@ let parse_glue_string (s : string) : span list =
         | _ ->
             let rec find_brace p =
               if p >= inner_len then p
-              else match inner.[p] with '{' | '}' -> p | _ -> find_brace (p + 1)
+              else
+                match inner.[p] with '{' | '}' -> p | _ -> find_brace (p + 1)
             in
             let end_pos = find_brace pos in
-            parse ((`String, String.sub inner pos (end_pos - pos)) :: acc) end_pos
+            parse
+              ((`String, String.sub inner pos (end_pos - pos)) :: acc)
+              end_pos
     in
     let inner_spans = parse [] 0 in
-    (`String, "\"")
-    :: inner_spans
+    ((`String, "\"") :: inner_spans)
     @ if has_close then [ (`String, "\"") ] else []
 
 (** Convert a token list to spans, with lookahead for function detection *)
 let tokens_to_spans (tokens : Lexer.token list) : span list =
   let rec loop acc = function
     | [] -> List.rev acc
-    | Lexer.IDENT "glue" :: Lexer.LEFT_PAREN :: Lexer.STRING s :: tl ->
+    | Lexer.IDENT f :: Lexer.LEFT_PAREN :: Lexer.STRING s :: tl
+      when f = "glue" || f = "str_glue" ->
         let glue_spans = parse_glue_string s in
         loop
           (List.rev_append glue_spans
-             ((`Bracket, "(") :: (`Function, "glue") :: acc))
+             ((`Bracket, "(") :: (`Function, f) :: acc))
           tl
     | Lexer.IDENT func_name :: Lexer.LEFT_PAREN :: tl ->
         loop ((`Bracket, "(") :: (`Function, func_name) :: acc) tl
