@@ -27,6 +27,11 @@ uint64_t rffi_rb_dropped_messages(void);
 uint64_t rffi_rb_dropped_bytes(void);
 void     rffi_rb_reset(void);
 
+/* Request tab-completions for the given line and cursor position.
+   Non-blocking: posts to the worker thread's queue.
+   Result arrives via RB_MSG_COMPLETIONS in the ring buffer. */
+void rffi_request_completions(const char *line, int cursor_pos);
+
 /* Signal the passthrough gate so the R thread can proceed with system(). */
 void rffi_signal_passthrough(void);
 

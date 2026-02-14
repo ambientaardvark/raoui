@@ -453,8 +453,7 @@ let shift_history model ~amount =
   let result =
     if amount > 0 then
       History.go_back model.history ~current_prompt:model.lines ()
-    else
-      History.go_forwards model.history ~current_prompt:model.lines ()
+    else History.go_forwards model.history ~current_prompt:model.lines ()
   in
   match result with
   | Some lines ->
@@ -782,20 +781,22 @@ let handle_vertical_cursor_movement model =
 let handle_resize new_width new_height model =
   if model.term_width = new_width && model.term_height = new_height then model
   else
-    let model = { model with term_width = new_width; term_height = new_height } in
+    let model =
+      { model with term_width = new_width; term_height = new_height }
+    in
     let new_eff_width = effective_width model in
     let new_row, new_col =
       internal_to_terminal new_eff_width model.lines
         (model.cursor_line, model.cursor_pos)
     in
     let prompt_top = clamp_prompt_top new_height model.prompt_top_row in
-    { model with
+    {
+      model with
       cursor_row = new_row;
       cursor_col = new_col;
       prompt_top_row = prompt_top;
       prompt_box_height = min_prompt_height;
     }
-
 
 let is_empty_input model =
   match model.lines with [ line ] -> Unicode_string.is_empty line | _ -> false
@@ -868,15 +869,19 @@ let process_response model =
         | Ffi_backend.Restarted s -> [ (`Error, s) ]
         | Ffi_backend.Done -> []
         | Ffi_backend.Shutdown -> []
-        | Ffi_backend.Passthrough | Ffi_backend.Passthrough_end -> []
+        | Ffi_backend.Passthrough | Ffi_backend.Passthrough_end
+        | Ffi_backend.Completions _ -> []
       in
       let awaiting_response =
         match response with
         (* Keep waiting for more output until we get a terminal response *)
-        | Ffi_backend.Stdout _ | Ffi_backend.Result _ | Ffi_backend.R_error _ -> model.awaiting_response
+        | Ffi_backend.Stdout _ | Ffi_backend.Result _ | Ffi_backend.R_error _ ->
+            model.awaiting_response
         (* Terminal responses *)
-        | Ffi_backend.Done | Ffi_backend.Shutdown | Ffi_backend.Internal_error _ | Ffi_backend.Restarted _
-        | Ffi_backend.Passthrough | Ffi_backend.Passthrough_end -> false
+        | Ffi_backend.Done | Ffi_backend.Shutdown | Ffi_backend.Internal_error _
+        | Ffi_backend.Restarted _ | Ffi_backend.Passthrough
+        | Ffi_backend.Passthrough_end | Ffi_backend.Completions _ ->
+            false
       in
       {
         model with

@@ -42,6 +42,8 @@ static int init_result = -1;
 static pthread_mutex_t cmd_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cmd_cond = PTHREAD_COND_INITIALIZER;
 static char *pending_cmd = NULL;
+static char *pending_completion_line = NULL;
+static int   pending_completion_pos  = 0;
 static atomic_int shutdown_flag = 0;
 
 /* ---- Function pointers (loaded via dlsym) ---- */
@@ -74,6 +76,9 @@ static int  (*Rf_asLogical)(SEXP) = NULL;
 /* String conversion */
 static SEXP        (*Rf_asChar)(SEXP) = NULL;
 static const char *(*R_CHAR_fn)(SEXP) = NULL;
+
+/* Variable binding */
+static void (*Rf_defineVar)(SEXP, SEXP, SEXP) = NULL;
 
 /* Event processing (optional — may be NULL on some platforms) */
 static int  (*R_ToplevelExec_fn)(void (*)(void *), void *) = NULL;
@@ -193,6 +198,9 @@ static int load_symbols(void) {
     /* String conversion */
     LOAD_SYM(Rf_asChar, "Rf_asChar");
     LOAD_SYM(R_CHAR_fn, "R_CHAR");
+
+    /* Variable binding */
+    LOAD_SYM(Rf_defineVar, "Rf_defineVar");
 
     /* Global variables */
     LOAD_SYM(R_GlobalEnv_ptr, "R_GlobalEnv");
@@ -344,6 +352,70 @@ static int eval_code(const char *code) {
     return error_occurred ? -1 : 0;
 }
 
+/* ---- Eval-for-string (returns C string, no output side effects) ---- */
+
+static char *eval_for_string(const char *code) {
+    SEXP code_sexp = Rf_protect(Rf_mkString(code));
+
+    ParseStatus ps;
+    SEXP parsed = Rf_protect(R_ParseVector(
+        code_sexp, -1, &ps, *R_NilValue_ptr));
+
+    if (ps != PARSE_OK) {
+        Rf_unprotect(2);
+        return NULL;
+    }
+
+    int n = Rf_length_fn(parsed);
+    SEXP result = *R_NilValue_ptr;
+    int err = 0;
+
+    for (int i = 0; i < n; i++) {
+        result = R_tryEval(VECTOR_ELT_fn(parsed, i),
+                           *R_GlobalEnv_ptr, &err);
+        if (err) {
+            Rf_unprotect(2);
+            return NULL;
+        }
+    }
+
+    Rf_protect(result);
+    SEXP char_sexp = Rf_protect(Rf_asChar(result));
+    const char *str = R_CHAR_fn(char_sexp);
+    char *out = strdup(str);
+
+    Rf_unprotect(4);
+    return out;
+}
+
+/* ---- Completions ---- */
+
+static void run_completions(const char *line, int cursor_pos) {
+    /* Set .raoui_compl in R's global env (avoids string escaping) */
+    SEXP sym = Rf_install(".raoui_compl");
+    SEXP val = Rf_protect(Rf_mkString(line));
+    Rf_defineVar(sym, val, *R_GlobalEnv_ptr);
+    Rf_unprotect(1);
+
+    char code[512];
+    snprintf(code, sizeof(code),
+        "local({"
+        "  utils:::.assignLinebuffer(.raoui_compl);"
+        "  utils:::.assignEnd(%dL);"
+        "  utils:::.guessTokenFromLine();"
+        "  utils:::.completeToken();"
+        "  paste0(utils:::.retrieveCompletions(), collapse=\"\\n\")"
+        "})", cursor_pos);
+
+    char *result = eval_for_string(code);
+    if (result) {
+        rb_push(&g_rb, RB_MSG_COMPLETIONS, 0, result, (uint32_t)strlen(result));
+        free(result);
+    } else {
+        rb_push(&g_rb, RB_MSG_COMPLETIONS, 0, "", 0);
+    }
+}
+
 /* ---- Worker thread ---- */
 
 static void *r_thread_func(void *arg) {
@@ -364,7 +436,8 @@ static void *r_thread_func(void *arg) {
     /* Worker loop: wait for commands, process R events while idle */
     while (!atomic_load(&shutdown_flag)) {
         pthread_mutex_lock(&cmd_mutex);
-        if (!pending_cmd && !atomic_load(&shutdown_flag)) {
+        if (!pending_cmd && !pending_completion_line
+            && !atomic_load(&shutdown_flag)) {
             struct timeval tv;
             gettimeofday(&tv, NULL);
             struct timespec ts;
@@ -380,10 +453,20 @@ static void *r_thread_func(void *arg) {
         if (pending_cmd) {
             char *code = pending_cmd;
             pending_cmd = NULL;
+            /* Discard stale completion request */
+            free(pending_completion_line);
+            pending_completion_line = NULL;
             pthread_mutex_unlock(&cmd_mutex);
             rb_reset(&g_rb);
             eval_code(code);
             free(code);
+        } else if (pending_completion_line) {
+            char *line = pending_completion_line;
+            int pos = pending_completion_pos;
+            pending_completion_line = NULL;
+            pthread_mutex_unlock(&cmd_mutex);
+            run_completions(line, pos);
+            free(line);
         } else {
             pthread_mutex_unlock(&cmd_mutex);
         }
@@ -416,6 +499,15 @@ void rffi_submit(const char *code) {
     pthread_mutex_lock(&cmd_mutex);
     free(pending_cmd);
     pending_cmd = strdup(code);
+    pthread_cond_signal(&cmd_cond);
+    pthread_mutex_unlock(&cmd_mutex);
+}
+
+void rffi_request_completions(const char *line, int cursor_pos) {
+    pthread_mutex_lock(&cmd_mutex);
+    free(pending_completion_line);
+    pending_completion_line = strdup(line);
+    pending_completion_pos = cursor_pos;
     pthread_cond_signal(&cmd_cond);
     pthread_mutex_unlock(&cmd_mutex);
 }

@@ -246,6 +246,9 @@ let run env backend ~orig_termios =
         Ffi_backend.background_submit backend
           (Printf.sprintf "options(width=%d)" model.term_width);
         loop (handle_response model r)
+    | Response (Ffi_backend.Completions _completions) ->
+        (* TODO: update model with completion items *)
+        loop model
     | Response r -> loop (handle_response model r)
     | Term_size (term_width, term_height) ->
         Ffi_backend.background_submit backend
