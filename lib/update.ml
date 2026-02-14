@@ -742,7 +742,7 @@ let submit model =
             cursor_col = 0;
             cursor_line = 0;
             cursor_pos = 0;
-            prompt_box_height = 1;
+            prompt_box_height = min_prompt_height;
             scroll_amount;
           }
         in
@@ -753,6 +753,7 @@ let handle_vertical_cursor_movement model =
   let new_height =
     model.lines |> wrap_lines width |> List.length
     |> max model.prompt_box_height
+    |> max min_prompt_height
   in
   let scrolls_from_expansion =
     if new_height > model.prompt_box_height then
@@ -778,27 +779,22 @@ let handle_vertical_cursor_movement model =
     scroll_amount = scrolls;
   }
 
-let handle_width_change new_width model =
-  if model.term_width = new_width then model
+let handle_resize new_width new_height model =
+  if model.term_width = new_width && model.term_height = new_height then model
   else
-    let model = { model with term_width = new_width } in
+    let model = { model with term_width = new_width; term_height = new_height } in
     let new_eff_width = effective_width model in
     let new_row, new_col =
       internal_to_terminal new_eff_width model.lines
         (model.cursor_line, model.cursor_pos)
     in
-    { model with cursor_row = new_row; cursor_col = new_col }
-
-let handle_height_change new_height model =
-  let height_diff = new_height - model.term_height in
-  if height_diff = 0 then model
-  else
-    { model with term_height = new_height; prompt_top_row = model.prompt_top_row - 10 }
-
-let handle_resize new_width new_height model =
-  model
-  |> handle_height_change new_height
-  |> handle_width_change new_width
+    let prompt_top = clamp_prompt_top new_height model.prompt_top_row in
+    { model with
+      cursor_row = new_row;
+      cursor_col = new_col;
+      prompt_top_row = prompt_top;
+      prompt_box_height = min_prompt_height;
+    }
 
 
 let is_empty_input model =

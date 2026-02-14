@@ -2,6 +2,10 @@ let prompt = "> "
 let continued_prompt = ". "
 let pending_prompt = "  "
 
+let min_prompt_height = 5
+let default_prompt_top term_height = max 2 (term_height - min_prompt_height + 1)
+let clamp_prompt_top term_height row = max 2 (min row (default_prompt_top term_height))
+
 type lex_line = {
   text : string;
   tokens : R_lexer.token list;

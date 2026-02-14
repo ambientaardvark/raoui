@@ -83,6 +83,12 @@ let make_init () : Frontend_types.model =
     | Some "vscode" -> true
     | _ -> false
   in
+  let clamped = Frontend_types.clamp_prompt_top term_height row in
+  let scroll_needed = row - clamped in
+  if scroll_needed > 0 then begin
+    Stdlib.Printf.printf "\x1b[%dS" scroll_needed;
+    Out_channel.flush stdout
+  end;
   {
     lines;
     lex_cache = Update.lex_cache_for_lines lines;
@@ -90,10 +96,10 @@ let make_init () : Frontend_types.model =
     cursor_col = 0;
     cursor_line = 0;
     cursor_pos = 0;
-    prompt_top_row = row;
+    prompt_top_row = clamped;
     term_width;
     term_height;
-    prompt_box_height = 1;
+    prompt_box_height = Frontend_types.min_prompt_height;
     previous_prompt_top_row = row;
     previous_key = None;
     persistent_col = 0;
@@ -117,14 +123,22 @@ let print_repl_output model =
   match model.repl_output with
   | None -> model
   | Some [] ->
-      (* Done — check if subprocess output moved the cursor *)
+      (* Done — clamp prompt to bottom zone, scroll if needed *)
       let new_row, new_col = get_cursor_position () in
       let next_prompt_row = if Int.equal new_col 1 then new_row else new_row + 1 in
+      let natural = max model.prompt_top_row next_prompt_row in
+      let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
+      let scroll_needed = natural - clamped in
+      if scroll_needed > 0 then begin
+        Stdlib.Printf.printf "\x1b[%dS" scroll_needed;
+        Out_channel.flush stdout
+      end;
       {
         model with
         repl_output = None;
-        repl_cursor = (new_row, new_col);
-        prompt_top_row = max model.prompt_top_row next_prompt_row;
+        repl_cursor = (new_row - scroll_needed, new_col);
+        prompt_top_row = clamped;
+        prompt_box_height = Frontend_types.min_prompt_height;
       }
   | Some spans ->
       let row, col = model.repl_cursor in
@@ -219,9 +233,11 @@ let run env backend ~orig_termios =
               enable_bracketed_paste ();
               let new_row, _new_col = get_cursor_position () in
               let next_prompt_row = new_row + 1 in
+              let clamped = Frontend_types.clamp_prompt_top model.term_height next_prompt_row in
               loop { model with
-                prompt_top_row = next_prompt_row;
+                prompt_top_row = clamped;
                 repl_cursor = (next_prompt_row, 1);
+                prompt_box_height = Frontend_types.min_prompt_height;
               }
           | _ -> passthrough_loop ()
         in
@@ -234,7 +250,11 @@ let run env backend ~orig_termios =
     | Term_size (term_width, term_height) ->
         Ffi_backend.background_submit backend
           (Printf.sprintf "options(width=%d)" term_width);
-        loop { model with term_width; term_height }
+        let new_model =
+          Update.handle_resize term_width term_height model
+          |> Update.handle_vertical_cursor_movement
+        in
+        loop new_model
   in
   loop model_after_cached
 

@@ -27,7 +27,7 @@ let initial_model width =
     prompt_top_row = 0;
     term_width = width;
     term_height = 10;
-    prompt_box_height = 1;
+    prompt_box_height = Frontend_types.min_prompt_height;
     previous_prompt_top_row = 0;
     previous_key = None;
     persistent_col = 0;
@@ -1039,6 +1039,128 @@ let test_brace_continuation_keeps_indent () =
       Alcotest.(check int) "cursor pos" 2 new_model.cursor_pos
   | _ -> Alcotest.fail "Expected Continue"
 
+(* Prompt placement tests *)
+
+let test_clamp_prompt_top_mid_screen () =
+  (* Cursor at row 5 in a 25-row terminal: stays at 5 *)
+  let result = Frontend_types.clamp_prompt_top 25 5 in
+  Alcotest.(check int) "stays at row 5" 5 result
+
+let test_clamp_prompt_top_at_bottom_zone () =
+  (* Row 21 = term_height - 4 = exactly at the cap *)
+  let result = Frontend_types.clamp_prompt_top 25 21 in
+  Alcotest.(check int) "at bottom zone" 21 result
+
+let test_clamp_prompt_top_past_bottom_zone () =
+  (* Row 24 is past the cap, gets clamped to 21 *)
+  let result = Frontend_types.clamp_prompt_top 25 24 in
+  Alcotest.(check int) "clamped to bottom zone" 21 result
+
+let test_clamp_prompt_top_at_top () =
+  (* Row 1 is above the minimum, clamped to 2 *)
+  let result = Frontend_types.clamp_prompt_top 25 1 in
+  Alcotest.(check int) "clamped to row 2" 2 result
+
+let test_clamp_prompt_top_small_terminal () =
+  (* term_height=6: default_prompt_top = max(2, 6-4) = 2, so clamp to 2 *)
+  let result = Frontend_types.clamp_prompt_top 6 10 in
+  Alcotest.(check int) "small terminal clamp" 2 result
+
+let test_prompt_only_moves_down () =
+  (* Prompt at row 8, after short output ending at row 6: prompt stays at 8 *)
+  let width = 20 in
+  let model =
+    { (initial_model width) with
+      prompt_top_row = 8;
+      term_height = 25;
+      prompt_box_height = Frontend_types.min_prompt_height;
+    }
+  in
+  (* Simulate Done: next_prompt_row = 7 (below output at row 6) *)
+  let next_prompt_row = 7 in
+  let natural = max model.prompt_top_row next_prompt_row in
+  let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
+  Alcotest.(check int) "prompt stays at 8" 8 clamped
+
+let test_prompt_moves_down_with_output () =
+  (* Prompt at row 5, output pushes next prompt to row 10 *)
+  let width = 20 in
+  let model =
+    { (initial_model width) with
+      prompt_top_row = 5;
+      term_height = 25;
+    }
+  in
+  let next_prompt_row = 10 in
+  let natural = max model.prompt_top_row next_prompt_row in
+  let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
+  Alcotest.(check int) "prompt moves to 10" 10 clamped
+
+let test_prompt_capped_at_bottom_zone () =
+  (* Prompt at row 15, output pushes to row 24, capped at 21 *)
+  let width = 20 in
+  let model =
+    { (initial_model width) with
+      prompt_top_row = 15;
+      term_height = 25;
+    }
+  in
+  let next_prompt_row = 24 in
+  let natural = max model.prompt_top_row next_prompt_row in
+  let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
+  Alcotest.(check int) "capped at 21" 21 clamped
+
+let test_submit_prompt_box_height () =
+  (* After submit, prompt_box_height should be min_prompt_height *)
+  let width = 20 in
+  let model = { (initial_model width) with prompt_top_row = 5; term_height = 25 } in
+  let model = insert_many model 3 in
+  match Update.submit model with
+  | Submit (_, new_model) ->
+      Alcotest.(check int) "prompt_box_height is min_prompt_height"
+        Frontend_types.min_prompt_height new_model.prompt_box_height
+  | _ -> Alcotest.fail "Expected Submit"
+
+let test_resize_clamps_prompt () =
+  (* Prompt at row 15, terminal shrinks from 25 to 12 *)
+  let width = 20 in
+  let model =
+    { (initial_model width) with
+      prompt_top_row = 15;
+      term_height = 25;
+    }
+  in
+  let new_model = Update.handle_resize 20 12 model in
+  (* default_prompt_top 12 = max(2, 12-4) = 8. clamp(12, 15) = min(15, 8) = 8 *)
+  Alcotest.(check int) "prompt clamped on shrink" 8 new_model.prompt_top_row
+
+let test_resize_preserves_prompt_in_zone () =
+  (* Prompt at row 5, terminal stays 25: no change *)
+  let width = 20 in
+  let model =
+    { (initial_model width) with
+      prompt_top_row = 5;
+      term_height = 25;
+    }
+  in
+  let new_model = Update.handle_resize 20 25 model in
+  (* No change: 5 <= 21, so stays at 5 *)
+  Alcotest.(check int) "prompt stays at 5" 5 new_model.prompt_top_row
+
+let test_min_prompt_height_enforced () =
+  (* handle_vertical_cursor_movement enforces min_prompt_height *)
+  let width = 20 in
+  let model =
+    { (initial_model width) with
+      prompt_top_row = 5;
+      term_height = 25;
+      prompt_box_height = 1;
+    }
+  in
+  let new_model = Update.handle_vertical_cursor_movement model in
+  Alcotest.(check int) "prompt_box_height at least min"
+    Frontend_types.min_prompt_height new_model.prompt_box_height
+
 let () =
   let open Alcotest in
   run "Raoui"
@@ -1153,6 +1275,21 @@ let () =
           test_case "Multiline mode change" `Quick
             test_lex_cache_multiline_mode_change;
           test_case "Delete empty line" `Quick test_lex_delete_empty_line;
+        ] );
+      ( "prompt_placement",
+        [
+          test_case "Clamp mid screen" `Quick test_clamp_prompt_top_mid_screen;
+          test_case "Clamp at bottom zone" `Quick test_clamp_prompt_top_at_bottom_zone;
+          test_case "Clamp past bottom zone" `Quick test_clamp_prompt_top_past_bottom_zone;
+          test_case "Clamp at top" `Quick test_clamp_prompt_top_at_top;
+          test_case "Clamp small terminal" `Quick test_clamp_prompt_top_small_terminal;
+          test_case "Prompt only moves down" `Quick test_prompt_only_moves_down;
+          test_case "Prompt moves down with output" `Quick test_prompt_moves_down_with_output;
+          test_case "Prompt capped at bottom zone" `Quick test_prompt_capped_at_bottom_zone;
+          test_case "Submit sets prompt_box_height" `Quick test_submit_prompt_box_height;
+          test_case "Resize clamps prompt" `Quick test_resize_clamps_prompt;
+          test_case "Resize preserves prompt in zone" `Quick test_resize_preserves_prompt_in_zone;
+          test_case "Min prompt height enforced" `Quick test_min_prompt_height_enforced;
         ] );
       ( "matched_brackets",
         [
