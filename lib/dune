@@ -4,14 +4,11 @@
   unix
   eio
   eio_main
-  zmq
-  yojson
-  cryptokit
-  base
-  stdio
-  core_unix
-  ptime
-  uutf
+ zmq
+ yojson
+ cryptokit
+ ptime
+ uutf
   uuseg
   uucp
   sqlite3

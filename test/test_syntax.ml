@@ -18,6 +18,8 @@ let span_to_string (style, text) =
     | `Error -> "Error"
     | `Accent -> "Accent"
     | `Raw -> "Raw"
+    | `Completion -> "Completion"
+    | `Completion_selected -> "Completion_selected"
   in
   Printf.sprintf "(%s, %S)" style_name text
 

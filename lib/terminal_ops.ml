@@ -1,5 +1,3 @@
-open Base
-
 type style =
   [ `Raw
   | `Plain
@@ -14,6 +12,8 @@ type style =
   | `Ident
   | `Bracket
   | `Function
+  | `Completion
+  | `Completion_selected
   ]
 type span = style * string
 type term_output = span list
@@ -53,12 +53,14 @@ let style_to_ansi = function
   | `Constant -> "\x1b[34m" (* blue *)
   | `Ident -> "\x1b[0m"     (* default *)
   | `Bracket -> "\x1b[0m"   (* default *)
+  | `Completion -> "\x1b[48;5;236m"  (* dark gray background *)
+  | `Completion_selected -> "\x1b[48;5;240m\x1b[1m"  (* lighter gray bg, bold *)
 
 let render_spans_to_buf buf spans =
-  List.iter spans ~f:(fun (style, text) ->
+  List.iter (fun (style, text) ->
     Buffer.add_string buf (style_to_ansi style);
     Buffer.add_string buf text
-  );
+  ) spans;
   Buffer.add_string buf "\x1b[0m"  (* reset after *)
 
 let render_spans spans =
@@ -90,7 +92,7 @@ module Make (C : CONFIG) : TERMINAL = struct
     let buf = Buffer.create 256 in
     match C.term_type with
     | "ansi" ->
-        Queue.iter ops ~f:(render_op_ansi buf);
+        Queue.iter (render_op_ansi buf) ops;
         Buffer.contents buf
     | _ -> failwith ("Unsupported terminal type: " ^ C.term_type)
 end

@@ -14,7 +14,6 @@ depends: [
   "ocaml"
   "eio"
   "terminal_size"
-  "base"
   "uutf"
   "uuseg"
   "uucp"

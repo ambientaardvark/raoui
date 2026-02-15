@@ -39,6 +39,8 @@ let initial_model width =
     history = History.init ":memory:";
     flipping_through_history = None;
     running_in_ide = false;
+    completion = None;
+    completion_dirty = false;
   }
 
 let with_lines model lines =
@@ -64,6 +66,8 @@ let style_to_string = function
   | `Ident -> "Ident"
   | `Bracket -> "Bracket"
   | `Function -> "Function"
+  | `Completion -> "Completion"
+  | `Completion_selected -> "Completion_selected"
 
 let pp_span fmt (style, text) =
   Format.fprintf fmt "(%s,%S)" (style_to_string style) text

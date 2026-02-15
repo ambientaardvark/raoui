@@ -1,5 +1,3 @@
-open Base
-
 (** Terminal operations abstraction layer.
     Provides a typed interface for terminal control that can be rendered
     to different terminal types (ANSI, etc.) *)
@@ -19,6 +17,8 @@ type style =
   | `Ident
   | `Bracket
   | `Function
+  | `Completion
+  | `Completion_selected
   ]
 
 (** A styled span of text *)

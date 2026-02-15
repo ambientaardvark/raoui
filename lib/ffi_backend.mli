@@ -10,7 +10,7 @@ type response_chunk =
   | Restarted of string
   | Passthrough
   | Passthrough_end
-  | Completions of string list
+  | Completions of string * string list  (* token * items *)
 
 type completion = string
 

@@ -749,8 +749,13 @@ let submit model =
 
 let handle_vertical_cursor_movement model =
   let width = effective_width model in
+  let dropdown_rows = match model.completion with
+    | Some cs -> min 5 (List.length cs.filtered)
+    | None -> 0
+  in
   let new_height =
     model.lines |> wrap_lines width |> List.length
+    |> ( + ) dropdown_rows
     |> max model.prompt_box_height
     |> max min_prompt_height
   in
@@ -801,8 +806,56 @@ let handle_resize new_width new_height model =
 let is_empty_input model =
   match model.lines with [ line ] -> Unicode_string.is_empty line | _ -> false
 
+let replace_token model token_start text =
+  let line = current_line model in
+  let before = Unicode_string.sub line ~start:0 ~len:token_start in
+  let after_start = model.cursor_pos in
+  let after_len = Unicode_string.length line - after_start in
+  let after = Unicode_string.sub line ~start:after_start ~len:after_len in
+  let text_us = match Unicode_string.of_string text with
+    | Ok u -> u | Error _ -> Unicode_string.empty
+  in
+  let new_line = Unicode_string.concat [before; text_us; after] in
+  let new_lines = update_line model.lines model.cursor_line new_line in
+  let new_cursor_pos = token_start + Unicode_string.length text_us in
+  let model = { model with lines = new_lines; cursor_pos = new_cursor_pos } in
+  let model = lexer_update model.cursor_line model.cursor_line model in
+  let width = effective_width model in
+  let new_row, new_col =
+    internal_to_terminal width model.lines (model.cursor_line, new_cursor_pos)
+  in
+  { model with cursor_row = new_row; cursor_col = new_col }
+
+let filter_completions model =
+  match model.completion with
+  | None -> model
+  | Some cs when cs.selected >= 0 -> model  (* completion mode: set is fixed *)
+  | Some cs ->
+      let line = current_line model in
+      let line_len = Unicode_string.length line in
+      if cs.token_start > line_len || cs.token_start > model.cursor_pos then
+        { model with completion = None }
+      else
+        let prefix_len = model.cursor_pos - cs.token_start in
+        let prefix = Unicode_string.to_string
+          (Unicode_string.sub line ~start:cs.token_start ~len:prefix_len) in
+        let filtered = List.filter (fun item ->
+          String.length item >= String.length prefix &&
+          String.sub item 0 (String.length prefix) = prefix
+        ) cs.items in
+        if filtered = [] then { model with completion = None }
+        else { model with completion = Some { cs with filtered } }
+
 let apply_key key model =
   let open Tty_listener in
+  (* Lock in completion on any key except Tab/Escape *)
+  let model = match key with
+    | Tab | Escape -> model
+    | _ -> (match model.completion with
+        | Some cs when cs.selected >= 0 ->
+            { model with completion = None }
+        | _ -> model)
+  in
   match key with
   | Ctrl 'c' when model.awaiting_response -> Cancel
   | Ctrl 'p' when model.awaiting_response -> Continue model
@@ -830,10 +883,37 @@ let apply_key key model =
       then Continue (shift_history model ~amount:(-1))
       else Continue (move_down model)
   | Paste text -> Continue (insert_paste model text)
+  | Tab -> (
+      match model.completion with
+      | Some cs when List.length cs.filtered > 0 ->
+          let new_selected =
+            if cs.selected < 0 then 0
+            else (cs.selected + 1) mod List.length cs.filtered
+          in
+          let original_token =
+            if cs.selected < 0 then
+              let line = current_line model in
+              let prefix_len = model.cursor_pos - cs.token_start in
+              Unicode_string.to_string
+                (Unicode_string.sub line ~start:cs.token_start ~len:prefix_len)
+            else cs.original_token
+          in
+          let completion_text = List.nth cs.filtered new_selected in
+          let inserted = replace_token model cs.token_start completion_text in
+          Continue { inserted with
+            completion = Some { cs with selected = new_selected; original_token } }
+      | _ -> Continue model)
+  | Escape -> (
+      match model.completion with
+      | Some cs when cs.selected >= 0 ->
+          let reverted = replace_token model cs.token_start cs.original_token in
+          Continue { reverted with completion = None }
+      | Some _ -> Continue { model with completion = None }
+      | None -> Continue model)
   | _ -> Continue model
 
 let universal_corrections key model =
-  model |> handle_vertical_cursor_movement |> fun s ->
+  model |> filter_completions |> handle_vertical_cursor_movement |> fun s ->
   let flipping_through_history =
     match model.flipping_through_history with
     | Some 1 | None -> None

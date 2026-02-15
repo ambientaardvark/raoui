@@ -13,6 +13,14 @@ type lex_line = {
   end_mode : R_lexer.mode;
 }
 
+type completion_state = {
+  items : string list;      (* raw from R, unfiltered *)
+  filtered : string list;   (* items filtered to current prefix *)
+  selected : int;           (* -1 = dropdown only, 0+ = completion mode *)
+  token_start : int;        (* grapheme position where the token starts *)
+  original_token : string;  (* saved token text for Escape revert *)
+}
+
 type model = {
   lines : Unicode_string.t list;
   lex_cache : lex_line list;
@@ -37,6 +45,8 @@ type model = {
   history : History.t;
   flipping_through_history : int option;
   running_in_ide : bool;
+  completion : completion_state option;
+  completion_dirty : bool;
 }
 
 type update_result =

@@ -8,7 +8,7 @@ type response_chunk =
   | Restarted of string
   | Passthrough
   | Passthrough_end
-  | Completions of string list
+  | Completions of string * string list  (* token * items *)
 
 type completion = string
 
@@ -108,11 +108,11 @@ let map_kind kind payload =
   | 8 (* PASSTHROUGH *)    -> Passthrough
   | 9 (* PASSTHROUGH_END *)-> Passthrough_end
   | 10 (* COMPLETIONS *)   ->
-    let items =
-      if String.length payload = 0 then []
-      else String.split_on_char '\n' payload
-    in
-    Completions items
+    if String.length payload = 0 then Completions ("", [])
+    else
+      (match String.split_on_char '\n' payload with
+       | token :: items -> Completions (token, items)
+       | [] -> Completions ("", []))
   | _ -> Internal_error (Printf.sprintf "Unknown message kind: %d" kind)
 
 let await_response t =

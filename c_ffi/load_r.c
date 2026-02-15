@@ -404,7 +404,9 @@ static void run_completions(const char *line, int cursor_pos) {
         "  utils:::.assignEnd(%dL);"
         "  utils:::.guessTokenFromLine();"
         "  utils:::.completeToken();"
-        "  paste0(utils:::.retrieveCompletions(), collapse=\"\\n\")"
+        "  token <- get('token', envir=utils:::.CompletionEnv);"
+        "  comps <- utils:::.retrieveCompletions();"
+        "  paste0(c(token, comps), collapse=\"\\n\")"
         "})", cursor_pos);
 
     char *result = eval_for_string(code);
