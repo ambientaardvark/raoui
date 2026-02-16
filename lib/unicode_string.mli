@@ -39,6 +39,9 @@ val width_at : t -> int -> int
 (** Display width of first n graphemes *)
 val prefix_width : t -> int -> int
 
+(** Truncate to display width *)
+val truncate_to_display_width : t -> width:int -> t
+
 (** Grapheme index at or before display column. Returns the grapheme index
     whose display position is at or just before the given column. *)
 val grapheme_at_width : t -> int -> int

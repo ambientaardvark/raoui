@@ -259,6 +259,17 @@ let split t pos =
     let after = sub t ~start:pos ~len:(length t - pos) in
     (before, after)
 
+
+let truncate_to_display_width t ~width =
+  let rec loop ~cum_width ~clusters ~i =
+    if cum_width >= width then clusters
+    else
+      loop ~cum_width:(cum_width + t.widths.(i)) ~clusters:(clusters + 1) ~i:(i + 1)
+  in
+  let clusters = loop ~cum_width:0 ~clusters:0 ~i:0 in
+  sub t ~start:0 ~len:clusters
+
+
 let wrap t ~width =
   if width <= 0 then [t]
   else if is_empty t then [empty]

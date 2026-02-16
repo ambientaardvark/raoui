@@ -2,11 +2,82 @@ open Frontend_types
 
 module Term = Terminal_ops.Make(struct let term_type = "ansi" end)
 
+let completion_max_width = 20
+
 let log message =
   let oc = Stdlib.open_out_gen [Open_append; Open_creat] 0o666 "/Users/alanlee/Documents/Programs/raoui/debug_log.txt" in
   Stdlib.Fun.protect
     ~finally:(fun () -> Stdlib.close_out oc)
     (fun () -> Stdlib.Printf.fprintf oc "%s\n" message)
+
+let absolute_cursor_pos model =
+  let prompt_width = String.length prompt in
+  let cursor_abs_row = model.prompt_top_row + model.cursor_row in
+  let cursor_abs_col = prompt_width + model.cursor_col + 1 in
+  (cursor_abs_row, cursor_abs_col)
+
+let print_completion_line line ~selected ~max_width =
+  let line =
+    if max_width <= 0 then ""
+    else if String.length line <= max_width then line
+    else String.sub line 0 max_width
+  in
+  let line =
+    let pad_len = max 0 (max_width - String.length line) in
+    line ^ String.make pad_len ' '
+  in
+  let style = if selected then `Completion_selected else `Completion in
+  Terminal_ops.Print [(style, line)]
+
+let completion_col_offset model =
+  let _, col = absolute_cursor_pos model in
+  col
+
+let is_word_char s =
+  if String.length s > 1 then true
+  else
+    let c = String.get s 0 in
+    Char.Ascii.is_alphanum c
+
+let should_show_completions model =
+  if model.cursor_pos < 2 then false
+  else
+    match List.nth_opt model.lines model.cursor_line with
+    | None -> false
+    | Some line ->
+      if Unicode_string.length line < model.cursor_pos then false
+      else
+        let prev1 = Unicode_string.cluster_at line (model.cursor_pos - 1) in
+        let prev2 = Unicode_string.cluster_at line (model.cursor_pos - 2) in
+        is_word_char prev1 && is_word_char prev2
+
+let view_completions model ops =
+  let add op = Queue.add op ops in
+  if not (should_show_completions model) then ()
+  else
+  match model.completion with
+  | None -> ()
+  | Some cs ->
+    let filtered = Completion.filtered_items cs in
+    if filtered = [] then ()
+    else
+      let cursor_row, _ = absolute_cursor_pos model in
+      let start_row = cursor_row + 1 in
+      let col_offset = completion_col_offset model in
+      let terminal_remaining = max 0 (model.term_width - col_offset + 1) in
+      let max_width = min completion_max_width terminal_remaining in
+      let selected = Completion.selected_index cs in
+      let rec loop row idx = function
+        | [] -> ()
+        | _ when row > model.term_height -> ()
+        | _ when idx >= 5 -> ()
+        | item :: rest ->
+          add (Terminal_ops.Cursor_to (row, col_offset));
+          add Terminal_ops.Clear_to_eol;
+          add (print_completion_line item ~selected:(idx = selected) ~max_width);
+          loop (row + 1) (idx + 1) rest
+      in
+      loop start_row 0 filtered
 
 let view_ops model =
   let open Terminal_ops in
@@ -85,68 +156,22 @@ let view_ops model =
 
   let visible_rows = max 0 (min (total_rows - skip_rows) model.term_height) in
 
-  (* Render completion dropdown *)
-  let dropdown_rows =
-    match model.completion with
-    | None -> 0
-    | Some cs ->
-        let filtered = Completion.filtered_items cs in
-        if filtered = [] then 0
-        else begin
-          let prompt_end_row = viewport_start + visible_rows - 1 in
-          let available = model.term_height - prompt_end_row in
-          let max_items = min 5 (max 0 available) in
-          let num_items = min max_items (List.length filtered) in
-          if num_items = 0 then 0
-          else begin
-            let line =
-              match List.nth_opt model.lines model.cursor_line with
-              | Some line -> line
-              | None -> Unicode_string.empty
-            in
-            let token_start = Completion.token_start cs in
-            let col_offset =
-              prompt_width + Unicode_string.prefix_width line token_start + 1
-            in
-            (* Scroll window to keep selected item visible *)
-            let selected = Completion.selected_index cs in
-            let start_idx =
-              if selected < 0 then 0
-              else
-                let max_start = max 0 (List.length filtered - num_items) in
-                min max_start (max 0 (selected - num_items / 2))
-            in
-            for i = 0 to num_items - 1 do
-              let idx = start_idx + i in
-              add Newline;
-              add Clear_to_eol;
-              let item =
-                match List.nth_opt filtered idx with
-                | Some item -> item
-                | None -> ""
-              in
-              let padding = String.make (max 0 (col_offset - 1)) ' ' in
-              let style =
-                if idx = selected then `Completion_selected
-                else `Completion
-              in
-              add (Print [(style, padding ^ item)])
-            done;
-            num_items
-          end
-        end
-  in
-
-  let total_box_rows = visible_rows + dropdown_rows in
+  let total_box_rows = visible_rows in
   let old_visible_rows = min model.prompt_box_height model.term_height in
   let extra_lines = old_visible_rows - total_box_rows in
   let cursor_after_render = viewport_start + total_box_rows - 1 in
   let possible_space = max 0 (model.term_height - cursor_after_render) in
   let rows_to_clear = max 0 (min extra_lines possible_space) in
-  for _ = 1 to rows_to_clear do
-    add Newline;
-    add Clear_to_eol
+  for i = 1 to rows_to_clear do
+    let row = cursor_after_render + i in
+    if row <= model.term_height then begin
+      add (Cursor_to (row, 1));
+      add Clear_to_eol
+    end
   done;
+
+  (* Render completion dropdown as an overlay after base prompt cleanup. *)
+  view_completions model ops;
 
   (* Position cursor: in output area during eval, in prompt otherwise *)
   if model.awaiting_response then begin

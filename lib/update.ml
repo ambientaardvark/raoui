@@ -8,7 +8,7 @@ let lexer_update start_line end_line model =
         model.lex_cache;
   }
 
-(* Cursor context primitives - use internal coordinates *)
+(* Cursor context primitives *)
 let current_line model = List.nth model.lines model.cursor_line
 let line_length model = Unicode_string.length (current_line model)
 
@@ -593,10 +593,9 @@ let submit model =
 
 let handle_vertical_cursor_movement model =
   let width = effective_width model in
-  let dropdown_rows = match model.completion with
-    | Some cs -> Completion.dropdown_size cs
-    | None -> 0
-  in
+  (* Completions are rendered as an overlay in view.ml and should not
+     contribute to prompt box height or scrolling math. *)
+  let dropdown_rows = 0 in
   let new_height =
     model.lines |> wrap_lines width |> List.length
     |> ( + ) dropdown_rows
