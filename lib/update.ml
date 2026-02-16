@@ -594,7 +594,7 @@ let submit model =
 let handle_vertical_cursor_movement model =
   let width = effective_width model in
   let dropdown_rows = match model.completion with
-    | Some cs -> min 5 (List.length cs.filtered)
+    | Some cs -> Completion.dropdown_size cs
     | None -> 0
   in
   let new_height =
@@ -673,22 +673,21 @@ let replace_token model token_start text =
 let filter_completions model =
   match model.completion with
   | None -> model
-  | Some cs when cs.selected >= 0 -> model  (* completion mode: set is fixed *)
+  | Some cs when Completion.is_in_completion_mode cs ->
+      model  (* completion mode: set is fixed *)
   | Some cs ->
       let line = current_line model in
       let line_len = Unicode_string.length line in
-      if cs.token_start > line_len || cs.token_start > model.cursor_pos then
+      let token_start = Completion.token_start cs in
+      if token_start > line_len || token_start > model.cursor_pos then
         { model with completion = None }
       else
-        let prefix_len = model.cursor_pos - cs.token_start in
+        let prefix_len = model.cursor_pos - token_start in
         let prefix = Unicode_string.to_string
-          (Unicode_string.sub line ~start:cs.token_start ~len:prefix_len) in
-        let filtered = List.filter (fun item ->
-          String.length item >= String.length prefix &&
-          String.sub item 0 (String.length prefix) = prefix
-        ) cs.items in
-        if filtered = [] then { model with completion = None }
-        else { model with completion = Some { cs with filtered } }
+          (Unicode_string.sub line ~start:token_start ~len:prefix_len) in
+        match Completion.filter cs ~prefix with
+        | None -> { model with completion = None }
+        | Some filtered -> { model with completion = Some filtered }
 
 let apply_key key model =
   let open Tty_listener in
@@ -696,7 +695,7 @@ let apply_key key model =
   let model = match key with
     | Tab | Escape -> model
     | _ -> (match model.completion with
-        | Some cs when cs.selected >= 0 ->
+        | Some cs when Completion.is_in_completion_mode cs ->
             { model with completion = None }
         | _ -> model)
   in
@@ -727,30 +726,40 @@ let apply_key key model =
       then Continue (shift_history model ~amount:(-1))
       else Continue (move_down model)
   | Paste text -> Continue (insert_paste model text)
-  | Tab -> (
-      match model.completion with
-      | Some cs when List.length cs.filtered > 0 ->
-          let new_selected =
-            if cs.selected < 0 then 0
-            else (cs.selected + 1) mod List.length cs.filtered
-          in
-          let original_token =
-            if cs.selected < 0 then
-              let line = current_line model in
-              let prefix_len = model.cursor_pos - cs.token_start in
-              Unicode_string.to_string
-                (Unicode_string.sub line ~start:cs.token_start ~len:prefix_len)
-            else cs.original_token
-          in
-          let completion_text = List.nth cs.filtered new_selected in
-          let inserted = replace_token model cs.token_start completion_text in
-          Continue { inserted with
-            completion = Some { cs with selected = new_selected; original_token } }
-      | _ -> Continue model)
+  | Tab ->
+      let handle_tab () =
+        match model.completion with
+        | None -> Continue model
+        | Some cs ->
+            if List.length (Completion.filtered_items cs) = 0 then
+              Continue model
+            else
+              let cs_with_original =
+                if not (Completion.is_in_completion_mode cs) then
+                  (* First Tab press - save the original token *)
+                  let line = current_line model in
+                  let token_start = Completion.token_start cs in
+                  let prefix_len = model.cursor_pos - token_start in
+                  let original = Unicode_string.to_string
+                    (Unicode_string.sub line ~start:token_start ~len:prefix_len) in
+                  Completion.save_original_token cs ~token:original
+                else cs
+              in
+              let cs_cycled = Completion.cycle_next cs_with_original in
+              match Completion.current_completion cs_cycled with
+              | None -> Continue model
+              | Some completion_text ->
+                  let token_start = Completion.token_start cs_cycled in
+                  let inserted = replace_token model token_start completion_text in
+                  Continue { inserted with completion = Some cs_cycled }
+      in
+      handle_tab ()
   | Escape -> (
       match model.completion with
-      | Some cs when cs.selected >= 0 ->
-          let reverted = replace_token model cs.token_start cs.original_token in
+      | Some cs when Completion.is_in_completion_mode cs ->
+          let token_start = Completion.token_start cs in
+          let original = Completion.original_token cs in
+          let reverted = replace_token model token_start original in
           Continue { reverted with completion = None }
       | Some _ -> Continue { model with completion = None }
       | None -> Continue model)

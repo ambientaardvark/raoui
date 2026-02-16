@@ -89,46 +89,51 @@ let view_ops model =
   let dropdown_rows =
     match model.completion with
     | None -> 0
-    | Some cs when cs.filtered = [] -> 0
     | Some cs ->
-        let prompt_end_row = viewport_start + visible_rows - 1 in
-        let available = model.term_height - prompt_end_row in
-        let max_items = min 5 (max 0 available) in
-        let num_items = min max_items (List.length cs.filtered) in
-        if num_items = 0 then 0
+        let filtered = Completion.filtered_items cs in
+        if filtered = [] then 0
         else begin
-          let line =
-            match List.nth_opt model.lines model.cursor_line with
-            | Some line -> line
-            | None -> Unicode_string.empty
-          in
-          let col_offset =
-            prompt_width + Unicode_string.prefix_width line cs.token_start + 1
-          in
-          (* Scroll window to keep selected item visible *)
-          let start_idx =
-            if cs.selected < 0 then 0
-            else
-              let max_start = max 0 (List.length cs.filtered - num_items) in
-              min max_start (max 0 (cs.selected - num_items / 2))
-          in
-          for i = 0 to num_items - 1 do
-            let idx = start_idx + i in
-            add Newline;
-            add Clear_to_eol;
-            let item =
-              match List.nth_opt cs.filtered idx with
-              | Some item -> item
-              | None -> ""
+          let prompt_end_row = viewport_start + visible_rows - 1 in
+          let available = model.term_height - prompt_end_row in
+          let max_items = min 5 (max 0 available) in
+          let num_items = min max_items (List.length filtered) in
+          if num_items = 0 then 0
+          else begin
+            let line =
+              match List.nth_opt model.lines model.cursor_line with
+              | Some line -> line
+              | None -> Unicode_string.empty
             in
-            let padding = String.make (max 0 (col_offset - 1)) ' ' in
-            let style =
-              if idx = cs.selected then `Completion_selected
-              else `Completion
+            let token_start = Completion.token_start cs in
+            let col_offset =
+              prompt_width + Unicode_string.prefix_width line token_start + 1
             in
-            add (Print [(style, padding ^ item)])
-          done;
-          num_items
+            (* Scroll window to keep selected item visible *)
+            let selected = Completion.selected_index cs in
+            let start_idx =
+              if selected < 0 then 0
+              else
+                let max_start = max 0 (List.length filtered - num_items) in
+                min max_start (max 0 (selected - num_items / 2))
+            in
+            for i = 0 to num_items - 1 do
+              let idx = start_idx + i in
+              add Newline;
+              add Clear_to_eol;
+              let item =
+                match List.nth_opt filtered idx with
+                | Some item -> item
+                | None -> ""
+              in
+              let padding = String.make (max 0 (col_offset - 1)) ' ' in
+              let style =
+                if idx = selected then `Completion_selected
+                else `Completion
+              in
+              add (Print [(style, padding ^ item)])
+            done;
+            num_items
+          end
         end
   in
 
