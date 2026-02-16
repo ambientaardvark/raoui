@@ -95,7 +95,7 @@ let make_init () : Frontend_types.model =
   end;
   {
     lines;
-    lex_cache = Update.lex_cache_for_lines lines;
+    lex_cache = Syntax.Cache.create lines;
     cursor_row = 0;
     cursor_col = 0;
     cursor_line = 0;

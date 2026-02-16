@@ -18,7 +18,7 @@ let view_ops model =
 
   (* Convert cached tokens to spans *)
   let highlighted_lines =
-    List.map (fun lex_line -> Syntax.tokens_to_spans lex_line.tokens) model.lex_cache
+    List.map (fun (entry : Syntax.Cache.entry) -> Syntax.tokens_to_spans entry.tokens) model.lex_cache
   in
 
   (* Wrap each line's spans for display *)

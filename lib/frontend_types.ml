@@ -6,13 +6,6 @@ let min_prompt_height = 5
 let default_prompt_top term_height = max 2 (term_height - min_prompt_height + 1)
 let clamp_prompt_top term_height row = max 2 (min row (default_prompt_top term_height))
 
-type lex_line = {
-  text : string;
-  tokens : R_lexer.token list;
-  start_mode : R_lexer.mode;
-  end_mode : R_lexer.mode;
-}
-
 type completion_state = {
   items : string list;      (* raw from R, unfiltered *)
   filtered : string list;   (* items filtered to current prefix *)
@@ -23,7 +16,7 @@ type completion_state = {
 
 type model = {
   lines : Unicode_string.t list;
-  lex_cache : lex_line list;
+  lex_cache : Syntax.Cache.t;
   (* Terminal coordinates - deprecated, will be removed *)
   cursor_row : int;
   cursor_col : int;

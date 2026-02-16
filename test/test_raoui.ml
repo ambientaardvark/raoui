@@ -19,7 +19,7 @@ let initial_model width =
   let lines = [ Unicode_string.empty ] in
   {
     lines;
-    lex_cache = Update.lex_cache_for_lines lines;
+    lex_cache = Syntax.Cache.create lines;
     cursor_row = 0;
     cursor_col = 0;
     cursor_line = 0;
@@ -44,7 +44,7 @@ let initial_model width =
   }
 
 let with_lines model lines =
-  { model with lines; lex_cache = Update.lex_cache_for_lines lines }
+  { model with lines; lex_cache = Syntax.Cache.create lines }
 
 let with_cursor_internal model ~line ~pos =
   let row, col =
@@ -74,11 +74,11 @@ let pp_span fmt (style, text) =
 
 let spans_of_cache cache =
   List.map
-    (fun l -> List.map (fun t -> Syntax.token_to_span t) l.Frontend_types.tokens)
+    (fun (l : Syntax.Cache.entry) -> List.map (fun t -> Syntax.token_to_span t) l.tokens)
     cache
 
 let check_lex_cache ~msg model =
-  let expected = Update.lex_cache_for_lines model.lines |> spans_of_cache in
+  let expected = Syntax.Cache.create model.lines |> spans_of_cache in
   let actual = spans_of_cache model.lex_cache in
   let span_testable = Alcotest.testable pp_span ( = ) in
   let spans_testable = Alcotest.list span_testable in
@@ -860,7 +860,7 @@ let test_lex_delete_empty_line: unit -> unit = fun () ->
     (with_lines (initial_model width) lines) ~line:2 ~pos:0 in
   match Update.update (Tty_listener.Backspace) model with
   | Continue new_model ->
-    let lexemes = List.concat_map (fun line -> List.map Syntax.token_to_lexeme line.tokens) new_model.lex_cache in
+    let lexemes = List.concat_map (fun (line : Syntax.Cache.entry) -> List.map Syntax.token_to_lexeme line.tokens) new_model.lex_cache in
     Alcotest.(check string) "First letter is a" "a" (List.nth lexemes 0);
     Alcotest.(check string) "Second letter is b" "b" (List.nth lexemes 1);
     Alcotest.(check string) "Third letter is c" "c" (List.nth lexemes 2);

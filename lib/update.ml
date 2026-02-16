@@ -1,50 +1,12 @@
 open Frontend_types
 
-let lex_cache_for_lines lines =
-  let rec loop mode acc = function
-    | [] -> List.rev acc
-    | line :: rest ->
-        let text = Unicode_string.to_string line in
-        let tokens, end_mode = R_lexer.lex_line mode text in
-        let entry = { text; tokens; start_mode = mode; end_mode } in
-        loop end_mode (entry :: acc) rest
-  in
-  loop R_lexer.Normal [] lines
-
-let lexer_update start end_ model =
-  if List.length model.lines <> List.length model.lex_cache then
-    { model with lex_cache = lex_cache_for_lines model.lines }
-  else
-    let rec loop i mode lines cache acc =
-      match lines with
-      | [] -> List.rev acc
-      | line :: rest ->
-          if i < start then
-            match cache with
-            | cached :: cache_rest ->
-                loop (i + 1) cached.end_mode rest cache_rest (cached :: acc)
-            | [] -> List.rev acc
-          else if i > end_ && R_lexer.(mode = Normal) then
-            match cache with
-            | cached :: cache_rest when R_lexer.(cached.start_mode = Normal) ->
-                List.rev acc @ (cached :: cache_rest)
-            | _ ->
-                let text = Unicode_string.to_string line in
-                let tokens, end_mode = R_lexer.lex_line mode text in
-                let entry = { text; tokens; start_mode = mode; end_mode } in
-                let cache_rest = match cache with _ :: tl -> tl | [] -> [] in
-                loop (i + 1) end_mode rest cache_rest (entry :: acc)
-          else
-            let text = Unicode_string.to_string line in
-            let tokens, end_mode = R_lexer.lex_line mode text in
-            let entry = { text; tokens; start_mode = mode; end_mode } in
-            let cache_rest = match cache with _ :: tl -> tl | [] -> [] in
-            loop (i + 1) end_mode rest cache_rest (entry :: acc)
-    in
-    {
-      model with
-      lex_cache = loop 0 R_lexer.Normal model.lines model.lex_cache [];
-    }
+let lexer_update start_line end_line model =
+  {
+    model with
+    lex_cache =
+      Syntax.Cache.update ~start_line ~end_line ~lines:model.lines
+        model.lex_cache;
+  }
 
 (* Cursor context primitives - use internal coordinates *)
 let current_line model = List.nth model.lines model.cursor_line
@@ -460,7 +422,7 @@ let shift_history model ~amount =
       {
         model with
         lines;
-        lex_cache = lex_cache_for_lines lines;
+        lex_cache = Syntax.Cache.create lines;
         flipping_through_history = Some 2;
       }
       |> move_cursor_to_end
@@ -494,161 +456,32 @@ let delete_char_after_cursor model =
 
 let continuation_indent_size = 2
 
-type pending_control = {
-  needs_header : bool;
-  header_depth : int;
-  header_done : bool;
-}
-
-type continuation_state = {
-  parens : int;
-  brackets : int;
-  braces : int;
-  last_significant : R_lexer.token option;
-  pending : pending_control option;
-}
-
-type continuation_signal = Submit | Continue_with_indent of int
-
-let token_lexeme_len token = String.length (Syntax.token_to_lexeme token)
-
-let tokens_with_positions tokens =
-  let rec loop pos acc = function
-    | [] -> List.rev acc
-    | tok :: rest ->
-        let len = token_lexeme_len tok in
-        let next_pos = pos + len in
-        loop next_pos ((tok, pos, next_pos) :: acc) rest
-  in
-  loop 0 [] tokens
-
-let cursor_byte_offset model =
-  let line = current_line model in
-  if model.cursor_pos >= Unicode_string.length line then
-    Unicode_string.byte_length line
-  else
-    Unicode_string.sub line ~start:0 ~len:model.cursor_pos
-    |> Unicode_string.byte_length
-
 let tokens_before_cursor model =
-  model.lex_cache
-  |> List.filteri (fun i _ -> i <= model.cursor_line)
-  |> List.map (fun l -> l.tokens)
-  |> List.concat
-
-let is_ignorable = function
-  | R_lexer.WHITESPACE _ | R_lexer.COMMENT _ -> true
-  | _ -> false
-
-let is_control_keyword = function
-  | R_lexer.IF | R_lexer.ELSE | R_lexer.FOR | R_lexer.WHILE | R_lexer.REPEAT
-  | R_lexer.FUNCTION ->
-      true
-  | _ -> false
-
-let pending_for_keyword = function
-  | R_lexer.IF | R_lexer.FOR | R_lexer.WHILE | R_lexer.FUNCTION ->
-      Some { needs_header = true; header_depth = 0; header_done = false }
-  | R_lexer.ELSE | R_lexer.REPEAT ->
-      Some { needs_header = false; header_depth = 0; header_done = true }
-  | _ -> None
-
-let is_expr_token = function
-  | R_lexer.NUMBER _ | R_lexer.STRING _ | R_lexer.CONSTANT _ | R_lexer.IDENT _
-  | R_lexer.BACKTICK_IDENT _ | R_lexer.LAMBDA | R_lexer.UNKNOWN _ ->
-      true
-  | R_lexer.KEYWORD kw -> not (is_control_keyword kw)
-  | R_lexer.LEFT_PAREN | R_lexer.LEFT_BRACKET -> true
-  | _ -> false
-
-let is_trailing_token = function
-  | R_lexer.OPERATOR _ -> true
-  | R_lexer.LEFT_PAREN | R_lexer.LEFT_BRACKET | R_lexer.LEFT_BRACE -> true
-  | R_lexer.PUNCTUATION "," -> true
-  | R_lexer.KEYWORD kw when is_control_keyword kw || kw = R_lexer.IN -> true
-  | _ -> false
-
-let update_pending_for_header pending tok =
-  match pending with
-  | None -> None
-  | Some p when p.needs_header && not p.header_done -> (
-      match tok with
-      | R_lexer.LEFT_PAREN -> Some { p with header_depth = p.header_depth + 1 }
-      | R_lexer.RIGHT_PAREN ->
-          if p.header_depth > 0 then
-            let depth = p.header_depth - 1 in
-            let header_done = depth = 0 in
-            Some { p with header_depth = depth; header_done }
-          else Some p
-      | _ -> Some p)
-  | Some p -> Some p
-
-let fold_continuation_state tokens =
-  let step state tok =
-    if is_ignorable tok then state
-    else
-      let state = { state with last_significant = Some tok } in
-      let state =
-        match tok with
-        | R_lexer.KEYWORD kw -> (
-            match pending_for_keyword kw with
-            | Some pending -> { state with pending = Some pending }
-            | None -> state)
-        | R_lexer.LEFT_PAREN ->
-            let pending = update_pending_for_header state.pending tok in
-            { state with parens = state.parens + 1; pending }
-        | R_lexer.RIGHT_PAREN ->
-            let pending = update_pending_for_header state.pending tok in
-            { state with parens = max 0 (state.parens - 1); pending }
-        | R_lexer.LEFT_BRACKET -> { state with brackets = state.brackets + 1 }
-        | R_lexer.RIGHT_BRACKET ->
-            { state with brackets = max 0 (state.brackets - 1) }
-        | R_lexer.LEFT_BRACE ->
-            { state with braces = state.braces + 1; pending = None }
-        | R_lexer.RIGHT_BRACE ->
-            { state with braces = max 0 (state.braces - 1) }
-        | _ -> state
-      in
-      match state.pending with
-      | Some p when p.header_done && is_expr_token tok ->
-          { state with pending = None }
-      | _ -> state
-  in
-  let initial =
-    {
-      parens = 0;
-      brackets = 0;
-      braces = 0;
-      last_significant = None;
-      pending = None;
-    }
-  in
-  List.fold_left step initial tokens
+  Syntax.Cache.tokens_before_line model.lex_cache
+    ~line:(model.cursor_line + 1)
 
 let mode_at_cursor model =
-  let entry = List.nth model.lex_cache model.cursor_line in
-  let cursor_byte = cursor_byte_offset model in
-  let prefix = String.sub entry.text 0 cursor_byte in
-  let _, end_mode = R_lexer.lex_line entry.start_mode prefix in
-  end_mode
+  let entry = Syntax.Cache.get_entry model.lex_cache ~line:model.cursor_line in
+  match entry with
+  | None -> R_lexer.Normal
+  | Some entry ->
+      let line = current_line model in
+      let cursor_byte =
+        Language_syntax.cursor_byte_offset ~line ~cursor_pos:model.cursor_pos
+      in
+      let prefix = String.sub entry.text 0 cursor_byte in
+      let _, end_mode = R_lexer.lex_line entry.start_mode prefix in
+      end_mode
 
 let inside_empty_brackets model =
-  let current_tokens = (List.nth model.lex_cache model.cursor_line).tokens in
-  let cursor_byte = cursor_byte_offset model in
-  let positioned = tokens_with_positions current_tokens in
-  let token_before =
-    List.fold_left
-      (fun acc (tok, _, end_pos) ->
-        if end_pos = cursor_byte then Some tok else acc)
-      None positioned
-  in
-  let token_after =
-    List.find_opt (fun (_, start_pos, _) -> start_pos = cursor_byte) positioned
-    |> Option.map (fun (tok, _, _) -> tok)
-  in
-  match (token_before, token_after) with
-  | Some R_lexer.LEFT_BRACE, Some R_lexer.RIGHT_BRACE -> true
-  | _ -> false
+  match Syntax.Cache.get_line_tokens model.lex_cache ~line:model.cursor_line with
+  | None -> false
+  | Some tokens ->
+      let line = current_line model in
+      let cursor_byte =
+        Language_syntax.cursor_byte_offset ~line ~cursor_pos:model.cursor_pos
+      in
+      Syntax.Continuation.inside_empty_brackets ~tokens ~cursor_byte_offset:cursor_byte
 
 let leading_spaces s =
   let rec loop i =
@@ -672,48 +505,47 @@ let expand_empty_brackets model =
 let at_empty_line model =
   "" = (model |> current_line |> Unicode_string.to_string |> String.trim)
 
-let continuation_signal model =
-  if at_empty_line model then Submit
-  else
-    let tokens = tokens_before_cursor model in
-    let state = fold_continuation_state tokens in
-    let unclosed = state.parens > 0 || state.brackets > 0 || state.braces > 0 in
-    let trailing =
-      match state.last_significant with
-      | Some tok -> is_trailing_token tok
-      | None -> false
-    in
-    let incomplete = Option.is_some state.pending in
-    if unclosed || trailing || incomplete then
-      let operator_cont =
-        match state.last_significant with
-        | Some (R_lexer.OPERATOR _) -> true
-        | _ -> false
-      in
-      let indent_levels =
-        state.braces + state.parens + state.brackets
-        + if operator_cont then 1 else 0
-      in
-      Continue_with_indent indent_levels
-    else Submit
-
 let submit model =
   if inside_empty_brackets model then Continue (expand_empty_brackets model)
+  else if at_empty_line model then
+    (* Empty line always submits *)
+    let text =
+      String.concat "\n" (List.map Unicode_string.to_string model.lines)
+    in
+    let width = effective_width model in
+    let wrapped = wrap_lines width model.lines in
+    let total_rows = List.length wrapped in
+    let output_row = model.prompt_top_row + total_rows in
+    let new_prompt_top = output_row + 1 in
+    let scroll_amount =
+      if new_prompt_top > model.term_height then
+        model.term_height - new_prompt_top
+      else 0
+    in
+    History.add_to_history model.history model.lines;
+    let new_model =
+      {
+        model with
+        awaiting_response = true;
+        repl_cursor = (output_row + scroll_amount, 1);
+        prompt_top_row = new_prompt_top + scroll_amount;
+        previous_prompt_top_row = new_prompt_top + scroll_amount;
+        lines = [ Unicode_string.empty ];
+        lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
+        cursor_row = 0;
+        cursor_col = 0;
+        cursor_line = 0;
+        cursor_pos = 0;
+        prompt_box_height = min_prompt_height;
+        scroll_amount;
+      }
+    in
+    Submit (text, new_model)
   else
-    match continuation_signal model with
-    | Continue_with_indent indent_levels ->
-        let line = current_line model in
-        let base_indent = leading_spaces (Unicode_string.to_string line) in
-        let indent_spaces =
-          max base_indent (indent_levels * continuation_indent_size)
-        in
-        let rec repeat_n_times n f m =
-          if n <= 0 then m else repeat_n_times (n - 1) f (f m)
-        in
-        Continue
-          (model |> insert_newline
-          |> repeat_n_times indent_spaces (fun m -> insert_char m ' '))
-    | Submit ->
+    (* Check if continuation is needed *)
+    let tokens = tokens_before_cursor model in
+    match Syntax.Continuation.analyze tokens with
+    | Syntax.Continuation.Submit ->
         let text =
           String.concat "\n" (List.map Unicode_string.to_string model.lines)
         in
@@ -736,7 +568,7 @@ let submit model =
             prompt_top_row = new_prompt_top + scroll_amount;
             previous_prompt_top_row = new_prompt_top + scroll_amount;
             lines = [ Unicode_string.empty ];
-            lex_cache = lex_cache_for_lines [ Unicode_string.empty ];
+            lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
             cursor_row = 0;
             cursor_col = 0;
             cursor_line = 0;
@@ -746,6 +578,18 @@ let submit model =
           }
         in
         Submit (text, new_model)
+    | Syntax.Continuation.Continue { indent_levels; in_empty_brackets = _ } ->
+        let line = current_line model in
+        let base_indent = leading_spaces (Unicode_string.to_string line) in
+        let indent_spaces =
+          max base_indent (indent_levels * continuation_indent_size)
+        in
+        let rec repeat_n_times n f m =
+          if n <= 0 then m else repeat_n_times (n - 1) f (f m)
+        in
+        Continue
+          (model |> insert_newline
+          |> repeat_n_times indent_spaces (fun m -> insert_char m ' '))
 
 let handle_vertical_cursor_movement model =
   let width = effective_width model in

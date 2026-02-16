@@ -20,7 +20,7 @@ let make_model () =
   {
     Frontend_types.
     lines;
-    lex_cache = Update.lex_cache_for_lines lines;
+    lex_cache = Syntax.Cache.create lines;
     cursor_row = cursor_line;  (* simplified: assume no wrapping *)
     cursor_col = cursor_col;
     cursor_line;
@@ -66,14 +66,14 @@ let () =
         Tty_listener.Backspace );
       ( { base with cursor_col = Unicode_string.length line;
                  lines = [ line ];
-                 lex_cache = Update.lex_cache_for_lines [ line ];
+                 lex_cache = Syntax.Cache.create [ line ];
                  cursor_row = 0 },
         Tty_listener.Ctrl '\r' );
       ( { base with cursor_col = 0; cursor_row = 0; lines = [ us "abc" ];
-                 lex_cache = Update.lex_cache_for_lines [ us "abc" ] },
+                 lex_cache = Syntax.Cache.create [ us "abc" ] },
         Tty_listener.Right );
       ( { base with lines = [ us "hello world" ]; cursor_col = 5; cursor_row = 0;
-                 lex_cache = Update.lex_cache_for_lines [ us "hello world" ] },
+                 lex_cache = Syntax.Cache.create [ us "hello world" ] },
         Tty_listener.Paste "X\nY\nZ" );
     ]
   in
