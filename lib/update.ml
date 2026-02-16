@@ -1,5 +1,10 @@
 open Frontend_types
 
+type msg =
+  | Key of Tty_listener.key
+  | Response of Ffi_backend.response_chunk
+  | TermResize of int * int
+
 let lexer_update start_line end_line model =
   {
     model with
@@ -780,7 +785,7 @@ let sync_internal_coords model =
   in
   { model with cursor_line; cursor_pos }
 
-let update key model =
+let handle_key_input key model =
   { model with scroll_amount = 0 }
   |> handle_resize model.term_width model.term_height
   |> sync_internal_coords |> apply_key key
@@ -822,3 +827,22 @@ let process_response model =
         awaiting_response;
         scroll_amount = 0;
       }
+
+let update msg model =
+  match msg with
+  | Key key ->
+      (match handle_key_input key model with
+       | Continue m -> Continue { m with completion_dirty = true }
+       | other -> other)
+  | Response response ->
+      (match response with
+       | Ffi_backend.Shutdown -> Exit
+       | _ ->
+           { model with backend_response = Some response }
+           |> process_response
+           |> handle_vertical_cursor_movement
+           |> fun m -> Continue m)
+  | TermResize (width, height) ->
+      handle_resize width height model
+      |> handle_vertical_cursor_movement
+      |> fun m -> Continue m

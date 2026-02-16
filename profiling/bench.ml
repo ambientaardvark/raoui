@@ -77,4 +77,4 @@ let () =
         Tty_listener.Paste "X\nY\nZ" );
     ]
   in
-  List.iter (fun (model, key) -> run_case model key) cases
+  List.iter (fun (model, key) -> run_case model (Update.Key key)) cases

@@ -161,13 +161,7 @@ let print_repl_output model =
         prompt_top_row = max model.prompt_top_row next_prompt_row;
       }
 
-type msg =
-  | Key of Tty_listener.key
-  | Response of Ffi_backend.response_chunk
-  | Term_size of (int * int)
-
-let handle_key backend model key =
-  match Update.update key model with
+let handle_update_result backend _model = function
   | Frontend_types.Exit -> `Exit
   | Frontend_types.Cancel ->
       Ffi_backend.cancel backend;
@@ -180,12 +174,7 @@ let handle_key backend model key =
       Ffi_backend.submit backend text;
       `Continue { new_model with completion = None; completion_dirty = false }
   | Frontend_types.Continue new_model ->
-      `Continue { new_model with completion_dirty = true }
-
-let handle_response model response =
-  { model with backend_response = Some response }
-  |> Update.process_response |> print_repl_output
-  |> Update.handle_vertical_cursor_movement
+      `Continue new_model
 
 let run env backend ~orig_termios =
   let clock = Eio.Stdenv.clock env in
@@ -203,7 +192,7 @@ let run env backend ~orig_termios =
   let model_after_cached =
     Stdlib.List.fold_left
       (fun m key ->
-        match handle_key backend m key with
+        match handle_update_result backend m (Update.update (Update.Key key) m) with
         | `Exit -> m
         | `Continue m' -> m')
       init_model
@@ -216,15 +205,16 @@ let run env backend ~orig_termios =
     let msg =
         Eio.Fiber.any
           [
-            (fun () -> Key (Tty_listener.await_input ~clock ~stdin));
-            (fun () -> Response (Ffi_backend.await_response backend));
+            (fun () -> Update.Key (Tty_listener.await_input ~clock ~stdin));
+            (fun () -> Update.Response (Ffi_backend.await_response backend));
             (fun () ->
-              Term_size (await_dim_change model.term_width model.term_height));
+              let w, h = await_dim_change model.term_width model.term_height in
+              Update.TermResize (w, h));
           ]
     in
     match msg with
-    | Key key -> (
-        match handle_key backend model key with
+    | Update.Key _key -> (
+        match handle_update_result backend model (Update.update msg model) with
         | `Exit -> ()
         | `Continue new_model ->
         let in_completion_mode = match new_model.completion with
@@ -243,8 +233,8 @@ let run env backend ~orig_termios =
           loop { new_model with completion_dirty = false }
         end else
           loop new_model)
-    | Response Ffi_backend.Shutdown -> ()
-    | Response Ffi_backend.Passthrough ->
+    | Update.Response Ffi_backend.Shutdown -> ()
+    | Update.Response Ffi_backend.Passthrough ->
         restore_mode orig_termios;
         disable_bracketed_paste ();
         Ffi_backend.signal_passthrough ();
@@ -265,11 +255,16 @@ let run env backend ~orig_termios =
           | _ -> passthrough_loop ()
         in
         passthrough_loop ()
-    | Response (Ffi_backend.Restarted _ as r) ->
+    | Update.Response (Ffi_backend.Restarted _) ->
         Ffi_backend.background_submit backend
           (Printf.sprintf "options(width=%d)" model.term_width);
-        loop (handle_response model r)
-    | Response (Ffi_backend.Completions (token, items)) ->
+        let new_model =
+          match Update.update msg model with
+          | Frontend_types.Continue m -> m
+          | _ -> model
+        in
+        loop (print_repl_output new_model)
+    | Update.Response (Ffi_backend.Completions (token, items)) ->
         let in_completion_mode = match model.completion with
           | Some cs when Completion.is_in_completion_mode cs -> true
           | _ -> false
@@ -280,15 +275,19 @@ let run env backend ~orig_termios =
           let completion = Completion.create ~token_start items in
           let model = { model with completion = Some completion } in
           loop (Update.filter_completions model)
-    | Response r -> loop (handle_response model r)
-    | Term_size (term_width, term_height) ->
+    | Update.Response _r ->
+        let new_model =
+          match Update.update msg model with
+          | Frontend_types.Continue m -> m
+          | _ -> model
+        in
+        loop (print_repl_output new_model)
+    | Update.TermResize (term_width, _term_height) ->
         Ffi_backend.background_submit backend
           (Printf.sprintf "options(width=%d)" term_width);
-        let new_model =
-          Update.handle_resize term_width term_height model
-          |> Update.handle_vertical_cursor_movement
-        in
-        loop new_model
+        match Update.update msg model with
+        | Frontend_types.Continue new_model -> loop new_model
+        | _ -> loop model
   in
   loop model_after_cached
 
