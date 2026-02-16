@@ -1,5 +1,3 @@
-open Base
-open Stdio
 open Raoui
 open Frontend_types
 
@@ -22,25 +20,27 @@ let restore_mode termio = Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH termio
 
 let set_solid_cursor () =
   print_string "\x1b[2 q";
-  Out_channel.flush stdout
+  Stdlib.flush Stdlib.stdout
 
 let enable_bracketed_paste () =
   print_string "\x1b[?2004h";
-  Out_channel.flush stdout
+  Stdlib.flush Stdlib.stdout
 
 let disable_bracketed_paste () =
   print_string "\x1b[?2004l";
-  Out_channel.flush stdout
+  Stdlib.flush Stdlib.stdout
 
-let clear_log () = Out_channel.write_all "/Users/alanlee/Documents/Programs/raoui/debug_log.txt" ~data:""
+let clear_log () =
+  let oc = Stdlib.open_out "/Users/alanlee/Documents/Programs/raoui/debug_log.txt" in
+  Stdlib.close_out oc
 
 let get_cursor_position () =
   print_string "\x1b[6n";
-  Out_channel.flush stdout;
+  Stdlib.flush Stdlib.stdout;
   let buf = Buffer.create 16 in
   let rec read_until_r () =
-    let c = In_channel.(input_char stdin) |> Option.value_exn in
-    if Char.(c = 'R') then ()
+    let c = input_char stdin in
+    if c = 'R' then ()
     else (
       Buffer.add_char buf c;
       read_until_r ())
@@ -52,11 +52,15 @@ let get_cursor_position () =
 let get_term_dimensions () =
   let height =
     Terminal_size.get_rows ()
-    |> Option.value_exn ~message:"can't get terminal height"
+    |> function
+    | Some h -> h
+    | None -> failwith "can't get terminal height"
   in
   let width =
     Terminal_size.get_columns ()
-    |> Option.value_exn ~message:"can't get terminal width"
+    |> function
+    | Some w -> w
+    | None -> failwith "can't get terminal width"
   in
   (width, height)
 
@@ -83,6 +87,12 @@ let make_init () : Frontend_types.model =
     | Some "vscode" -> true
     | _ -> false
   in
+  let clamped = Frontend_types.clamp_prompt_top term_height row in
+  let scroll_needed = row - clamped in
+  if scroll_needed > 0 then begin
+    Stdlib.Printf.printf "\x1b[%dS" scroll_needed;
+    Stdlib.flush Stdlib.stdout
+  end;
   {
     lines;
     lex_cache = Update.lex_cache_for_lines lines;
@@ -90,10 +100,10 @@ let make_init () : Frontend_types.model =
     cursor_col = 0;
     cursor_line = 0;
     cursor_pos = 0;
-    prompt_top_row = row;
+    prompt_top_row = clamped;
     term_width;
     term_height;
-    prompt_box_height = 1;
+    prompt_box_height = Frontend_types.min_prompt_height;
     previous_prompt_top_row = row;
     previous_key = None;
     persistent_col = 0;
@@ -105,6 +115,8 @@ let make_init () : Frontend_types.model =
     history = Lazy.force history;
     flipping_through_history = None;
     running_in_ide;
+    completion = None;
+    completion_dirty = false;
   }
 
 let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
@@ -117,23 +129,31 @@ let print_repl_output model =
   match model.repl_output with
   | None -> model
   | Some [] ->
-      (* Done — check if subprocess output moved the cursor *)
+      (* Done — clamp prompt to bottom zone, scroll if needed *)
       let new_row, new_col = get_cursor_position () in
-      let next_prompt_row = if Int.equal new_col 1 then new_row else new_row + 1 in
+      let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
+      let natural = max model.prompt_top_row next_prompt_row in
+      let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
+      let scroll_needed = natural - clamped in
+      if scroll_needed > 0 then begin
+        Stdlib.Printf.printf "\x1b[%dS" scroll_needed;
+        Stdlib.flush Stdlib.stdout
+      end;
       {
         model with
         repl_output = None;
-        repl_cursor = (new_row, new_col);
-        prompt_top_row = max model.prompt_top_row next_prompt_row;
+        repl_cursor = (new_row - scroll_needed, new_col);
+        prompt_top_row = clamped;
+        prompt_box_height = Frontend_types.min_prompt_height;
       }
   | Some spans ->
       let row, col = model.repl_cursor in
       print_string (cursor_to row col);
       print_string "\x1b[J";
       print_string (Terminal_ops.render_spans spans);
-      Out_channel.flush stdout;
+      Stdlib.flush Stdlib.stdout;
       let new_row, new_col = get_cursor_position () in
-      let next_prompt_row = if Int.equal new_col 1 then new_row else new_row + 1 in
+      let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
       {
         model with
         repl_output = None;
@@ -151,15 +171,16 @@ let handle_key backend model key =
   | Frontend_types.Exit -> `Exit
   | Frontend_types.Cancel ->
       Ffi_backend.cancel backend;
-      Out_channel.flush stdout;
+      Stdlib.flush Stdlib.stdout;
       `Continue (make_init ())
-  | Frontend_types.Submit (text, _) when String.equal (String.strip text) "q()"
+  | Frontend_types.Submit (text, _) when Stdlib.String.equal (String.trim text) "q()"
     ->
       `Exit
   | Frontend_types.Submit (text, new_model) ->
       Ffi_backend.submit backend text;
-      `Continue new_model
-  | Frontend_types.Continue new_model -> `Continue new_model
+      `Continue { new_model with completion = None; completion_dirty = false }
+  | Frontend_types.Continue new_model ->
+      `Continue { new_model with completion_dirty = true }
 
 let handle_response model response =
   { model with backend_response = Some response }
@@ -191,7 +212,7 @@ let run env backend ~orig_termios =
   let rec loop model =
     let _ = Ffi_backend.poll_ready backend in
     print_string (View.view model);
-    Out_channel.flush stdout;
+    Stdlib.flush Stdlib.stdout;
     let msg =
         Eio.Fiber.any
           [
@@ -205,7 +226,23 @@ let run env backend ~orig_termios =
     | Key key -> (
         match handle_key backend model key with
         | `Exit -> ()
-        | `Continue new_model -> loop new_model)
+        | `Continue new_model ->
+        let in_completion_mode = match new_model.completion with
+          | Some cs when cs.selected >= 0 -> true
+          | _ -> false
+        in
+        if new_model.completion_dirty && not new_model.awaiting_response
+           && not in_completion_mode then begin
+          let line =
+            match List.nth_opt new_model.lines new_model.cursor_line with
+            | Some line -> line
+            | None -> Unicode_string.empty
+          in
+          let text = Unicode_string.to_string line in
+          Ffi_backend.request_completions backend text ~cursor_pos:new_model.cursor_pos;
+          loop { new_model with completion_dirty = false }
+        end else
+          loop new_model)
     | Response Ffi_backend.Shutdown -> ()
     | Response Ffi_backend.Passthrough ->
         restore_mode orig_termios;
@@ -219,9 +256,11 @@ let run env backend ~orig_termios =
               enable_bracketed_paste ();
               let new_row, _new_col = get_cursor_position () in
               let next_prompt_row = new_row + 1 in
+              let clamped = Frontend_types.clamp_prompt_top model.term_height next_prompt_row in
               loop { model with
-                prompt_top_row = next_prompt_row;
+                prompt_top_row = clamped;
                 repl_cursor = (next_prompt_row, 1);
+                prompt_box_height = Frontend_types.min_prompt_height;
               }
           | _ -> passthrough_loop ()
         in
@@ -230,11 +269,33 @@ let run env backend ~orig_termios =
         Ffi_backend.background_submit backend
           (Printf.sprintf "options(width=%d)" model.term_width);
         loop (handle_response model r)
+    | Response (Ffi_backend.Completions (token, items)) ->
+        let in_completion_mode = match model.completion with
+          | Some cs when cs.selected >= 0 -> true
+          | _ -> false
+        in
+        if in_completion_mode then loop model
+        else
+          let token_start = model.cursor_pos - String.length token in
+          let model = { model with
+            completion = Some { Frontend_types.
+              items;
+              filtered = items;
+              selected = -1;
+              token_start;
+              original_token = "";
+            }
+          } in
+          loop (Update.filter_completions model)
     | Response r -> loop (handle_response model r)
     | Term_size (term_width, term_height) ->
         Ffi_backend.background_submit backend
           (Printf.sprintf "options(width=%d)" term_width);
-        loop { model with term_width; term_height }
+        let new_model =
+          Update.handle_resize term_width term_height model
+          |> Update.handle_vertical_cursor_movement
+        in
+        loop new_model
   in
   loop model_after_cached
 

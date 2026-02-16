@@ -10,6 +10,7 @@ type response_chunk =
   | Restarted of string
   | Passthrough
   | Passthrough_end
+  | Completions of string * string list  (* token * items *)
 
 type completion = string
 
@@ -20,6 +21,6 @@ val background_submit : t -> string -> unit
 val await_response : t -> response_chunk
 val signal_passthrough : unit -> unit
 val cancel : t -> unit
-val get_completions : t -> string -> cursor_pos:int -> completion list
+val request_completions : t -> string -> cursor_pos:int -> unit
 val restart : t -> unit
 val deinit : t -> unit

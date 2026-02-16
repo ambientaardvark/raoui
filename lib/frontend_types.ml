@@ -2,11 +2,23 @@ let prompt = "> "
 let continued_prompt = ". "
 let pending_prompt = "  "
 
+let min_prompt_height = 5
+let default_prompt_top term_height = max 2 (term_height - min_prompt_height + 1)
+let clamp_prompt_top term_height row = max 2 (min row (default_prompt_top term_height))
+
 type lex_line = {
   text : string;
   tokens : R_lexer.token list;
   start_mode : R_lexer.mode;
   end_mode : R_lexer.mode;
+}
+
+type completion_state = {
+  items : string list;      (* raw from R, unfiltered *)
+  filtered : string list;   (* items filtered to current prefix *)
+  selected : int;           (* -1 = dropdown only, 0+ = completion mode *)
+  token_start : int;        (* grapheme position where the token starts *)
+  original_token : string;  (* saved token text for Escape revert *)
 }
 
 type model = {
@@ -33,6 +45,8 @@ type model = {
   history : History.t;
   flipping_through_history : int option;
   running_in_ide : bool;
+  completion : completion_state option;
+  completion_dirty : bool;
 }
 
 type update_result =

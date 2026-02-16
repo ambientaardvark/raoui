@@ -1,5 +1,3 @@
-open Base
-
 let log message =
   let oc =
     Stdlib.open_out_gen [ Open_append; Open_creat ] 0o666 "/Users/alanlee/Documents/Programs/raoui/debug_log.txt"
@@ -27,7 +25,7 @@ type t = {
   mutable iopub : [ `Sub ] Zmq.Socket.t;
   mutable hb : [ `Req ] Zmq.Socket.t;
   mutable key : string;
-  mutable ark_pid : Core.Pid.t;
+  mutable ark_pid : int;
   mutable session_id : string;
   mutable saw_busy : bool;
   mutable surpressing_responses : bool;
@@ -48,7 +46,7 @@ let restart_backoff_s = 1.0
 exception Disconnected of string
 
 let exe_dir () =
-  Stdlib.Filename.dirname (Caml_unix.realpath Stdlib.Sys.executable_name)
+  Stdlib.Filename.dirname (Unix.realpath Stdlib.Sys.executable_name)
 
 let kernel_path () =
   (* Check for ark next to executable first (bundle case) *)
@@ -62,7 +60,7 @@ let kernel_path () =
         "vendor/ark-0.1.223-darwin-universal/ark";
       ]
     in
-    match List.find candidates ~f:Stdlib.Sys.file_exists with
+    match List.find_opt Stdlib.Sys.file_exists candidates with
     | Some path -> path
     | None ->
         failwith
@@ -77,7 +75,7 @@ let startup_file () =
 
 let random_hex_token len =
   let hex_chars = "0123456789abcdef" in
-  String.init (len * 2) ~f:(fun _ -> hex_chars.[Random.int 16])
+  String.init (len * 2) (fun _ -> hex_chars.[Random.int 16])
 
 let get_available_port () =
   let sock = Unix.socket PF_INET SOCK_STREAM 0 in
@@ -107,37 +105,35 @@ let conn_info () =
     ]
 
 let start_kernel connection_file =
-  let preexec_fn () =
-    let dev_null = Caml_unix.openfile "/dev/null" [ O_WRONLY ] 0 in
-    Caml_unix.dup2 dev_null Caml_unix.stdout;
-    Caml_unix.dup2 dev_null Caml_unix.stderr;
-    Caml_unix.close dev_null
-  in
   let kernel_path = kernel_path () in
-  Core_unix.fork_exec ~prog:kernel_path ~preexec_fn
-    ~argv:
-      [
-        kernel_path;
-        "--connection_file";
-        connection_file;
-        "--session-mode";
-        "console";
-        "--startup-file";
-        startup_file ();
-      ]
-    ()
+  let argv =
+    [|
+      kernel_path;
+      "--connection_file";
+      connection_file;
+      "--session-mode";
+      "console";
+      "--startup-file";
+      startup_file ();
+    |]
+  in
+  let dev_null = Unix.openfile "/dev/null" [ O_WRONLY ] 0 in
+  Stdlib.Fun.protect
+    ~finally:(fun () -> Unix.close dev_null)
+    (fun () ->
+      Unix.create_process kernel_path argv Unix.stdin dev_null dev_null)
 
 let sign parts key =
   let h = Cryptokit.MAC.hmac_sha256 key in
-  List.iter parts ~f:(fun x -> h#add_string x);
+  List.iter (fun x -> h#add_string x) parts;
   Cryptokit.transform_string (Cryptokit.Hexa.encode ()) h#result
 
 let make_header msg_type t =
   let uuid = random_hex_token 16 in
   let date =
-    Core_unix.time () |> Ptime.of_float_s
-    |> Option.value_exn ~message:"invalid date"
-    |> Ptime.to_rfc3339
+    match Ptime.of_float_s (Unix.gettimeofday ()) with
+    | Some t -> Ptime.to_rfc3339 t
+    | None -> failwith "invalid date"
   in
   `Assoc
     [
@@ -166,14 +162,16 @@ let is_disconnect_exn = function
   | Zmq.ZMQ_exception _ -> true
   | _ -> false
 
-let now_s () = Core_unix.time ()
+let now_s () = Unix.gettimeofday ()
 
 let create_state () =
   let conn_info = conn_info () in
   let key = Yojson.Basic.Util.(conn_info |> member "key" |> to_string) in
   let connection_file = make_connection_file key in
-  Stdio.Out_channel.write_all connection_file
-    ~data:(Yojson.Safe.to_string conn_info);
+  let oc = Stdlib.open_out connection_file in
+  Stdlib.Fun.protect
+    ~finally:(fun () -> Stdlib.close_out oc)
+    (fun () -> output_string oc (Yojson.Safe.to_string conn_info));
 
   let ark_pid =
     Eio_unix.run_in_systhread (fun () -> start_kernel connection_file)
@@ -229,7 +227,7 @@ let recv_message t socket =
     match parts with
     | delim :: _signature :: header :: _parent_h :: _metadata :: content
       :: _buffers
-      when String.equal delim "<IDS|MSG>" ->
+      when Stdlib.String.equal delim "<IDS|MSG>" ->
         (header, content)
     | _hd :: tl -> read_message tl
     | [] -> failwith "malformed response"
@@ -275,7 +273,9 @@ let try_recv_hb t =
     | exception e when is_disconnect_exn e ->
         raise (Disconnected "heartbeat recv failed")
     | exception e ->
-        raise (Disconnected (Printf.sprintf "heartbeat recv error: %s" (Exn.to_string e)))
+        raise
+          (Disconnected
+             (Printf.sprintf "heartbeat recv error: %s" (Printexc.to_string e)))
 
 let send_hb t =
   try
@@ -286,15 +286,17 @@ let send_hb t =
   | e when is_disconnect_exn e ->
       raise (Disconnected "heartbeat send failed")
   | e ->
-      raise (Disconnected (Printf.sprintf "heartbeat send error: %s" (Exn.to_string e)))
+      raise
+        (Disconnected
+           (Printf.sprintf "heartbeat send error: %s" (Printexc.to_string e)))
 
 let check_heartbeat t =
   try_recv_hb t;
   let now = now_s () in
   match t.hb_inflight, t.last_hb_sent_at with
-  | true, Some sent when Float.(now -. sent > hb_timeout_s) ->
+  | true, Some sent when now -. sent > hb_timeout_s ->
       raise (Disconnected "heartbeat timeout")
-  | false, _ when Float.(now -. t.last_iopub_at > idle_ping_after_s) -> send_hb t
+  | false, _ when now -. t.last_iopub_at > idle_ping_after_s -> send_hb t
   | _ -> ()
 
 let submit t input =
@@ -319,18 +321,17 @@ let pretty_print_error error_data =
   Yojson.Basic.Util.(error_data |> member "evalue" |> to_string)
 
 let kill_kernel pid =
-  let pid_int = Core.Pid.to_int pid in
-  (try Caml_unix.kill pid_int Stdlib.Sys.sigterm with
+  (try Unix.kill pid Stdlib.Sys.sigterm with
   | Unix.Unix_error (Unix.ESRCH, _, _) -> ()
   | _ -> ());
   let deadline = now_s () +. 1.0 in
   let rec wait_for_exit () =
-    match Caml_unix.waitpid [ Unix.WNOHANG ] pid_int with
-    | 0, _ when Float.(now_s () < deadline) ->
+    match Unix.waitpid [ Unix.WNOHANG ] pid with
+    | 0, _ when now_s () < deadline ->
         Unix.sleepf 0.05;
         wait_for_exit ()
     | 0, _ ->
-        (try Caml_unix.kill pid_int Stdlib.Sys.sigkill with
+        (try Unix.kill pid Stdlib.Sys.sigkill with
         | Unix.Unix_error (Unix.ESRCH, _, _) -> ()
         | _ -> ());
         ()
@@ -359,7 +360,7 @@ let restart t =
   safe_close_socket t.hb;
   safe_terminate t.ctx;
   safe_unlink t.connection_file;
-  if Float.(restart_backoff_s > 0.0) then Unix.sleepf restart_backoff_s;
+  if restart_backoff_s > 0.0 then Unix.sleepf restart_backoff_s;
   let new_t = create_state () in
   t.ctx <- new_t.ctx;
   t.shell <- new_t.shell;
@@ -441,10 +442,10 @@ let await_response t =
   try loop () with
   | Stdlib.Exit -> Shutdown
   | e ->
-      Internal_error (Printf.sprintf "Backend exception: %s" (Exn.to_string e))
+      Internal_error (Printf.sprintf "Backend exception: %s" (Printexc.to_string e))
 
 let cancel t =
-  try Caml_unix.kill (Core.Pid.to_int t.ark_pid) Stdlib.Sys.sigint with
+  try Unix.kill t.ark_pid Stdlib.Sys.sigint with
   | Unix.Unix_error (Unix.ESRCH, _, _) -> ()
 let get_completions _t _input ~cursor_pos:_ = []
 
@@ -459,7 +460,7 @@ let poll_ready t =
             match parts with
             | delim :: _signature :: header :: _parent_h :: _metadata :: _content
               :: _buffers
-              when String.equal delim "<IDS|MSG>" ->
+              when Stdlib.String.equal delim "<IDS|MSG>" ->
                 header
             | _ :: tl -> read_message tl
             | [] -> failwith "malformed response"

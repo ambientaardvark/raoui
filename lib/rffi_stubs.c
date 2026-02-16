@@ -87,3 +87,8 @@ CAMLprim value caml_rffi_signal_passthrough(value v_unit) {
     rffi_signal_passthrough();
     return Val_unit;
 }
+
+CAMLprim value caml_rffi_request_completions(value v_line, value v_cursor_pos) {
+    rffi_request_completions(String_val(v_line), Int_val(v_cursor_pos));
+    return Val_unit;
+}

@@ -40,6 +40,8 @@ let make_model () =
     history = History.init ":memory:";
     flipping_through_history = None;
     running_in_ide = false;
+    completion = None;
+    completion_dirty = false;
   }
 
 let iterations = 10_000

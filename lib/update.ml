@@ -453,8 +453,7 @@ let shift_history model ~amount =
   let result =
     if amount > 0 then
       History.go_back model.history ~current_prompt:model.lines ()
-    else
-      History.go_forwards model.history ~current_prompt:model.lines ()
+    else History.go_forwards model.history ~current_prompt:model.lines ()
   in
   match result with
   | Some lines ->
@@ -742,7 +741,7 @@ let submit model =
             cursor_col = 0;
             cursor_line = 0;
             cursor_pos = 0;
-            prompt_box_height = 1;
+            prompt_box_height = min_prompt_height;
             scroll_amount;
           }
         in
@@ -750,9 +749,15 @@ let submit model =
 
 let handle_vertical_cursor_movement model =
   let width = effective_width model in
+  let dropdown_rows = match model.completion with
+    | Some cs -> min 5 (List.length cs.filtered)
+    | None -> 0
+  in
   let new_height =
     model.lines |> wrap_lines width |> List.length
+    |> ( + ) dropdown_rows
     |> max model.prompt_box_height
+    |> max min_prompt_height
   in
   let scrolls_from_expansion =
     if new_height > model.prompt_box_height then
@@ -778,34 +783,79 @@ let handle_vertical_cursor_movement model =
     scroll_amount = scrolls;
   }
 
-let handle_width_change new_width model =
-  if model.term_width = new_width then model
+let handle_resize new_width new_height model =
+  if model.term_width = new_width && model.term_height = new_height then model
   else
-    let model = { model with term_width = new_width } in
+    let model =
+      { model with term_width = new_width; term_height = new_height }
+    in
     let new_eff_width = effective_width model in
     let new_row, new_col =
       internal_to_terminal new_eff_width model.lines
         (model.cursor_line, model.cursor_pos)
     in
-    { model with cursor_row = new_row; cursor_col = new_col }
-
-let handle_height_change new_height model =
-  let height_diff = new_height - model.term_height in
-  if height_diff = 0 then model
-  else
-    { model with term_height = new_height; prompt_top_row = model.prompt_top_row - 10 }
-
-let handle_resize new_width new_height model =
-  model
-  |> handle_height_change new_height
-  |> handle_width_change new_width
-
+    let prompt_top = clamp_prompt_top new_height model.prompt_top_row in
+    {
+      model with
+      cursor_row = new_row;
+      cursor_col = new_col;
+      prompt_top_row = prompt_top;
+      prompt_box_height = min_prompt_height;
+    }
 
 let is_empty_input model =
   match model.lines with [ line ] -> Unicode_string.is_empty line | _ -> false
 
+let replace_token model token_start text =
+  let line = current_line model in
+  let before = Unicode_string.sub line ~start:0 ~len:token_start in
+  let after_start = model.cursor_pos in
+  let after_len = Unicode_string.length line - after_start in
+  let after = Unicode_string.sub line ~start:after_start ~len:after_len in
+  let text_us = match Unicode_string.of_string text with
+    | Ok u -> u | Error _ -> Unicode_string.empty
+  in
+  let new_line = Unicode_string.concat [before; text_us; after] in
+  let new_lines = update_line model.lines model.cursor_line new_line in
+  let new_cursor_pos = token_start + Unicode_string.length text_us in
+  let model = { model with lines = new_lines; cursor_pos = new_cursor_pos } in
+  let model = lexer_update model.cursor_line model.cursor_line model in
+  let width = effective_width model in
+  let new_row, new_col =
+    internal_to_terminal width model.lines (model.cursor_line, new_cursor_pos)
+  in
+  { model with cursor_row = new_row; cursor_col = new_col }
+
+let filter_completions model =
+  match model.completion with
+  | None -> model
+  | Some cs when cs.selected >= 0 -> model  (* completion mode: set is fixed *)
+  | Some cs ->
+      let line = current_line model in
+      let line_len = Unicode_string.length line in
+      if cs.token_start > line_len || cs.token_start > model.cursor_pos then
+        { model with completion = None }
+      else
+        let prefix_len = model.cursor_pos - cs.token_start in
+        let prefix = Unicode_string.to_string
+          (Unicode_string.sub line ~start:cs.token_start ~len:prefix_len) in
+        let filtered = List.filter (fun item ->
+          String.length item >= String.length prefix &&
+          String.sub item 0 (String.length prefix) = prefix
+        ) cs.items in
+        if filtered = [] then { model with completion = None }
+        else { model with completion = Some { cs with filtered } }
+
 let apply_key key model =
   let open Tty_listener in
+  (* Lock in completion on any key except Tab/Escape *)
+  let model = match key with
+    | Tab | Escape -> model
+    | _ -> (match model.completion with
+        | Some cs when cs.selected >= 0 ->
+            { model with completion = None }
+        | _ -> model)
+  in
   match key with
   | Ctrl 'c' when model.awaiting_response -> Cancel
   | Ctrl 'p' when model.awaiting_response -> Continue model
@@ -833,10 +883,37 @@ let apply_key key model =
       then Continue (shift_history model ~amount:(-1))
       else Continue (move_down model)
   | Paste text -> Continue (insert_paste model text)
+  | Tab -> (
+      match model.completion with
+      | Some cs when List.length cs.filtered > 0 ->
+          let new_selected =
+            if cs.selected < 0 then 0
+            else (cs.selected + 1) mod List.length cs.filtered
+          in
+          let original_token =
+            if cs.selected < 0 then
+              let line = current_line model in
+              let prefix_len = model.cursor_pos - cs.token_start in
+              Unicode_string.to_string
+                (Unicode_string.sub line ~start:cs.token_start ~len:prefix_len)
+            else cs.original_token
+          in
+          let completion_text = List.nth cs.filtered new_selected in
+          let inserted = replace_token model cs.token_start completion_text in
+          Continue { inserted with
+            completion = Some { cs with selected = new_selected; original_token } }
+      | _ -> Continue model)
+  | Escape -> (
+      match model.completion with
+      | Some cs when cs.selected >= 0 ->
+          let reverted = replace_token model cs.token_start cs.original_token in
+          Continue { reverted with completion = None }
+      | Some _ -> Continue { model with completion = None }
+      | None -> Continue model)
   | _ -> Continue model
 
 let universal_corrections key model =
-  model |> handle_vertical_cursor_movement |> fun s ->
+  model |> filter_completions |> handle_vertical_cursor_movement |> fun s ->
   let flipping_through_history =
     match model.flipping_through_history with
     | Some 1 | None -> None
@@ -872,15 +949,19 @@ let process_response model =
         | Ffi_backend.Restarted s -> [ (`Error, s) ]
         | Ffi_backend.Done -> []
         | Ffi_backend.Shutdown -> []
-        | Ffi_backend.Passthrough | Ffi_backend.Passthrough_end -> []
+        | Ffi_backend.Passthrough | Ffi_backend.Passthrough_end
+        | Ffi_backend.Completions _ -> []
       in
       let awaiting_response =
         match response with
         (* Keep waiting for more output until we get a terminal response *)
-        | Ffi_backend.Stdout _ | Ffi_backend.Result _ | Ffi_backend.R_error _ -> model.awaiting_response
+        | Ffi_backend.Stdout _ | Ffi_backend.Result _ | Ffi_backend.R_error _ ->
+            model.awaiting_response
         (* Terminal responses *)
-        | Ffi_backend.Done | Ffi_backend.Shutdown | Ffi_backend.Internal_error _ | Ffi_backend.Restarted _
-        | Ffi_backend.Passthrough | Ffi_backend.Passthrough_end -> false
+        | Ffi_backend.Done | Ffi_backend.Shutdown | Ffi_backend.Internal_error _
+        | Ffi_backend.Restarted _ | Ffi_backend.Passthrough
+        | Ffi_backend.Passthrough_end | Ffi_backend.Completions _ ->
+            false
       in
       {
         model with

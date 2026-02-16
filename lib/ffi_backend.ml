@@ -8,6 +8,7 @@ type response_chunk =
   | Restarted of string
   | Passthrough
   | Passthrough_end
+  | Completions of string * string list  (* token * items *)
 
 type completion = string
 
@@ -106,6 +107,12 @@ let map_kind kind payload =
   | 5 (* DONE *)           -> Done
   | 8 (* PASSTHROUGH *)    -> Passthrough
   | 9 (* PASSTHROUGH_END *)-> Passthrough_end
+  | 10 (* COMPLETIONS *)   ->
+    if String.length payload = 0 then Completions ("", [])
+    else
+      (match String.split_on_char '\n' payload with
+       | token :: items -> Completions (token, items)
+       | [] -> Completions ("", []))
   | _ -> Internal_error (Printf.sprintf "Unknown message kind: %d" kind)
 
 let await_response t =
@@ -133,7 +140,7 @@ let await_response t =
     match pop () with
     | None -> loop ()
     | Some (kind, _flags, payload) ->
-      if t.suppressing && kind <> 5 && kind <> 8 && kind <> 9 then loop ()
+      if t.suppressing && kind <> 5 && kind <> 8 && kind <> 9 && kind <> 10 then loop ()
       else begin
         match kind with
         | 0 | 1 ->
@@ -151,6 +158,8 @@ let await_response t =
 
 let signal_passthrough () = Rffi.signal_passthrough ()
 let cancel _t = ignore (Rffi.interrupt ())
-let get_completions _t _input ~cursor_pos:_ = []
+let request_completions t input ~cursor_pos =
+  if t.ready && not t.busy then
+    Rffi.request_completions input cursor_pos
 let restart _t = ()
 let deinit _t = Rffi.shutdown ()
