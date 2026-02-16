@@ -228,7 +228,7 @@ let run env backend ~orig_termios =
         | `Exit -> ()
         | `Continue new_model ->
         let in_completion_mode = match new_model.completion with
-          | Some cs when cs.selected >= 0 -> true
+          | Some cs when Completion.is_in_completion_mode cs -> true
           | _ -> false
         in
         if new_model.completion_dirty && not new_model.awaiting_response
@@ -271,21 +271,14 @@ let run env backend ~orig_termios =
         loop (handle_response model r)
     | Response (Ffi_backend.Completions (token, items)) ->
         let in_completion_mode = match model.completion with
-          | Some cs when cs.selected >= 0 -> true
+          | Some cs when Completion.is_in_completion_mode cs -> true
           | _ -> false
         in
         if in_completion_mode then loop model
         else
           let token_start = model.cursor_pos - String.length token in
-          let model = { model with
-            completion = Some { Frontend_types.
-              items;
-              filtered = items;
-              selected = -1;
-              token_start;
-              original_token = "";
-            }
-          } in
+          let completion = Completion.create ~token_start items in
+          let model = { model with completion = Some completion } in
           loop (Update.filter_completions model)
     | Response r -> loop (handle_response model r)
     | Term_size (term_width, term_height) ->
