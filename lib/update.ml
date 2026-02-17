@@ -533,7 +533,7 @@ let submit_in_readline_mode model =
 
 let submit_in_normal_mode model =
   if inside_empty_brackets model then Continue (expand_empty_brackets model)
-      else if at_empty_line model then
+  else if at_empty_line model then
     (* Empty line always submits *)
     let text =
       String.concat "\n" (List.map Unicode_string.to_string model.lines)

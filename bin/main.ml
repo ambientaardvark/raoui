@@ -30,10 +30,6 @@ let disable_bracketed_paste () =
   print_string "\x1b[?2004l";
   Stdlib.flush Stdlib.stdout
 
-let clear_log () =
-  let oc = Stdlib.open_out "/Users/alanlee/Documents/Programs/raoui/debug_log.txt" in
-  Stdlib.close_out oc
-
 let get_cursor_position () =
   print_string "\x1b[6n";
   Stdlib.flush Stdlib.stdout;
@@ -162,7 +158,7 @@ let print_repl_output model =
         prompt_top_row = max model.prompt_top_row next_prompt_row;
       }
 
-let handle_update_result backend _model = function
+let handle_update_result backend = function
   | Frontend_types.Exit -> `Exit
   | Frontend_types.Cancel ->
       Ffi_backend.cancel backend;
@@ -193,7 +189,7 @@ let run env backend ~orig_termios =
   let model_after_cached =
     Stdlib.List.fold_left
       (fun m key ->
-        match handle_update_result backend m (Update.update (Update.Key key) m) with
+        match handle_update_result backend (Update.update (Update.Key key) m) with
         | `Exit -> m
         | `Continue m' -> m')
       init_model
@@ -215,7 +211,7 @@ let run env backend ~orig_termios =
     in
     match msg with
     | Update.Key _key -> (
-        match handle_update_result backend model (Update.update msg model) with
+        match handle_update_result backend (Update.update msg model) with
         | `Exit -> ()
         | `Continue new_model ->
         let in_completion_mode = match new_model.completion with
@@ -259,8 +255,7 @@ let run env backend ~orig_termios =
     | Update.Response (Ffi_backend.Restarted _) ->
         Ffi_backend.background_submit backend
           (Printf.sprintf "options(width=%d)" model.term_width);
-        let new_model =
-          match Update.update msg model with
+        let new_model = match Update.update msg model with
           | Frontend_types.Continue m -> m
           | _ -> model
         in
@@ -277,8 +272,7 @@ let run env backend ~orig_termios =
           let model = { model with completion = Some completion } in
           loop (Update.filter_completions model)
     | Update.Response _r ->
-        let new_model =
-          match Update.update msg model with
+        let new_model = match Update.update msg model with
           | Frontend_types.Continue m -> m
           | _ -> model
         in
@@ -286,14 +280,15 @@ let run env backend ~orig_termios =
     | Update.TermResize (term_width, _term_height) ->
         Ffi_backend.background_submit backend
           (Printf.sprintf "options(width=%d)" term_width);
-        match Update.update msg model with
-        | Frontend_types.Continue new_model -> loop new_model
-        | _ -> loop model
+        let new_model = match Update.update msg model with
+          | Frontend_types.Continue m -> m
+          | _ -> model
+        in
+        loop new_model
   in
   loop model_after_cached
 
 let () =
-  clear_log ();
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let backend = Ffi_backend.create ~sw () in

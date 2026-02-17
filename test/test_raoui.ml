@@ -1166,6 +1166,74 @@ let test_min_prompt_height_enforced () =
   Alcotest.(check int) "prompt_box_height at least min"
     Frontend_types.min_prompt_height new_model.prompt_box_height
 
+(* Readline mode tests *)
+
+let readline_model width prompt =
+  { (initial_model width) with
+    mode = Frontend_types.Readline prompt;
+    awaiting_response = true;
+  }
+
+let test_readline_response_sets_mode () =
+  let width = 20 in
+  let model =
+    { (initial_model width) with
+      backend_response = Some (Ffi_backend.Readline "Enter name: ");
+      awaiting_response = true;
+    }
+  in
+  let new_model = Update.process_response model in
+  Alcotest.(check bool) "mode is Readline"
+    true (new_model.mode = Frontend_types.Readline "Enter name: ");
+  Alcotest.(check bool) "awaiting_response stays true" true new_model.awaiting_response
+
+let test_readline_empty_prompt_normalized () =
+  let width = 20 in
+  let model =
+    { (initial_model width) with
+      backend_response = Some (Ffi_backend.Readline "");
+      awaiting_response = true;
+    }
+  in
+  let new_model = Update.process_response model in
+  Alcotest.(check bool) "empty prompt normalized to 'input'"
+    true (new_model.mode = Frontend_types.Readline "input")
+
+let test_readline_done_resets_mode () =
+  let width = 20 in
+  let model =
+    { (readline_model width "Enter name: ") with
+      backend_response = Some Ffi_backend.Done;
+    }
+  in
+  let new_model = Update.process_response model in
+  Alcotest.(check bool) "mode reset to Normal"
+    true (new_model.mode = Frontend_types.Normal)
+
+let test_readline_typing_works () =
+  let width = 20 in
+  let model = readline_model width "Enter name: " in
+  match Update.update (Update.Key (Tty_listener.Char 'A')) model with
+  | Continue new_model ->
+      Alcotest.(check string) "char inserted" "A" (first_line_str new_model)
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_readline_up_blocked () =
+  let width = 20 in
+  let model = with_lines (readline_model width "Enter: ") [ us "hello" ] in
+  match Update.update (Update.Key Tty_listener.Up) model with
+  | Continue new_model ->
+      Alcotest.(check string) "line unchanged" "hello" (first_line_str new_model)
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_readline_down_blocked () =
+  let width = 20 in
+  let model = with_lines (readline_model width "Enter: ") [ us "hello" ] in
+  match Update.update (Update.Key Tty_listener.Down) model with
+  | Continue new_model ->
+      Alcotest.(check string) "line unchanged" "hello" (first_line_str new_model)
+  | _ -> Alcotest.fail "Expected Continue"
+
 let () =
   let open Alcotest in
   run "Raoui"
@@ -1295,6 +1363,15 @@ let () =
           test_case "Resize clamps prompt" `Quick test_resize_clamps_prompt;
           test_case "Resize preserves prompt in zone" `Quick test_resize_preserves_prompt_in_zone;
           test_case "Min prompt height enforced" `Quick test_min_prompt_height_enforced;
+        ] );
+      ( "readline_mode",
+        [
+          test_case "Readline response sets mode" `Quick test_readline_response_sets_mode;
+          test_case "Empty prompt normalized" `Quick test_readline_empty_prompt_normalized;
+          test_case "Done resets mode" `Quick test_readline_done_resets_mode;
+          test_case "Typing works in readline mode" `Quick test_readline_typing_works;
+          test_case "Up blocked in readline mode" `Quick test_readline_up_blocked;
+          test_case "Down blocked in readline mode" `Quick test_readline_down_blocked;
         ] );
       ( "matched_brackets",
         [
