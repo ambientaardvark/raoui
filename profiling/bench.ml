@@ -42,6 +42,7 @@ let make_model () =
     running_in_ide = false;
     completion = None;
     completion_dirty = false;
+    mode = Frontend_types.Normal;
   }
 
 let iterations = 10_000
@@ -77,4 +78,4 @@ let () =
         Tty_listener.Paste "X\nY\nZ" );
     ]
   in
-  List.iter (fun (model, key) -> run_case model key) cases
+  List.iter (fun (model, key) -> run_case model (Update.Key key)) cases

@@ -2,6 +2,8 @@ let prompt = "> "
 let continued_prompt = ". "
 let pending_prompt = "  "
 
+type mode = Normal | Readline of string
+
 let min_prompt_height = 5
 let default_prompt_top term_height = max 2 (term_height - min_prompt_height + 1)
 let clamp_prompt_top term_height row = max 2 (min row (default_prompt_top term_height))
@@ -32,6 +34,7 @@ type model = {
   running_in_ide : bool;
   completion : Completion.t option;
   completion_dirty : bool;
+  mode : mode;
 }
 
 type update_result =

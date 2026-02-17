@@ -30,6 +30,9 @@ typedef enum {
 static ring_buffer_t g_rb;
 static void *libR = NULL;
 static atomic_int passthrough_gate = 0;
+static atomic_int readline_gate = 0;
+static char *readline_input_buf = NULL;
+static pthread_mutex_t readline_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Worker thread */
 static pthread_t r_thread;
@@ -96,6 +99,7 @@ static int  *R_interrupts_pending_ptr = NULL;
 
 /* ---- Callback function pointers (loaded via dlsym) ---- */
 
+static int  (**ptr_R_ReadConsole)(const char *, unsigned char *, int, int) = NULL;
 static void (**ptr_R_WriteConsole)(const char *, int) = NULL;
 static void (**ptr_R_WriteConsoleEx)(const char *, int, int) = NULL;
 static void (**ptr_R_FlushConsole)(void) = NULL;
@@ -113,6 +117,31 @@ static int  (*R_registerRoutines_fn)(void *, const void *,
 static SEXP withVisible_sym = NULL;
 
 /* ---- Callbacks ---- */
+
+static int cb_read_console(const char *prompt, unsigned char *buf, int len,
+                           int addtohistory) {
+    (void)addtohistory;
+
+    rb_push(&g_rb, RB_MSG_READLINE, 0, prompt, (uint32_t)strlen(prompt));
+
+    while (!atomic_load(&readline_gate))
+        usleep(1000);
+    atomic_store(&readline_gate, 0);
+
+    pthread_mutex_lock(&readline_mutex);
+    const char *input = readline_input_buf ? readline_input_buf : "";
+    size_t n = strlen(input);
+    /* R expects a newline-terminated string; reserve room for '\n' + '\0' */
+    if ((int)(n + 2) > len) n = (size_t)(len - 2);
+    memcpy(buf, input, n);
+    buf[n]     = '\n';
+    buf[n + 1] = '\0';
+    free(readline_input_buf);
+    readline_input_buf = NULL;
+    pthread_mutex_unlock(&readline_mutex);
+
+    return 1; /* 1 = success, 0 = EOF */
+}
 
 static void cb_write_console_ex(const char *s, int len, int otype) {
     uint8_t kind = (otype == 0) ? RB_MSG_STDOUT : RB_MSG_STDERR;
@@ -145,6 +174,14 @@ static SEXP raoui_exit_passthrough(void) {
 
 void rffi_signal_passthrough(void) {
     atomic_store(&passthrough_gate, 1);
+}
+
+void rffi_submit_readline_input(const char *input) {
+    pthread_mutex_lock(&readline_mutex);
+    free(readline_input_buf);
+    readline_input_buf = strdup(input);
+    pthread_mutex_unlock(&readline_mutex);
+    atomic_store(&readline_gate, 1);
 }
 
 /* ---- Symbol loading ---- */
@@ -209,6 +246,7 @@ static int load_symbols(void) {
     LOAD_SYM(R_interrupts_pending_ptr, "R_interrupts_pending");
 
     /* Callback pointers */
+    LOAD_SYM(ptr_R_ReadConsole, "ptr_R_ReadConsole");
     LOAD_SYM(ptr_R_WriteConsole, "ptr_R_WriteConsole");
     LOAD_SYM(ptr_R_WriteConsoleEx, "ptr_R_WriteConsoleEx");
     LOAD_SYM(ptr_R_FlushConsole, "ptr_R_FlushConsole");
@@ -262,6 +300,7 @@ static int init_r(const char *r_home) {
     char *args[] = {"raoui", "--quiet", "--no-save"};
     Rf_initialize_R(3, args);
 
+    *ptr_R_ReadConsole = cb_read_console;
     *ptr_R_WriteConsole = NULL;
     *ptr_R_WriteConsoleEx = cb_write_console_ex;
     *ptr_R_FlushConsole = cb_flush_console;

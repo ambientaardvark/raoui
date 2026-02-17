@@ -1,5 +1,10 @@
 open Frontend_types
 
+type msg =
+  | Key of Tty_listener.key
+  | Response of Ffi_backend.response_chunk
+  | TermResize of int * int
+
 let lexer_update start_line end_line model =
   {
     model with
@@ -505,7 +510,28 @@ let expand_empty_brackets model =
 let at_empty_line model =
   "" = (model |> current_line |> Unicode_string.to_string |> String.trim)
 
-let submit model =
+(* Submit handlers per mode *)
+
+let submit_in_readline_mode model =
+  (* In readline mode: submit single line as input *)
+  let text = Unicode_string.to_string (current_line model) in
+  Ffi_backend.submit_readline_input text;
+  let new_model =
+    {
+      model with
+      mode = Frontend_types.Normal;
+      lines = [ Unicode_string.empty ];
+      lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
+      cursor_row = 0;
+      cursor_col = 0;
+      cursor_line = 0;
+      cursor_pos = 0;
+      (* Keep awaiting_response = true: R is still evaluating *)
+    }
+  in
+  Continue new_model
+
+let submit_in_normal_mode model =
   if inside_empty_brackets model then Continue (expand_empty_brackets model)
   else if at_empty_line model then
     (* Empty line always submits *)
@@ -590,6 +616,12 @@ let submit model =
         Continue
           (model |> insert_newline
           |> repeat_n_times indent_spaces (fun m -> insert_char m ' '))
+
+(* Submit router *)
+let submit model =
+  match model.mode with
+  | Frontend_types.Readline _ -> submit_in_readline_mode model
+  | Frontend_types.Normal -> submit_in_normal_mode model
 
 let handle_vertical_cursor_movement model =
   let width = effective_width model in
@@ -688,7 +720,55 @@ let filter_completions model =
         | None -> { model with completion = None }
         | Some filtered -> { model with completion = Some filtered }
 
-let apply_key key model =
+(* Key handlers per mode *)
+
+let apply_key_in_readline_mode key model =
+  let open Tty_listener in
+  match key with
+  | Ctrl 'c' ->
+      (* Ctrl-C in readline mode: submit empty string and exit *)
+      Ffi_backend.submit_readline_input "";
+      Continue { model with
+        mode = Frontend_types.Normal;
+        lines = [ Unicode_string.empty ];
+        lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
+        cursor_row = 0;
+        cursor_col = 0;
+        cursor_line = 0;
+        cursor_pos = 0;
+      }
+  | Ctrl 'p' | Up | Down ->
+      (* No history navigation in readline mode *)
+      Continue model
+  | Enter ->
+      (* Enter always submits in readline mode *)
+      submit model
+  | _ ->
+      (* All other editing keys work normally *)
+      let model = match key with
+        | Tab | Escape -> model
+        | _ -> (match model.completion with
+            | Some cs when Completion.is_in_completion_mode cs ->
+                { model with completion = None }
+            | _ -> model)
+      in
+      match key with
+      | Ctrl 'd' ->
+          if is_empty_input model then Exit
+          else Continue (delete_char_after_cursor model)
+      | Ctrl 'u' -> Continue (delete_before_cursor model)
+      | Ctrl 'a' -> Continue (go_to_line_start model)
+      | Ctrl 'e' -> Continue (go_to_line_end model)
+      | Other "next word" -> Continue (go_to_next_word model)
+      | Other "last word" -> Continue (go_to_last_word model)
+      | Char c -> Continue (user_input_char model c)
+      | Backspace -> Continue (user_input_delete model)
+      | Left -> Continue (move_left model)
+      | Right -> Continue (move_right model)
+      | Paste text -> Continue (insert_paste model text)
+      | _ -> Continue model
+
+let apply_key_in_normal_mode key model =
   let open Tty_listener in
   (* Lock in completion on any key except Tab/Escape *)
   let model = match key with
@@ -764,6 +844,12 @@ let apply_key key model =
       | None -> Continue model)
   | _ -> Continue model
 
+(* Key handler router *)
+let apply_key key model =
+  match model.mode with
+  | Frontend_types.Readline _ -> apply_key_in_readline_mode key model
+  | Frontend_types.Normal -> apply_key_in_normal_mode key model
+
 let universal_corrections key model =
   model |> filter_completions |> handle_vertical_cursor_movement |> fun s ->
   let flipping_through_history =
@@ -780,7 +866,7 @@ let sync_internal_coords model =
   in
   { model with cursor_line; cursor_pos }
 
-let update key model =
+let handle_key_input key model =
   { model with scroll_amount = 0 }
   |> handle_resize model.term_width model.term_height
   |> sync_internal_coords |> apply_key key
@@ -802,12 +888,13 @@ let process_response model =
         | Ffi_backend.Done -> []
         | Ffi_backend.Shutdown -> []
         | Ffi_backend.Passthrough | Ffi_backend.Passthrough_end
-        | Ffi_backend.Completions _ -> []
+        | Ffi_backend.Completions _ | Ffi_backend.Readline _ -> []
       in
       let awaiting_response =
         match response with
         (* Keep waiting for more output until we get a terminal response *)
-        | Ffi_backend.Stdout _ | Ffi_backend.Result _ | Ffi_backend.R_error _ ->
+        | Ffi_backend.Stdout _ | Ffi_backend.Result _ | Ffi_backend.R_error _
+        | Ffi_backend.Readline _ ->
             model.awaiting_response
         (* Terminal responses *)
         | Ffi_backend.Done | Ffi_backend.Shutdown | Ffi_backend.Internal_error _
@@ -815,10 +902,38 @@ let process_response model =
         | Ffi_backend.Passthrough_end | Ffi_backend.Completions _ ->
             false
       in
+      let mode =
+        match response with
+        | Ffi_backend.Readline prompt ->
+            let normalized_prompt = if prompt = "" then "input" else prompt in
+            Frontend_types.Readline normalized_prompt
+        | Ffi_backend.Done -> Frontend_types.Normal  (* Reset on completion *)
+        | _ -> model.mode  (* Preserve current mode *)
+      in
       {
         model with
         backend_response = None;
         repl_output = Some repl_output;
         awaiting_response;
         scroll_amount = 0;
+        mode;
       }
+
+let update msg model =
+  match msg with
+  | Key key ->
+      (match handle_key_input key model with
+       | Continue m -> Continue { m with completion_dirty = true }
+       | other -> other)
+  | Response response ->
+      (match response with
+       | Ffi_backend.Shutdown -> Exit
+       | _ ->
+           { model with backend_response = Some response }
+           |> process_response
+           |> handle_vertical_cursor_movement
+           |> fun m -> Continue m)
+  | TermResize (width, height) ->
+      handle_resize width height model
+      |> handle_vertical_cursor_movement
+      |> fun m -> Continue m
