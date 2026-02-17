@@ -35,4 +35,7 @@ void rffi_request_completions(const char *line, int cursor_pos);
 /* Signal the passthrough gate so the R thread can proceed with system(). */
 void rffi_signal_passthrough(void);
 
+/* Submit input for readline() callback and signal the readline gate. */
+void rffi_submit_readline_input(const char *input);
+
 #endif /* R_BRIDGE_H */

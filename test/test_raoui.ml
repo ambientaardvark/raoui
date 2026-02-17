@@ -41,6 +41,7 @@ let initial_model width =
     running_in_ide = false;
     completion = None;
     completion_dirty = false;
+    mode = Frontend_types.Normal;
   }
 
 let with_lines model lines =

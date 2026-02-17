@@ -11,6 +11,7 @@ type response_chunk =
   | Passthrough
   | Passthrough_end
   | Completions of string * string list  (* token * items *)
+  | Readline of string  (* prompt *)
 
 type completion = string
 
@@ -20,6 +21,7 @@ val submit : t -> string -> unit
 val background_submit : t -> string -> unit
 val await_response : t -> response_chunk
 val signal_passthrough : unit -> unit
+val submit_readline_input : string -> unit
 val cancel : t -> unit
 val request_completions : t -> string -> cursor_pos:int -> unit
 val restart : t -> unit

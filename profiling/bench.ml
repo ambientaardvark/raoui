@@ -42,6 +42,7 @@ let make_model () =
     running_in_ide = false;
     completion = None;
     completion_dirty = false;
+    mode = Frontend_types.Normal;
   }
 
 let iterations = 10_000

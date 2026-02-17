@@ -9,6 +9,7 @@ type response_chunk =
   | Passthrough
   | Passthrough_end
   | Completions of string * string list  (* token * items *)
+  | Readline of string  (* prompt *)
 
 type completion = string
 
@@ -113,6 +114,7 @@ let map_kind kind payload =
       (match String.split_on_char '\n' payload with
        | token :: items -> Completions (token, items)
        | [] -> Completions ("", []))
+  | 11 (* READLINE *)      -> Readline payload
   | _ -> Internal_error (Printf.sprintf "Unknown message kind: %d" kind)
 
 let await_response t =
@@ -157,6 +159,7 @@ let await_response t =
   loop ()
 
 let signal_passthrough () = Rffi.signal_passthrough ()
+let submit_readline_input input = Rffi.submit_readline_input input
 let cancel _t = ignore (Rffi.interrupt ())
 let request_completions t input ~cursor_pos =
   if t.ready && not t.busy then

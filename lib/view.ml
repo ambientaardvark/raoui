@@ -3,6 +3,8 @@ open Frontend_types
 module Term = Terminal_ops.Make(struct let term_type = "ansi" end)
 
 let completion_max_width = 20
+let readline_prompt_max_length = 20
+let input_prompt = "input> "
 
 let log message =
   let oc = Stdlib.open_out_gen [Open_append; Open_creat] 0o666 "/Users/alanlee/Documents/Programs/raoui/debug_log.txt" in
@@ -10,8 +12,16 @@ let log message =
     ~finally:(fun () -> Stdlib.close_out oc)
     (fun () -> Stdlib.Printf.fprintf oc "%s\n" message)
 
+let prompt_width_for_mode mode =
+  match mode with
+  | Frontend_types.Readline rl_prompt ->
+      if String.length rl_prompt <= readline_prompt_max_length
+      then String.length (rl_prompt ^ "> ")
+      else String.length input_prompt
+  | Frontend_types.Normal -> String.length prompt
+
 let absolute_cursor_pos model =
-  let prompt_width = String.length prompt in
+  let prompt_width = prompt_width_for_mode model.mode in
   let cursor_abs_row = model.prompt_top_row + model.cursor_row in
   let cursor_abs_col = prompt_width + model.cursor_col + 1 in
   (cursor_abs_row, cursor_abs_col)
@@ -84,7 +94,7 @@ let view_ops model =
   let ops = Queue.create () in
   let add op = Queue.add op ops in
 
-  let prompt_width = String.length prompt in
+  let prompt_width = prompt_width_for_mode model.mode in
   let width = effective_width model in
 
   (* Convert cached tokens to spans *)
@@ -104,7 +114,11 @@ let view_ops model =
   let wrapped = wrap_lines width model.lines in
   let total_rows = List.length wrapped in
 
-  add (if model.awaiting_response then Hide_cursor else Show_cursor);
+  let show_cursor = match model.mode with
+    | Frontend_types.Readline _ -> true  (* Always show cursor in readline *)
+    | _ -> not model.awaiting_response
+  in
+  add (if show_cursor then Show_cursor else Hide_cursor);
 
   if model.scroll_amount < 0 then add (Scroll_up (-model.scroll_amount))
   else if model.scroll_amount > 0 then add (Scroll_down model.scroll_amount);
@@ -128,9 +142,13 @@ let view_ops model =
   List.iteri (fun i line ->
     if i >= skip_rows && i < skip_rows + model.term_height then begin
       add Clear_to_eol;
-      let p = match i, model.awaiting_response with
-        | 0, false -> prompt
-        | 0, true -> pending_prompt
+      let p = match model.mode, i, model.awaiting_response with
+        | Frontend_types.Readline rl_prompt, 0, _ ->
+            if String.length rl_prompt <= readline_prompt_max_length
+            then rl_prompt ^ "> "
+            else input_prompt
+        | _, 0, false -> prompt
+        | _, 0, true -> pending_prompt
         | _ -> continued_prompt
       in
       (* Get the highlighted spans for this row's logical line *)
@@ -173,15 +191,23 @@ let view_ops model =
   (* Render completion dropdown as an overlay after base prompt cleanup. *)
   view_completions model ops;
 
-  (* Position cursor: in output area during eval, in prompt otherwise *)
-  if model.awaiting_response then begin
-    let row, col = model.repl_cursor in
-    add (Cursor_to (row, col))
-  end else begin
-    let cursor_abs_row = model.prompt_top_row + model.cursor_row in
-    let cursor_abs_col = prompt_width + model.cursor_col + 1 in
-    add (Cursor_to (cursor_abs_row, cursor_abs_col))
-  end;
+  (* Position cursor: in output area during eval, in prompt otherwise.
+     Exception: during readline mode, always position in prompt area. *)
+  (match model.mode, model.awaiting_response with
+   | Frontend_types.Readline _, _ ->
+       (* Readline mode: cursor in input area even if awaiting *)
+       let cursor_abs_row = model.prompt_top_row + model.cursor_row in
+       let cursor_abs_col = prompt_width + model.cursor_col + 1 in
+       add (Cursor_to (cursor_abs_row, cursor_abs_col))
+   | Frontend_types.Normal, true ->
+       (* Awaiting response: cursor in output area *)
+       let row, col = model.repl_cursor in
+       add (Cursor_to (row, col))
+   | Frontend_types.Normal, false ->
+       (* Normal mode: cursor in input area *)
+       let cursor_abs_row = model.prompt_top_row + model.cursor_row in
+       let cursor_abs_col = prompt_width + model.cursor_col + 1 in
+       add (Cursor_to (cursor_abs_row, cursor_abs_col)));
 
   ops
 

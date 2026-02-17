@@ -30,6 +30,10 @@ typedef enum {
 static ring_buffer_t g_rb;
 static void *libR = NULL;
 static atomic_int passthrough_gate = 0;
+static atomic_int readline_gate = 0;
+static char *readline_input_buf = NULL;
+static size_t readline_input_len = 0;
+static pthread_mutex_t readline_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Worker thread */
 static pthread_t r_thread;
@@ -143,8 +147,45 @@ static SEXP raoui_exit_passthrough(void) {
     return *R_NilValue_ptr;
 }
 
+static SEXP raoui_readline(SEXP prompt_sexp) {
+    const char *prompt = "";
+    if (prompt_sexp != *R_NilValue_ptr && Rf_length_fn(prompt_sexp) > 0) {
+        SEXP char_sexp = Rf_protect(Rf_asChar(prompt_sexp));
+        prompt = R_CHAR_fn(char_sexp);
+        Rf_unprotect(1);
+    }
+
+    /* Push prompt to OCaml */
+    rb_push(&g_rb, RB_MSG_READLINE, 0, prompt, (uint32_t)strlen(prompt));
+
+    /* Wait for input */
+    while (!atomic_load(&readline_gate))
+        usleep(1000);
+    atomic_store(&readline_gate, 0);
+
+    /* Copy input from shared buffer */
+    pthread_mutex_lock(&readline_mutex);
+    SEXP result = Rf_protect(Rf_mkString(readline_input_buf ? readline_input_buf : ""));
+    free(readline_input_buf);
+    readline_input_buf = NULL;
+    readline_input_len = 0;
+    pthread_mutex_unlock(&readline_mutex);
+
+    Rf_unprotect(1);
+    return result;
+}
+
 void rffi_signal_passthrough(void) {
     atomic_store(&passthrough_gate, 1);
+}
+
+void rffi_submit_readline_input(const char *input) {
+    pthread_mutex_lock(&readline_mutex);
+    free(readline_input_buf);
+    readline_input_buf = strdup(input);
+    readline_input_len = strlen(input);
+    pthread_mutex_unlock(&readline_mutex);
+    atomic_store(&readline_gate, 1);
 }
 
 /* ---- Symbol loading ---- */
@@ -280,9 +321,27 @@ static int init_r(const char *r_home) {
          (void *)raoui_enter_passthrough, 0},
         {"raoui_exit_passthrough",
          (void *)raoui_exit_passthrough, 0},
+        {"raoui_readline",
+         (void *)raoui_readline, 1},
         {NULL, NULL, 0}
     };
     R_registerRoutines_fn(dll, NULL, callMethods, NULL, NULL);
+
+    /* Override readline by assigning to global environment.
+       User code will find this before base::readline. */
+    const char *override_code =
+        "assign('readline', function(prompt = '') {"
+        "  .Call('raoui_readline', prompt)"
+        "}, envir = .GlobalEnv)";
+
+    SEXP override_expr = Rf_protect(Rf_mkString(override_code));
+    ParseStatus ps;
+    SEXP parsed = Rf_protect(R_ParseVector(override_expr, -1, &ps, *R_NilValue_ptr));
+    if (ps == PARSE_OK) {
+        int err = 0;
+        R_tryEval(VECTOR_ELT_fn(parsed, 0), *R_GlobalEnv_ptr, &err);
+    }
+    Rf_unprotect(2);
 
     return 0;
 }

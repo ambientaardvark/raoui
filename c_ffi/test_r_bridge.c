@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 static int tests_run = 0;
 static int tests_passed = 0;
@@ -229,6 +230,45 @@ int main(void) {
     count = collect_completions(buf, sizeof(buf), token, sizeof(token));
     ASSERT(count > 0, "user var: returns completions");
     ASSERT(completions_contain(buf, "my_test_var_xyz"), "user var: contains \"my_test_var_xyz\"");
+
+    /* ---- Readline test ---- */
+
+    printf("\n--- Readline: simple prompt ---\n");
+    rffi_submit("name <- readline('Enter name: ')");
+
+    /* Wait for RB_MSG_READLINE */
+    uint8_t kind, flags;
+    char rbuf[4096];
+    uint32_t len;
+    int found_readline = 0;
+    int attempts = 0;
+
+    while (!found_readline && attempts < 1000) {
+        int rc = rffi_rb_pop(&kind, &flags, rbuf, sizeof(rbuf) - 1, &len);
+        if (rc == RB_EMPTY) {
+            usleep(1000);
+            attempts++;
+            continue;
+        }
+        if (rc == RB_OK && kind == RB_MSG_READLINE) {
+            rbuf[len] = '\0';
+            printf("[READLINE] prompt: '%s'\n", rbuf);
+            ASSERT(strcmp(rbuf, "Enter name: ") == 0, "readline: correct prompt");
+            found_readline = 1;
+
+            /* Submit input */
+            rffi_submit_readline_input("Alice");
+            printf("Submitted input: 'Alice'\n");
+        }
+    }
+
+    if (!found_readline) {
+        printf("  FAIL: readline message not received after 1000 attempts\n");
+        tests_run++;
+    }
+
+    /* Drain remaining messages */
+    drain();
 
     printf("\n========================================\n");
     printf("%d/%d tests passed\n", tests_passed, tests_run);
