@@ -74,7 +74,7 @@ let view_completions model ops =
       let rec loop row idx = function
         | [] -> ()
         | _ when row > model.term_height -> ()
-        | _ when idx >= 5 -> ()
+        | _ when idx >= 4 -> ()
         | item :: rest ->
           add (Terminal_ops.Cursor_to (row, col_offset));
           add Terminal_ops.Clear_to_eol;

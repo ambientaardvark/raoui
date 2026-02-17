@@ -126,7 +126,7 @@ let print_repl_output model =
   match model.repl_output with
   | None -> model
   | Some [] ->
-      (* Done — clamp prompt to bottom zone, scroll if needed *)
+      (* Done - reserve the bottom prompt zone. *)
       let new_row, new_col = get_cursor_position () in
       let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
       let natural = max model.prompt_top_row next_prompt_row in
@@ -241,12 +241,18 @@ let run env backend ~orig_termios =
           | Ffi_backend.Passthrough_end ->
               ignore (set_raw_mode ());
               enable_bracketed_paste ();
-              let new_row, _new_col = get_cursor_position () in
-              let next_prompt_row = new_row + 1 in
-              let clamped = Frontend_types.clamp_prompt_top model.term_height next_prompt_row in
+              let new_row, new_col = get_cursor_position () in
+              let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
+              let natural = max model.prompt_top_row next_prompt_row in
+              let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
+              let scroll_needed = natural - clamped in
+              if scroll_needed > 0 then begin
+                Stdlib.Printf.printf "\x1b[%dS" scroll_needed;
+                Stdlib.flush Stdlib.stdout
+              end;
               loop { model with
                 prompt_top_row = clamped;
-                repl_cursor = (next_prompt_row, 1);
+                repl_cursor = (new_row - scroll_needed, new_col);
                 prompt_box_height = Frontend_types.min_prompt_height;
               }
           | _ -> passthrough_loop ()
