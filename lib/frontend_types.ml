@@ -2,7 +2,7 @@ let prompt = "> "
 let continued_prompt = ". "
 let pending_prompt = "  "
 
-type mode = Normal | Readline of string
+type mode = Normal | Readline of string | Shell
 
 let min_prompt_height = 5
 let default_prompt_top term_height = max 2 (term_height - min_prompt_height + 1)

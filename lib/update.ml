@@ -35,6 +35,9 @@ let at_last_line model = model.cursor_line >= List.length model.lines - 1
 let same_cursor_pos m1 m2 =
   m1.cursor_line = m2.cursor_line && m1.cursor_pos = m2.cursor_pos
 
+let prompt_is_empty model =
+  model.lines = [] || model.lines = [ Unicode_string.empty ]
+
 let insert_char model c =
   let width = effective_width model in
   let line = current_line model in
@@ -512,6 +515,55 @@ let at_empty_line model =
 
 (* Submit handlers per mode *)
 
+let scroll_terminal_after_submit model =
+  let width = effective_width model in
+  let wrapped = wrap_lines width model.lines in
+  let total_rows = List.length wrapped in
+  let output_row = model.prompt_top_row + total_rows in
+  let new_prompt_top = output_row + 1 in
+  let scroll_amount =
+    if new_prompt_top > model.term_height then
+      model.term_height - new_prompt_top
+    else 0
+  in
+  (output_row, scroll_amount, new_prompt_top)
+
+let clear_model_for_submit ?(awaiting_response = true) model =
+  let output_row, scroll_amount, new_prompt_top = scroll_terminal_after_submit model in
+  {
+    model with
+    awaiting_response = awaiting_response;
+    repl_cursor = (output_row + scroll_amount, 1);
+    prompt_top_row = new_prompt_top + scroll_amount;
+    previous_prompt_top_row = new_prompt_top + scroll_amount;
+    lines = [ Unicode_string.empty ];
+    lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
+    cursor_row = 0;
+    cursor_col = 0;
+    cursor_line = 0;
+    cursor_pos = 0;
+    prompt_box_height = min_prompt_height;
+    scroll_amount;
+  }
+
+let submit_in_shell_mode model =
+  let text = Unicode_string.to_string (current_line model) in
+  let rec safe_guard n =
+    let g = String.make n '-' in
+    let closing = ")" ^ g ^ "\"" in
+    let cl = String.length closing and tl = String.length text in
+    let rec found i =
+      i <= tl - cl && (String.sub text i cl = closing || found (i + 1))
+    in
+    if tl >= cl && found 0 then safe_guard (n + 1) else g
+  in
+  let guard = safe_guard 1 in
+  let r_command =
+    Printf.sprintf "system(r\"%s(%s)%s\")" guard text guard
+  in
+  History.add_to_history model.history model.lines;
+  Submit (r_command, clear_model_for_submit { model with mode = Normal })
+
 let submit_in_readline_mode model =
   (* In readline mode: submit single line as input *)
   let text = Unicode_string.to_string (current_line model) in
@@ -531,79 +583,20 @@ let submit_in_readline_mode model =
   in
   Continue new_model
 
+let submit_normal_text model =
+  let text =
+    String.concat "\n" (List.map Unicode_string.to_string model.lines)
+  in
+  History.add_to_history model.history model.lines;
+  Submit (text, clear_model_for_submit model)
+
 let submit_in_normal_mode model =
   if inside_empty_brackets model then Continue (expand_empty_brackets model)
-  else if at_empty_line model then
-    (* Empty line always submits *)
-    let text =
-      String.concat "\n" (List.map Unicode_string.to_string model.lines)
-    in
-    let width = effective_width model in
-    let wrapped = wrap_lines width model.lines in
-    let total_rows = List.length wrapped in
-    let output_row = model.prompt_top_row + total_rows in
-    let new_prompt_top = output_row + 1 in
-    let scroll_amount =
-      if new_prompt_top > model.term_height then
-        model.term_height - new_prompt_top
-      else 0
-    in
-    History.add_to_history model.history model.lines;
-    let new_model =
-      {
-        model with
-        awaiting_response = true;
-        repl_cursor = (output_row + scroll_amount, 1);
-        prompt_top_row = new_prompt_top + scroll_amount;
-        previous_prompt_top_row = new_prompt_top + scroll_amount;
-        lines = [ Unicode_string.empty ];
-        lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
-        cursor_row = 0;
-        cursor_col = 0;
-        cursor_line = 0;
-        cursor_pos = 0;
-        prompt_box_height = min_prompt_height;
-        scroll_amount;
-      }
-    in
-    Submit (text, new_model)
+  else if at_empty_line model then submit_normal_text model
   else
-    (* Check if continuation is needed *)
     let tokens = tokens_before_cursor model in
     match Syntax.Continuation.analyze tokens with
-    | Syntax.Continuation.Submit ->
-        let text =
-          String.concat "\n" (List.map Unicode_string.to_string model.lines)
-        in
-        let width = effective_width model in
-        let wrapped = wrap_lines width model.lines in
-        let total_rows = List.length wrapped in
-        let output_row = model.prompt_top_row + total_rows in
-        let new_prompt_top = output_row + 1 in
-        let scroll_amount =
-          if new_prompt_top > model.term_height then
-            model.term_height - new_prompt_top
-          else 0
-        in
-        History.add_to_history model.history model.lines;
-        let new_model =
-          {
-            model with
-            awaiting_response = true;
-            repl_cursor = (output_row + scroll_amount, 1);
-            prompt_top_row = new_prompt_top + scroll_amount;
-            previous_prompt_top_row = new_prompt_top + scroll_amount;
-            lines = [ Unicode_string.empty ];
-            lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
-            cursor_row = 0;
-            cursor_col = 0;
-            cursor_line = 0;
-            cursor_pos = 0;
-            prompt_box_height = min_prompt_height;
-            scroll_amount;
-          }
-        in
-        Submit (text, new_model)
+    | Syntax.Continuation.Submit -> submit_normal_text model
     | Syntax.Continuation.Continue { indent_levels; in_empty_brackets = _ } ->
         let line = current_line model in
         let base_indent = leading_spaces (Unicode_string.to_string line) in
@@ -621,6 +614,7 @@ let submit_in_normal_mode model =
 let submit model =
   match model.mode with
   | Frontend_types.Readline _ -> submit_in_readline_mode model
+  | Frontend_types.Shell -> submit_in_shell_mode model
   | Frontend_types.Normal -> submit_in_normal_mode model
 
 let handle_vertical_cursor_movement model =
@@ -720,23 +714,90 @@ let filter_completions model =
         | None -> { model with completion = None }
         | Some filtered -> { model with completion = Some filtered }
 
+let handle_tab model =
+  match model.completion with
+  | None -> model
+  | Some cs ->
+      if List.length (Completion.filtered_items cs) = 0 then model
+      else
+        let cs_with_original =
+          if not (Completion.is_in_completion_mode cs) then
+            let line = current_line model
+            and token_start = Completion.token_start cs in
+            let prefix_len = model.cursor_pos - token_start in
+            let original =
+              Unicode_string.to_string
+                (Unicode_string.sub line ~start:token_start ~len:prefix_len)
+            in
+            Completion.save_original_token cs ~token:original
+          else cs
+        in
+        let cs_cycled = Completion.cycle_next cs_with_original in
+        (match Completion.current_completion cs_cycled with
+         | None -> model
+         | Some completion_text ->
+             let token_start = Completion.token_start cs_cycled in
+             let inserted = replace_token model token_start completion_text in
+             { inserted with completion = Some cs_cycled })
+
 (* Key handlers per mode *)
+
+let set_mode_normal_blank model =
+  { model with
+    mode = Frontend_types.Normal;
+    lines = [ Unicode_string.empty ];
+    lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
+    cursor_row = 0;
+    cursor_col = 0;
+    cursor_line = 0;
+    cursor_pos = 0;
+  }
+
+let apply_key_in_shell_mode key model =
+  let open Tty_listener in
+  match key with
+  | Ctrl 'c' ->
+      Continue (set_mode_normal_blank model)
+  | Ctrl 'p' | Up | Down ->
+      (* No history navigation in shell mode *)
+      Continue model
+  | Enter ->
+      (* Enter always submits in shell mode *)
+      submit model
+  | _ ->
+      (* All other editing keys work normally *)
+      let model = match key with
+        | Tab | Escape -> model
+        | _ -> (match model.completion with
+            | Some cs when Completion.is_in_completion_mode cs ->
+                { model with completion = None }
+            | _ -> model)
+      in
+      match key with
+      | Ctrl 'd' ->
+          if is_empty_input model then Continue (set_mode_normal_blank model)
+          else Continue (delete_char_after_cursor model)
+      | Ctrl 'u' -> Continue (delete_before_cursor model)
+      | Ctrl 'a' -> Continue (go_to_line_start model)
+      | Ctrl 'e' -> Continue (go_to_line_end model)
+      | Other "next word" -> Continue (go_to_next_word model)
+      | Other "last word" -> Continue (go_to_last_word model)
+      | Char c -> Continue (user_input_char model c)
+      | Backspace when prompt_is_empty model -> Continue (set_mode_normal_blank model)
+      | Backspace -> Continue (user_input_delete model)
+      | Left -> Continue (move_left model)
+      | Right -> Continue (move_right model)
+      | Paste text -> Continue (insert_paste model text)
+      | _ -> Continue model
 
 let apply_key_in_readline_mode key model =
   let open Tty_listener in
   match key with
   | Ctrl 'c' ->
       (* Ctrl-C in readline mode: submit empty string and exit *)
+      (* TODO: update should not be calling backend directly *)
       Ffi_backend.submit_readline_input "";
-      Continue { model with
-        mode = Frontend_types.Normal;
-        lines = [ Unicode_string.empty ];
-        lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
-        cursor_row = 0;
-        cursor_col = 0;
-        cursor_line = 0;
-        cursor_pos = 0;
-      }
+      Continue (set_mode_normal_blank model)
   | Ctrl 'p' | Up | Down ->
       (* No history navigation in readline mode *)
       Continue model
@@ -792,6 +853,8 @@ let apply_key_in_normal_mode key model =
   | Ctrl 'e' -> Continue (go_to_line_end model)
   | Other "next word" -> Continue (go_to_next_word model)
   | Other "last word" -> Continue (go_to_last_word model)
+  | Char ';' when prompt_is_empty model ->
+    Continue { model with mode = Frontend_types.Shell }
   | Char c -> Continue (user_input_char model c)
   | Backspace -> Continue (user_input_delete model)
   | Left -> Continue (move_left model)
@@ -806,33 +869,7 @@ let apply_key_in_normal_mode key model =
       else Continue (move_down model)
   | Paste text -> Continue (insert_paste model text)
   | Tab ->
-      let handle_tab () =
-        match model.completion with
-        | None -> Continue model
-        | Some cs ->
-            if List.length (Completion.filtered_items cs) = 0 then
-              Continue model
-            else
-              let cs_with_original =
-                if not (Completion.is_in_completion_mode cs) then
-                  (* First Tab press - save the original token *)
-                  let line = current_line model in
-                  let token_start = Completion.token_start cs in
-                  let prefix_len = model.cursor_pos - token_start in
-                  let original = Unicode_string.to_string
-                    (Unicode_string.sub line ~start:token_start ~len:prefix_len) in
-                  Completion.save_original_token cs ~token:original
-                else cs
-              in
-              let cs_cycled = Completion.cycle_next cs_with_original in
-              match Completion.current_completion cs_cycled with
-              | None -> Continue model
-              | Some completion_text ->
-                  let token_start = Completion.token_start cs_cycled in
-                  let inserted = replace_token model token_start completion_text in
-                  Continue { inserted with completion = Some cs_cycled }
-      in
-      handle_tab ()
+    Continue (handle_tab model)
   | Escape -> (
       match model.completion with
       | Some cs when Completion.is_in_completion_mode cs ->
@@ -848,6 +885,7 @@ let apply_key_in_normal_mode key model =
 let apply_key key model =
   match model.mode with
   | Frontend_types.Readline _ -> apply_key_in_readline_mode key model
+  | Frontend_types.Shell -> apply_key_in_shell_mode key model
   | Frontend_types.Normal -> apply_key_in_normal_mode key model
 
 let universal_corrections key model =

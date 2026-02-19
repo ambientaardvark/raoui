@@ -5,6 +5,7 @@ module Term = Terminal_ops.Make(struct let term_type = "ansi" end)
 let completion_max_width = 20
 let readline_prompt_max_length = 20
 let input_prompt = "input> "
+let shell_prompt = "shell> "
 
 let prompt_width_for_mode mode =
   match mode with
@@ -12,6 +13,7 @@ let prompt_width_for_mode mode =
       if String.length rl_prompt <= readline_prompt_max_length
       then String.length (rl_prompt ^ "> ")
       else String.length input_prompt
+  | Frontend_types.Shell -> String.length shell_prompt
   | Frontend_types.Normal -> String.length prompt
 
 let absolute_cursor_pos model =
@@ -141,9 +143,11 @@ let view_ops model =
             if String.length rl_prompt <= readline_prompt_max_length
             then rl_prompt ^ "> "
             else input_prompt
-        | _, 0, false -> prompt
-        | _, 0, true -> pending_prompt
-        | _ -> continued_prompt
+        | Frontend_types.Shell, 0, _ -> shell_prompt
+        | Frontend_types.Readline _, _, _ | Frontend_types.Shell, _, _ -> assert false
+        | Frontend_types.Normal, 0, false -> prompt
+        | Frontend_types.Normal, 0, true -> pending_prompt
+        | Frontend_types.Normal, _, _ -> continued_prompt
       in
       (* Get the highlighted spans for this row's logical line *)
       let line_idx = if i < Array.length row_to_line_idx then row_to_line_idx.(i) else 0 in
@@ -193,6 +197,10 @@ let view_ops model =
        let cursor_abs_row = model.prompt_top_row + model.cursor_row in
        let cursor_abs_col = prompt_width + model.cursor_col + 1 in
        add (Cursor_to (cursor_abs_row, cursor_abs_col))
+   | Frontend_types.Shell, _ ->
+     let cursor_abs_row = model.prompt_top_row + model.cursor_row in
+     let cursor_abs_col = prompt_width + model.cursor_col + 1 in
+     add (Cursor_to (cursor_abs_row, cursor_abs_col));
    | Frontend_types.Normal, true ->
        (* Awaiting response: cursor in output area *)
        let row, col = model.repl_cursor in
