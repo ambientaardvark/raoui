@@ -14,6 +14,7 @@ type style =
   | `Function
   | `Completion
   | `Completion_selected
+  | `Shell_prompt
   ]
 type span = style * string
 type term_output = span list
@@ -55,6 +56,7 @@ let style_to_ansi = function
   | `Bracket -> "\x1b[0m"   (* default *)
   | `Completion -> "\x1b[48;5;236m"  (* dark gray background *)
   | `Completion_selected -> "\x1b[48;5;240m\x1b[1m"  (* lighter gray bg, bold *)
+  | `Shell_prompt -> "\x1b[31m" (* red *)
 
 let render_spans_to_buf buf spans =
   List.iter (fun (style, text) ->

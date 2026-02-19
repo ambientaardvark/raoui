@@ -69,6 +69,7 @@ let style_to_string = function
   | `Function -> "Function"
   | `Completion -> "Completion"
   | `Completion_selected -> "Completion_selected"
+  | `Shell_prompt -> "Shell_prompt"
 
 let pp_span fmt (style, text) =
   Format.fprintf fmt "(%s,%S)" (style_to_string style) text

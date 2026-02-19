@@ -46,7 +46,7 @@ let is_word_char s =
     Char.Ascii.is_alphanum c
 
 let should_show_completions model =
-  if model.cursor_pos < 2 then false
+  if model.cursor_pos < 2 || model.mode <> Frontend_types.Normal then false
   else
     match List.nth_opt model.lines model.cursor_line with
     | None -> false
@@ -139,15 +139,15 @@ let view_ops model =
     if i >= skip_rows && i < skip_rows + model.term_height then begin
       add Clear_to_eol;
       let p = match model.mode, i, model.awaiting_response with
-        | Frontend_types.Readline rl_prompt, 0, _ ->
+        | Readline rl_prompt, 0, _ ->
             if String.length rl_prompt <= readline_prompt_max_length
             then rl_prompt ^ "> "
             else input_prompt
-        | Frontend_types.Shell, 0, _ -> shell_prompt
-        | Frontend_types.Readline _, _, _ | Frontend_types.Shell, _, _ -> assert false
-        | Frontend_types.Normal, 0, false -> prompt
-        | Frontend_types.Normal, 0, true -> pending_prompt
-        | Frontend_types.Normal, _, _ -> continued_prompt
+        | Shell, 0, _ -> shell_prompt
+        | Readline _, _, _ | Frontend_types.Shell, _, _ -> assert false
+        | Normal, 0, false -> prompt
+        | Normal, 0, true -> pending_prompt
+        | Normal, _, _ -> continued_prompt
       in
       (* Get the highlighted spans for this row's logical line *)
       let line_idx = if i < Array.length row_to_line_idx then row_to_line_idx.(i) else 0 in
@@ -165,7 +165,10 @@ let view_ops model =
             [ (`Plain, Unicode_string.to_string line) ]
         | _ -> spans
       in
-      add (Print ((`Accent, p) :: content));
+      (if model.mode = Shell then
+        add (Print ((`Shell_prompt, p) :: content))
+      else
+        add (Print ((`Accent, p) :: content)));
       if i < skip_rows + model.term_height - 1 && i < total_rows - 1 then add Newline
     end
   ) wrapped;
@@ -186,26 +189,37 @@ let view_ops model =
     end
   done;
 
+  (* Clear the output row to remove stale completion overlay.
+     Completions are rendered as a screen overlay outside the prompt box,
+     so rows_to_clear doesn't reach them when the prompt moves down. *)
+  if model.awaiting_response then begin
+    let out_row, _ = model.repl_cursor in
+    if out_row >= 1 && out_row <= model.term_height then begin
+      add (Cursor_to (out_row, 1));
+      add Clear_to_eol
+    end
+  end;
+
   (* Render completion dropdown as an overlay after base prompt cleanup. *)
   view_completions model ops;
 
   (* Position cursor: in output area during eval, in prompt otherwise.
      Exception: during readline mode, always position in prompt area. *)
   (match model.mode, model.awaiting_response with
-   | Frontend_types.Readline _, _ ->
+   | Readline _, _ ->
        (* Readline mode: cursor in input area even if awaiting *)
        let cursor_abs_row = model.prompt_top_row + model.cursor_row in
        let cursor_abs_col = prompt_width + model.cursor_col + 1 in
        add (Cursor_to (cursor_abs_row, cursor_abs_col))
-   | Frontend_types.Shell, _ ->
+   | Shell, _ ->
      let cursor_abs_row = model.prompt_top_row + model.cursor_row in
      let cursor_abs_col = prompt_width + model.cursor_col + 1 in
      add (Cursor_to (cursor_abs_row, cursor_abs_col));
-   | Frontend_types.Normal, true ->
+   | Normal, true ->
        (* Awaiting response: cursor in output area *)
        let row, col = model.repl_cursor in
        add (Cursor_to (row, col))
-   | Frontend_types.Normal, false ->
+   | Normal, false ->
        (* Normal mode: cursor in input area *)
        let cursor_abs_row = model.prompt_top_row + model.cursor_row in
        let cursor_abs_col = prompt_width + model.cursor_col + 1 in

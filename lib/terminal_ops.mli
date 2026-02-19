@@ -19,6 +19,7 @@ type style =
   | `Function
   | `Completion
   | `Completion_selected
+  | `Shell_prompt
   ]
 
 (** A styled span of text *)
