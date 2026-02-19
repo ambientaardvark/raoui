@@ -301,6 +301,7 @@ let move_down model =
 let insert_matched_start model c =
   let after1 = insert_char model c in
   match c with
+  | _ when not (at_line_end model) -> after1
   | '[' -> move_left (insert_char after1 ']')
   | '(' -> move_left (insert_char after1 ')')
   | '{' -> move_left (insert_char after1 '}')
