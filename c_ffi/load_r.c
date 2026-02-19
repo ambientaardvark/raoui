@@ -6,7 +6,6 @@
 #include <stdatomic.h>
 #include <unistd.h>
 #include <sys/time.h>
-#include <setjmp.h>
 
 #if defined(__APPLE__)
 #define LIBR_BASENAME "libR.dylib"
@@ -109,20 +108,11 @@ static void (**ptr_R_Suicide_ptr)(const char *) = NULL;
 static FILE **R_Consolefile_ptr = NULL;
 static FILE **R_Outputfile_ptr = NULL;
 
-/* ---- R_Suicide recovery ---- */
-
-static jmp_buf suicide_jmp;
-static volatile int in_eval = 0;
-static char suicide_msg[1024] = "";
+/* ---- R_Suicide handler ---- */
 
 static void cb_suicide(const char *s) {
-    if (in_eval) {
-        snprintf(suicide_msg, sizeof(suicide_msg), "%s", s);
-        longjmp(suicide_jmp, 1);
-    }
-    /* Outside eval — can't recover, fall back to default behavior */
-    fprintf(stderr, "Fatal error: %s\n", s);
-    _exit(2);
+    fprintf(stderr, "\nFatal R error: %s\n", s);
+    _exit(1);
 }
 
 /* DLL registration (for .Call from R) */
@@ -133,6 +123,33 @@ static int  (*R_registerRoutines_fn)(void *, const void *,
 
 /* Cached R symbol for withVisible */
 static SEXP withVisible_sym = NULL;
+
+/* ---- Toplevel execution wrappers ---- */
+
+typedef struct {
+    SEXP text;
+    int num;
+    ParseStatus *status;
+    SEXP src;
+    SEXP result;
+} parse_data_t;
+
+static void safe_parse(void *data) {
+    parse_data_t *d = (parse_data_t *)data;
+    d->result = R_ParseVector(d->text, d->num, d->status, d->src);
+}
+
+typedef struct {
+    SEXP expr;
+    SEXP env;
+    int *error;
+    SEXP result;
+} eval_data_t;
+
+static void safe_eval(void *data) {
+    eval_data_t *d = (eval_data_t *)data;
+    d->result = R_tryEval(d->expr, d->env, d->error);
+}
 
 /* ---- Callbacks ---- */
 
@@ -351,25 +368,21 @@ static int init_r(const char *r_home) {
 static int eval_code(const char *code) {
     *R_interrupts_pending_ptr = 0;
 
-    /* If R calls R_Suicide during eval, longjmp back here. */
-    in_eval = 1;
-    if (setjmp(suicide_jmp) != 0) {
-        in_eval = 0;
-        char buf[1100];
-        snprintf(buf, sizeof(buf), "Fatal R error: %s", suicide_msg);
-        rb_push(&g_rb, RB_MSG_STDERR, 0, buf, (uint32_t)strlen(buf));
-        rb_push(&g_rb, RB_MSG_DONE, 0, NULL, 0);
-        return -1;
-    }
-
     SEXP code_sexp = Rf_protect(Rf_mkString(code));
 
-    ParseStatus parse_status;
-    SEXP parsed = Rf_protect(R_ParseVector(
-        code_sexp, -1, &parse_status, *R_NilValue_ptr));
+    ParseStatus parse_status = PARSE_NULL;
+    parse_data_t pd = { code_sexp, -1, &parse_status, *R_NilValue_ptr, NULL };
+
+    if (R_ToplevelExec_fn) {
+        if (!R_ToplevelExec_fn(safe_parse, &pd)) {
+            parse_status = PARSE_ERROR;
+        }
+    } else {
+        safe_parse(&pd);
+    }
+    SEXP parsed = Rf_protect(pd.result);
 
     if (parse_status != PARSE_OK) {
-        in_eval = 0;
         const char *msg;
         switch (parse_status) {
             case PARSE_INCOMPLETE:
@@ -396,8 +409,16 @@ static int eval_code(const char *code) {
 
         /* Wrap in withVisible(expr) to get value + visibility */
         SEXP wv_call = Rf_protect(Rf_lang2(withVisible_sym, expr));
-        SEXP wv_result = Rf_protect(
-            R_tryEval(wv_call, *R_GlobalEnv_ptr, &error_occurred));
+
+        eval_data_t ed = { wv_call, *R_GlobalEnv_ptr, &error_occurred, NULL };
+        if (R_ToplevelExec_fn) {
+            if (!R_ToplevelExec_fn(safe_eval, &ed)) {
+                error_occurred = 1;
+            }
+        } else {
+            safe_eval(&ed);
+        }
+        SEXP wv_result = Rf_protect(ed.result);
 
         if (error_occurred) {
             Rf_unprotect(2);
@@ -418,7 +439,6 @@ static int eval_code(const char *code) {
         Rf_unprotect(2);
     }
 
-    in_eval = 0;
     rb_push(&g_rb, RB_MSG_DONE, 0, NULL, 0);
     Rf_unprotect(2);
     return error_occurred ? -1 : 0;
@@ -429,9 +449,16 @@ static int eval_code(const char *code) {
 static char *eval_for_string(const char *code) {
     SEXP code_sexp = Rf_protect(Rf_mkString(code));
 
-    ParseStatus ps;
-    SEXP parsed = Rf_protect(R_ParseVector(
-        code_sexp, -1, &ps, *R_NilValue_ptr));
+    ParseStatus ps = PARSE_NULL;
+    parse_data_t pd = { code_sexp, -1, &ps, *R_NilValue_ptr, NULL };
+    if (R_ToplevelExec_fn) {
+        if (!R_ToplevelExec_fn(safe_parse, &pd)) {
+            ps = PARSE_ERROR;
+        }
+    } else {
+        safe_parse(&pd);
+    }
+    SEXP parsed = Rf_protect(pd.result);
 
     if (ps != PARSE_OK) {
         Rf_unprotect(2);
@@ -443,8 +470,15 @@ static char *eval_for_string(const char *code) {
     int err = 0;
 
     for (int i = 0; i < n; i++) {
-        result = R_tryEval(VECTOR_ELT_fn(parsed, i),
-                           *R_GlobalEnv_ptr, &err);
+        eval_data_t ed = { VECTOR_ELT_fn(parsed, i), *R_GlobalEnv_ptr, &err, NULL };
+        if (R_ToplevelExec_fn) {
+            if (!R_ToplevelExec_fn(safe_eval, &ed)) {
+                err = 1;
+            }
+        } else {
+            safe_eval(&ed);
+        }
+        result = ed.result;
         if (err) {
             Rf_unprotect(2);
             return NULL;
