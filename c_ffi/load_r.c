@@ -6,6 +6,7 @@
 #include <stdatomic.h>
 #include <unistd.h>
 #include <sys/time.h>
+#include <setjmp.h>
 
 #if defined(__APPLE__)
 #define LIBR_BASENAME "libR.dylib"
@@ -104,8 +105,25 @@ static void (**ptr_R_WriteConsole)(const char *, int) = NULL;
 static void (**ptr_R_WriteConsoleEx)(const char *, int, int) = NULL;
 static void (**ptr_R_FlushConsole)(void) = NULL;
 static void (**ptr_R_ShowMessage)(const char *) = NULL;
+static void (**ptr_R_Suicide_ptr)(const char *) = NULL;
 static FILE **R_Consolefile_ptr = NULL;
 static FILE **R_Outputfile_ptr = NULL;
+
+/* ---- R_Suicide recovery ---- */
+
+static jmp_buf suicide_jmp;
+static volatile int in_eval = 0;
+static char suicide_msg[1024] = "";
+
+static void cb_suicide(const char *s) {
+    if (in_eval) {
+        snprintf(suicide_msg, sizeof(suicide_msg), "%s", s);
+        longjmp(suicide_jmp, 1);
+    }
+    /* Outside eval — can't recover, fall back to default behavior */
+    fprintf(stderr, "Fatal error: %s\n", s);
+    _exit(2);
+}
 
 /* DLL registration (for .Call from R) */
 typedef struct { const char *name; void *fun; int numArgs; } R_CallMethodDef_t;
@@ -251,6 +269,7 @@ static int load_symbols(void) {
     LOAD_SYM(ptr_R_WriteConsoleEx, "ptr_R_WriteConsoleEx");
     LOAD_SYM(ptr_R_FlushConsole, "ptr_R_FlushConsole");
     LOAD_SYM(ptr_R_ShowMessage, "ptr_R_ShowMessage");
+    LOAD_SYM(ptr_R_Suicide_ptr, "ptr_R_Suicide");
     LOAD_SYM(R_Consolefile_ptr, "R_Consolefile");
     LOAD_SYM(R_Outputfile_ptr, "R_Outputfile");
 
@@ -305,6 +324,7 @@ static int init_r(const char *r_home) {
     *ptr_R_WriteConsoleEx = cb_write_console_ex;
     *ptr_R_FlushConsole = cb_flush_console;
     *ptr_R_ShowMessage = cb_show_message;
+    *ptr_R_Suicide_ptr = cb_suicide;
     *R_Consolefile_ptr = NULL;
     *R_Outputfile_ptr = NULL;
 
@@ -331,6 +351,17 @@ static int init_r(const char *r_home) {
 static int eval_code(const char *code) {
     *R_interrupts_pending_ptr = 0;
 
+    /* If R calls R_Suicide during eval, longjmp back here. */
+    in_eval = 1;
+    if (setjmp(suicide_jmp) != 0) {
+        in_eval = 0;
+        char buf[1100];
+        snprintf(buf, sizeof(buf), "Fatal R error: %s", suicide_msg);
+        rb_push(&g_rb, RB_MSG_STDERR, 0, buf, (uint32_t)strlen(buf));
+        rb_push(&g_rb, RB_MSG_DONE, 0, NULL, 0);
+        return -1;
+    }
+
     SEXP code_sexp = Rf_protect(Rf_mkString(code));
 
     ParseStatus parse_status;
@@ -338,6 +369,7 @@ static int eval_code(const char *code) {
         code_sexp, -1, &parse_status, *R_NilValue_ptr));
 
     if (parse_status != PARSE_OK) {
+        in_eval = 0;
         const char *msg;
         switch (parse_status) {
             case PARSE_INCOMPLETE:
@@ -386,6 +418,7 @@ static int eval_code(const char *code) {
         Rf_unprotect(2);
     }
 
+    in_eval = 0;
     rb_push(&g_rb, RB_MSG_DONE, 0, NULL, 0);
     Rf_unprotect(2);
     return error_occurred ? -1 : 0;

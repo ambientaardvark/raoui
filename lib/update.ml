@@ -298,34 +298,29 @@ let move_down model =
     }
   else model
 
-let insert_matched_start model c =
-  let after1 = insert_char model c in
-  match c with
-  | _ when not (at_line_end model) -> after1
-  | '[' -> move_left (insert_char after1 ']')
-  | '(' -> move_left (insert_char after1 ')')
-  | '{' -> move_left (insert_char after1 '}')
-  | _ -> after1
-
-let insert_matched_end model c =
-  if at_line_end model then insert_char model c
-  else
-    match char_at model with
-    | Some s when String.get s 0 = c -> move_right model
-    | _ -> insert_char model c
-
-let insert_matched_same model c =
-  if at_line_end model then insert_char (insert_char model c) c |> move_left
-  else
-    match char_at model with
-    | Some s when String.get s 0 = c -> move_right model
-    | _ -> insert_char (insert_char model c) c |> move_left
 
 let user_input_char model c =
   match c with
-  | '[' | '{' | '(' -> insert_matched_start model c
-  | ']' | '}' | ')' -> insert_matched_end model c
-  | '\'' | '"' -> insert_matched_same model c
+  | '[' | '{' | '(' -> (
+    let after1 = insert_char model c in
+    match c with
+    | _ when not (at_line_end model) -> after1
+    | '[' -> move_left (insert_char after1 ']')
+    | '(' -> move_left (insert_char after1 ')')
+    | '{' -> move_left (insert_char after1 '}')
+    | _ -> after1)
+  | ']' | '}' | ')' ->
+    (if at_line_end model then insert_char model c
+    else
+      match char_at model with
+      | Some s when String.get s 0 = c -> move_right model
+      | _ -> insert_char model c)
+  | '\'' | '"' -> (
+    if at_line_end model then insert_char (insert_char model c) c |> move_left
+    else
+      match char_at model with
+      | Some s when String.get s 0 = c -> move_right model
+      | _ -> insert_char (insert_char model c) c |> move_left)
   | _ -> insert_char model c
 
 let user_input_delete model =
