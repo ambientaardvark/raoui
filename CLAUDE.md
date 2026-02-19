@@ -34,3 +34,26 @@ Follows an Elm-style MVU (Model-View-Update) pattern with Eio fibers for concurr
 **Event loop (`main.ml`):** Races three Eio fibers—user input, backend response, and terminal resize—then dispatches to `Update`. Handles passthrough mode: when R calls `system()`, raw mode is suspended so the subprocess can control the terminal directly.
 
 **Coordinate systems:** Internal coordinates (line index, grapheme column) differ from terminal coordinates (row, column) due to line wrapping and variable-width characters. Conversion functions in `Frontend_types` handle this.
+
+## Style Guide
+
+Based on [OCaml Programming Guidelines](https://ocaml.org/docs/guidelines).
+
+**Structure:**
+- Break programs into small functions. If a pattern match clause gets long, extract it to its own function.
+- Solve problems with types and pattern matching. Define explicit sum types instead of encoding data as booleans or integers.
+- Avoid catch-all `| _ ->` clauses in pattern matches — list constructors explicitly so the compiler warns when new ones are added.
+
+**Naming & modules:**
+- Use underscores for word separation, never camelCase (capitals are reserved for constructors/modules).
+- Avoid `open` directives; use qualified notation (e.g., `List.map`, `String.length`).
+
+**Records:**
+- Comment what every field does.
+
+**Error handling:**
+- Prefer `option`/`result` types over exceptions.
+
+**Other:**
+- Use library iterators (`List.map`, `List.fold_left`) rather than reinventing them.
+- Prefer immutable data structures where possible.
