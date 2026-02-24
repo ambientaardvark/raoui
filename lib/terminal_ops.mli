@@ -41,7 +41,6 @@ type op =
   | Cursor_to of int * int       (** absolute position - row, col - 1-indexed *)
   | Cursor_shift of direction    (** relative movement *)
   | Clear_to_eol
-  | Scroll_up of int
   | Scroll_down of int
   | Show_cursor
   | Hide_cursor
@@ -58,3 +57,7 @@ module Make (_ : CONFIG) : TERMINAL
 
 (** Render spans to ANSI string *)
 val render_spans : span list -> string
+
+(** Scroll the viewport up by n lines using natural scrolling that preserves
+    the scrollback buffer.  Returns an escape string. *)
+val scroll_up : term_height:int -> int -> string

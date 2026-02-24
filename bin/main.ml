@@ -86,7 +86,7 @@ let make_init () : Frontend_types.model =
   let clamped = Frontend_types.clamp_prompt_top term_height row in
   let scroll_needed = row - clamped in
   if scroll_needed > 0 then begin
-    Stdlib.Printf.printf "\x1b[%dS" scroll_needed;
+    print_string (Terminal_ops.scroll_up ~term_height scroll_needed);
     Stdlib.flush Stdlib.stdout
   end;
   {
@@ -133,7 +133,7 @@ let print_repl_output model =
       let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
       let scroll_needed = natural - clamped in
       if scroll_needed > 0 then begin
-        Stdlib.Printf.printf "\x1b[%dS" scroll_needed;
+        print_string (Terminal_ops.scroll_up ~term_height:model.term_height scroll_needed);
         Stdlib.flush Stdlib.stdout
       end;
       {
@@ -247,7 +247,7 @@ let run env backend ~orig_termios =
               let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
               let scroll_needed = natural - clamped in
               if scroll_needed > 0 then begin
-                Stdlib.Printf.printf "\x1b[%dS" scroll_needed;
+                print_string (Terminal_ops.scroll_up ~term_height:model.term_height scroll_needed);
                 Stdlib.flush Stdlib.stdout
               end;
               loop { model with

@@ -27,7 +27,6 @@ type op =
   | Cursor_to of int * int
   | Cursor_shift of direction
   | Clear_to_eol
-  | Scroll_up of int
   | Scroll_down of int
   | Show_cursor
   | Hide_cursor
@@ -84,10 +83,18 @@ let render_op_ansi buf op =
       | Right n -> Printf.bprintf buf "%s%dC" csi n
       | Left n -> Printf.bprintf buf "%s%dD" csi n)
   | Clear_to_eol -> Printf.bprintf buf "%sK" csi
-  | Scroll_up n -> Printf.bprintf buf "%s%dS" csi n
   | Scroll_down n -> Printf.bprintf buf "%s%dT" csi n
   | Show_cursor -> Printf.bprintf buf "%s?25h" csi
   | Hide_cursor -> Printf.bprintf buf "%s?25l" csi
+
+(* Scroll the viewport up by n lines using natural scrolling (newlines at the
+   bottom row) so that the displaced lines are preserved in the scrollback
+   buffer.  CSI n S discards lines in many terminal emulators. *)
+let scroll_up ~term_height n =
+  let buf = Buffer.create (16 + n) in
+  Printf.bprintf buf "\x1b[%d;1H" term_height;
+  for _ = 1 to n do Buffer.add_char buf '\n' done;
+  Buffer.contents buf
 
 module Make (C : CONFIG) : TERMINAL = struct
   let render ops =
