@@ -7,6 +7,9 @@ let readline_prompt_max_length = 20
 let input_prompt = "input> "
 let shell_prompt = "shell> "
 
+let search_prompt_prefix = "r-search: "
+let search_prompt_suffix = "> "
+
 let prompt_width_for_mode mode =
   match mode with
   | Frontend_types.Readline rl_prompt ->
@@ -15,6 +18,10 @@ let prompt_width_for_mode mode =
       else String.length input_prompt
   | Frontend_types.Shell -> String.length shell_prompt
   | Frontend_types.Normal -> String.length prompt
+  | Frontend_types.History_search s ->
+      String.length search_prompt_prefix
+      + Unicode_string.display_width s
+      + String.length search_prompt_suffix
 
 let absolute_cursor_pos model =
   let prompt_width = prompt_width_for_mode model.mode in
@@ -111,7 +118,7 @@ let view_ops model =
   let total_rows = List.length wrapped in
 
   let show_cursor = match model.mode with
-    | Frontend_types.Readline _ -> true  (* Always show cursor in readline *)
+    | Frontend_types.Readline _ | Frontend_types.History_search _ -> true
     | _ -> not model.awaiting_response
   in
   add (if show_cursor then Show_cursor else Hide_cursor);
@@ -147,6 +154,12 @@ let view_ops model =
             else input_prompt
         | Shell, 0, _ -> shell_prompt
         | Readline _, _, _ | Frontend_types.Shell, _, _ -> assert false
+        | History_search search_input, 0, _ ->
+            let search_str = Unicode_string.to_string search_input in
+            search_prompt_prefix ^ search_str ^ search_prompt_suffix
+        | History_search s, _, _ ->
+            let pad_width = prompt_width_for_mode (History_search s) in
+            String.make pad_width ' '
         | Normal, 0, false -> prompt
         | Normal, 0, true -> pending_prompt
         | Normal, _, _ -> continued_prompt
@@ -206,7 +219,7 @@ let view_ops model =
   view_completions model ops;
 
   (* Position cursor: in output area during eval, in prompt otherwise.
-     Exception: during readline mode, always position in prompt area. *)
+     Exception: during readline/search mode, always position in prompt area. *)
   (match model.mode, model.awaiting_response with
    | Readline _, _ ->
        (* Readline mode: cursor in input area even if awaiting *)
@@ -217,6 +230,13 @@ let view_ops model =
      let cursor_abs_row = model.prompt_top_row + model.cursor_row in
      let cursor_abs_col = prompt_width + model.cursor_col + 1 in
      add (Cursor_to (cursor_abs_row, cursor_abs_col));
+   | History_search _, _ ->
+       (* History search: cursor in the search input within the prompt *)
+       let cursor_abs_row = model.prompt_top_row in
+       let cursor_abs_col =
+         String.length search_prompt_prefix + model.cursor_col + 1
+       in
+       add (Cursor_to (cursor_abs_row, cursor_abs_col))
    | Normal, true ->
        (* Awaiting response: cursor in output area *)
        let row, col = model.repl_cursor in

@@ -850,6 +850,16 @@ let apply_key_in_normal_mode key model =
   | Ctrl 'u' -> Continue (delete_before_cursor model)
   | Ctrl '\r' -> Continue (insert_newline model)
   | Ctrl 'p' -> Continue (shift_history model ~amount:1)
+  | Ctrl 'r' ->
+    Continue { model with
+      mode = History_search Unicode_string.empty;
+      lines = [ Unicode_string.empty ];
+      lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
+      cursor_pos = 0;
+      cursor_col = 0;
+      cursor_row = 0;
+      cursor_line = 0;
+    }
   | Ctrl 'a' -> Continue (go_to_line_start model)
   | Ctrl 'e' -> Continue (go_to_line_end model)
   | Other "next word" -> Continue (go_to_next_word model)
@@ -888,7 +898,7 @@ let apply_key key model =
   | Readline _ -> apply_key_in_readline_mode key model
   | Shell -> apply_key_in_shell_mode key model
   | Normal -> apply_key_in_normal_mode key model
-  | History_search _ -> apply_key_in_history_search_mode
+  | History_search _ -> History_search.apply_key key model
 
 let universal_corrections key model =
   model |> filter_completions |> handle_vertical_cursor_movement |> fun s ->
@@ -907,9 +917,15 @@ let sync_internal_coords model =
   { model with cursor_line; cursor_pos }
 
 let handle_key_input key model =
-  { model with scroll_amount = 0 }
-  |> handle_resize model.term_width model.term_height
-  |> sync_internal_coords |> apply_key key
+  let model =
+    { model with scroll_amount = 0 }
+    |> handle_resize model.term_width model.term_height
+  in
+  let model = match model.mode with
+    | History_search _ -> model
+    | _ -> sync_internal_coords model
+  in
+  model |> apply_key key
   |> function
   | Continue s -> Continue (universal_corrections key s)
   | other -> other
