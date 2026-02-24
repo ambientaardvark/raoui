@@ -34,6 +34,20 @@ let query_all database =
   in
   Dynarray.to_array results
 
+let query_with_string database s =
+  let stmt =
+    prepare database
+      "SELECT command FROM commands WHERE command LIKE ? ORDER BY id DESC LIMIT 1"
+  in
+  let () = bind stmt 1 (Data.TEXT s) |> ignore in
+  let _rc, result =
+    fold stmt ~init:"" ~f:(fun _acc row ->
+        match row.(0) with
+        | Data.TEXT s -> s
+        | _ -> failwith "unexpected data type in history")
+  in
+  result
+
 let create_table database =
   let rc =
     exec database
@@ -114,6 +128,9 @@ let rec go_forwards t ?current_prompt () =
   end
 
 let get_all t = query_all t.database
+
+let search_history t s =
+  query_with_string t.database s
 
 let close t =
   if not (db_close t.database) then failwith "failed to close history database"

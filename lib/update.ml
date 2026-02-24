@@ -606,12 +606,16 @@ let submit_in_normal_mode model =
           (model |> insert_newline
           |> repeat_n_times indent_spaces (fun m -> insert_char m ' '))
 
+let switch_to_normal_mode model =
+  Continue { model with mode = Normal }
+
 (* Submit router *)
 let submit model =
   match model.mode with
-  | Frontend_types.Readline _ -> submit_in_readline_mode model
-  | Frontend_types.Shell -> submit_in_shell_mode model
-  | Frontend_types.Normal -> submit_in_normal_mode model
+  | Readline _ -> submit_in_readline_mode model
+  | Shell -> submit_in_shell_mode model
+  | Normal -> submit_in_normal_mode model
+  | History_search _ -> switch_to_normal_mode model
 
 let handle_vertical_cursor_movement model =
   let width = effective_width model in
@@ -825,6 +829,7 @@ let apply_key_in_readline_mode key model =
       | Paste text -> Continue (insert_paste model text)
       | _ -> Continue model
 
+
 let apply_key_in_normal_mode key model =
   let open Tty_listener in
   (* Lock in completion on any key except Tab/Escape *)
@@ -880,9 +885,10 @@ let apply_key_in_normal_mode key model =
 (* Key handler router *)
 let apply_key key model =
   match model.mode with
-  | Frontend_types.Readline _ -> apply_key_in_readline_mode key model
-  | Frontend_types.Shell -> apply_key_in_shell_mode key model
-  | Frontend_types.Normal -> apply_key_in_normal_mode key model
+  | Readline _ -> apply_key_in_readline_mode key model
+  | Shell -> apply_key_in_shell_mode key model
+  | Normal -> apply_key_in_normal_mode key model
+  | History_search _ -> apply_key_in_history_search_mode
 
 let universal_corrections key model =
   model |> filter_completions |> handle_vertical_cursor_movement |> fun s ->
