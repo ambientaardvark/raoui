@@ -105,6 +105,8 @@ let multi_char_operators =
     ( ">=" | "<=" | "<-" | "->" | "<<-" | "->>" | ":::" | "::" | "|>" | "=="
     | "!=" | "%%" | "||" )]
 
+let comment = [%sedlex.regexp? "#", Star (Compl eof)]
+
 let operators = [%sedlex.regexp? Chars "+-*/%^&|=<>!$@~?:"]
 
 let read_double_quote prev buf =
@@ -202,6 +204,7 @@ let read_raw_string_start prefix buf =
 let read_normal buf =
   let open Sedlexing in
   match%sedlex buf with
+  | comment -> (COMMENT (Utf8.lexeme buf), Normal)
   | ('r' | 'R'), '"' -> read_raw_string_start (Utf8.lexeme buf) buf
   | '"' -> read_double_quote "\"" buf
   | '\'' -> read_single_quote "'" buf
