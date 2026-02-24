@@ -276,7 +276,7 @@ let print_type = function
 let lex_line mode line =
   let for_lexer = Sedlexing.Utf8.from_string line in
   let rec loop acc mode buf =
-    if List.length acc > 100 then
+    if List.length acc > 1000 then
       failwith
         (Printf.sprintf "too much iteration: %s"
            (acc |> List.map print_type |> String.concat ", "))
