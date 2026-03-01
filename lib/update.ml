@@ -378,8 +378,12 @@ let go_to_line_end model =
 let is_word_char s =
   if String.length s > 1 then true
   else
-    let c = String.get s 0 in
-    Char.Ascii.is_alphanum c
+    match String.get s 0 with
+    | ' ' | '\t' | '/' | ',' | '=' | '-' | '+' | '[' | ']' | '{' | '}'
+    | '(' | ')' | '|' | '\\' | '?' | '<' | '>' | '`' | '~' | '!' | '@'
+    | '#' | '$' | '%' | '^' | '&' | '*' | ';' | ':' | '\'' | '"' ->
+        false
+    | _ -> true
 
 let go_to_next_word model =
   let rec loop seen_word model =

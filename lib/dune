@@ -4,9 +4,6 @@
   unix
   eio
   eio_main
- zmq
- yojson
- cryptokit
  ptime
  uutf
   uuseg

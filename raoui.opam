@@ -13,10 +13,15 @@ depends: [
   "dune" {>= "3.20"}
   "ocaml"
   "eio"
+  "eio_main"
   "terminal_size"
   "uutf"
   "uuseg"
   "uucp"
+  "ptime"
+  "sqlite3"
+  "sedlex"
+  "alcotest" {with-test}
   "odoc" {with-doc}
 ]
 build: [

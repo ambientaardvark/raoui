@@ -50,8 +50,12 @@ let completion_col_offset model =
 let is_word_char s =
   if String.length s > 1 then true
   else
-    let c = String.get s 0 in
-    Char.Ascii.is_alphanum c
+    match String.get s 0 with
+    | ' ' | '\t' | '/' | ',' | '=' | '-' | '+' | '[' | ']' | '{' | '}'
+    | '(' | ')' | '|' | '\\' | '?' | '<' | '>' | '`' | '~' | '!' | '@'
+    | '#' | '$' | '%' | '^' | '&' | '*' | ';' | ':' | '\'' | '"' ->
+        false
+    | _ -> true
 
 let should_show_completions model =
   if model.cursor_pos < 2 || model.mode <> Frontend_types.Normal then false

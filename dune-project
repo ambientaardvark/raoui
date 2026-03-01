@@ -19,7 +19,18 @@
  (name raoui)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml eio terminal_size uutf uuseg uucp)
+ (depends
+  ocaml
+  eio
+  eio_main
+  terminal_size
+  uutf
+  uuseg
+  uucp
+  ptime
+  sqlite3
+  sedlex
+  (alcotest :with-test))
  (tags
   ("add topics" "to describe" your project)))
 

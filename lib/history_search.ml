@@ -132,7 +132,13 @@ let go_to_end model =
 
 let is_word_char s =
   if String.length s > 1 then true
-  else Char.Ascii.is_alphanum (String.get s 0)
+  else
+    match String.get s 0 with
+    | ' ' | '\t' | '/' | ',' | '=' | '-' | '+' | '[' | ']' | '{' | '}'
+    | '(' | ')' | '|' | '\\' | '?' | '<' | '>' | '`' | '~' | '!' | '@'
+    | '#' | '$' | '%' | '^' | '&' | '*' | ';' | ':' | '\'' | '"' ->
+        false
+    | _ -> true
 
 let go_to_next_word model =
   let search = get_input model in
