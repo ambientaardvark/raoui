@@ -41,7 +41,6 @@ type op =
   | Cursor_to of int * int       (** absolute position - row, col - 1-indexed *)
   | Cursor_shift of direction    (** relative movement *)
   | Clear_to_eol
-  | Scroll_down of int
   | Show_cursor
   | Hide_cursor
 

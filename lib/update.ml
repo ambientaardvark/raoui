@@ -648,12 +648,12 @@ let handle_vertical_cursor_movement model =
     else if cursor_term_row < 1 then 1 - cursor_term_row
     else 0
   in
-  let scrolls = scrolls_from_expansion + scrolls_from_cursor_movement in
   {
     model with
     prompt_box_height = new_height;
-    prompt_top_row = model.prompt_top_row + scrolls;
-    scroll_amount = scrolls;
+    prompt_top_row =
+      model.prompt_top_row + scrolls_from_expansion + scrolls_from_cursor_movement;
+    scroll_amount = scrolls_from_expansion;
   }
 
 let handle_resize new_width new_height model =

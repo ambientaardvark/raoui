@@ -139,8 +139,7 @@ let view_ops model =
     for _ = 1 to -model.scroll_amount do
       add Newline
     done
-  end
-  else if model.scroll_amount > 0 then add (Scroll_down model.scroll_amount);
+  end;
 
   let viewport_start = max 1 model.prompt_top_row in
   add (Cursor_to (viewport_start, 1));

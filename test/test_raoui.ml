@@ -312,9 +312,8 @@ let test_scroll_when_cursor_below_screen () =
   (* Send any key to trigger universal_corrections *)
   match Update.update (Update.Key (Tty_listener.Char 'a')) model with
   | Continue new_model ->
-      (* scroll_amount should be negative (scroll up) to bring cursor into view *)
-      (* cursor is at row 15, need to scroll up by 5 to get to row 10 *)
-      Alcotest.(check int) "scroll_amount" (-5) new_model.scroll_amount;
+      (* No physical scroll needed — just reposition the prompt *)
+      Alcotest.(check int) "scroll_amount" 0 new_model.scroll_amount;
       Alcotest.(check int) "prompt_top_row adjusted" 10 new_model.prompt_top_row
   | _ -> Alcotest.fail "Expected Continue result"
 

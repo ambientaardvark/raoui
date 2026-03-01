@@ -27,7 +27,6 @@ type op =
   | Cursor_to of int * int
   | Cursor_shift of direction
   | Clear_to_eol
-  | Scroll_down of int
   | Show_cursor
   | Hide_cursor
 
@@ -83,7 +82,6 @@ let render_op_ansi buf op =
       | Right n -> Printf.bprintf buf "%s%dC" csi n
       | Left n -> Printf.bprintf buf "%s%dD" csi n)
   | Clear_to_eol -> Printf.bprintf buf "%sK" csi
-  | Scroll_down n -> Printf.bprintf buf "%s%dT" csi n
   | Show_cursor -> Printf.bprintf buf "%s?25h" csi
   | Hide_cursor -> Printf.bprintf buf "%s?25l" csi
 
