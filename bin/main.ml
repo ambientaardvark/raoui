@@ -20,19 +20,19 @@ let restore_mode termio = Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH termio
 
 let set_solid_cursor () =
   print_string "\x1b[2 q";
-  Stdlib.flush Stdlib.stdout
+  flush stdout
 
 let enable_bracketed_paste () =
   print_string "\x1b[?2004h";
-  Stdlib.flush Stdlib.stdout
+  flush stdout
 
 let disable_bracketed_paste () =
   print_string "\x1b[?2004l";
-  Stdlib.flush Stdlib.stdout
+  flush stdout
 
 let get_cursor_position () =
   print_string "\x1b[6n";
-  Stdlib.flush Stdlib.stdout;
+  flush stdout;
   let buf = Buffer.create 16 in
   let rec read_until_r () =
     let c = input_char stdin in
@@ -43,7 +43,7 @@ let get_cursor_position () =
   in
   read_until_r ();
   let response = Buffer.contents buf in
-  Stdlib.Scanf.sscanf response "\x1b[%d;%d" (fun row col -> (row, col))
+  Scanf.sscanf response "\x1b[%d;%d" (fun row col -> (row, col))
 
 let get_term_dimensions () =
   let height =
@@ -68,7 +68,7 @@ let rec await_dim_change prev_width prev_height =
   else (w, h)
 
 let history_path =
-  match Stdlib.Sys.getenv_opt "HOME" with
+  match Sys.getenv_opt "HOME" with
   | Some home -> home ^ "/.raoui_history.db"
   | None -> ".raoui_history.db"
 
@@ -79,7 +79,7 @@ let make_init () : Frontend_types.model =
   let term_width, term_height = get_term_dimensions () in
   let lines = [ Unicode_string.empty ] in
   let running_in_ide =
-    match Stdlib.Sys.getenv_opt "TERM_PROGRAM" with
+    match Sys.getenv_opt "TERM_PROGRAM" with
     | Some "vscode" -> true
     | _ -> false
   in
@@ -87,7 +87,7 @@ let make_init () : Frontend_types.model =
   let scroll_needed = row - clamped in
   if scroll_needed > 0 then begin
     print_string (Terminal_ops.scroll_up ~term_height scroll_needed);
-    Stdlib.flush Stdlib.stdout
+    flush stdout
   end;
   {
     lines;
@@ -134,7 +134,7 @@ let print_repl_output model =
       let scroll_needed = natural - clamped in
       if scroll_needed > 0 then begin
         print_string (Terminal_ops.scroll_up ~term_height:model.term_height scroll_needed);
-        Stdlib.flush Stdlib.stdout
+        flush stdout
       end;
       {
         model with
@@ -148,7 +148,7 @@ let print_repl_output model =
       print_string (cursor_to row col);
       print_string "\x1b[J";
       print_string (Terminal_ops.render_spans spans);
-      Stdlib.flush Stdlib.stdout;
+      flush stdout;
       let new_row, new_col = get_cursor_position () in
       let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
       {
@@ -162,9 +162,9 @@ let handle_update_result backend = function
   | Frontend_types.Exit -> `Exit
   | Frontend_types.Cancel ->
       Ffi_backend.cancel backend;
-      Stdlib.flush Stdlib.stdout;
+      flush stdout;
       `Continue (make_init ())
-  | Frontend_types.Submit (text, _) when Stdlib.String.equal (String.trim text) "q()"
+  | Frontend_types.Submit (text, _) when String.equal (String.trim text) "q()"
     ->
       `Exit
   | Frontend_types.Submit (text, new_model) ->
@@ -180,14 +180,14 @@ let run env backend ~orig_termios =
   let init_model = make_init () in
   let init_width = init_model.term_width in
   let startup_file =
-    let dir = Stdlib.Filename.dirname Stdlib.Sys.executable_name in
-    let bundled = Stdlib.Filename.concat dir "startup.R" in
-    if Stdlib.Sys.file_exists bundled then bundled else "r_scripts/startup.R"
+    let dir = Filename.dirname Sys.executable_name in
+    let bundled = Filename.concat dir "startup.R" in
+    if Sys.file_exists bundled then bundled else "r_scripts/startup.R"
   in
   Ffi_backend.background_submit backend (Printf.sprintf "source('%s')" startup_file);
   Ffi_backend.background_submit backend (Printf.sprintf "options(width=%d)" init_width);
   let model_after_cached =
-    Stdlib.List.fold_left
+    List.fold_left
       (fun m key ->
         match handle_update_result backend (Update.update (Update.Key key) m) with
         | `Exit -> m
@@ -198,7 +198,7 @@ let run env backend ~orig_termios =
   let rec loop model =
     let _ = Ffi_backend.poll_ready backend in
     print_string (View.view model);
-    Stdlib.flush Stdlib.stdout;
+    flush stdout;
     let msg =
         Eio.Fiber.any
           [
@@ -248,7 +248,7 @@ let run env backend ~orig_termios =
               let scroll_needed = natural - clamped in
               if scroll_needed > 0 then begin
                 print_string (Terminal_ops.scroll_up ~term_height:model.term_height scroll_needed);
-                Stdlib.flush Stdlib.stdout
+                flush stdout
               end;
               loop { model with
                 prompt_top_row = clamped;
@@ -301,7 +301,7 @@ let () =
   let orig = set_raw_mode () in
   set_solid_cursor ();
   enable_bracketed_paste ();
-  Stdlib.Fun.protect
+  Fun.protect
     (fun () -> run env backend ~orig_termios:orig)
     ~finally:(fun () ->
       disable_bracketed_paste ();
