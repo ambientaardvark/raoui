@@ -85,6 +85,13 @@ let render_op_ansi buf op =
   | Show_cursor -> Printf.bprintf buf "%s?25h" csi
   | Hide_cursor -> Printf.bprintf buf "%s?25l" csi
 
+let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
+let clear_to_eos = "\x1b[J"
+let solid_cursor = "\x1b[2 q"
+let enable_bracketed_paste = "\x1b[?2004h"
+let disable_bracketed_paste = "\x1b[?2004l"
+let cursor_position_request = "\x1b[6n"
+
 (* Scroll the viewport up by n lines using natural scrolling (newlines at the
    bottom row) so that the displaced lines are preserved in the scrollback
    buffer.  CSI n S discards lines in many terminal emulators. *)

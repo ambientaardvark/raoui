@@ -19,19 +19,19 @@ let set_raw_mode () =
 let restore_mode termio = Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH termio
 
 let set_solid_cursor () =
-  print_string "\x1b[2 q";
+  print_string Terminal_ops.solid_cursor;
   flush stdout
 
 let enable_bracketed_paste () =
-  print_string "\x1b[?2004h";
+  print_string Terminal_ops.enable_bracketed_paste;
   flush stdout
 
 let disable_bracketed_paste () =
-  print_string "\x1b[?2004l";
+  print_string Terminal_ops.disable_bracketed_paste;
   flush stdout
 
 let get_cursor_position () =
-  print_string "\x1b[6n";
+  print_string Terminal_ops.cursor_position_request;
   flush stdout;
   let buf = Buffer.create 16 in
   let rec read_until_r () =
@@ -116,8 +116,6 @@ let make_init () : Frontend_types.model =
     mode = Frontend_types.Normal;
   }
 
-let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
-
 (* NOTE: This clears from repl_cursor to end of screen before printing output,
    which erases any prompt the user typed while waiting. View then repaints.
    This may not work correctly with output that uses cursor movement (e.g.
@@ -145,8 +143,8 @@ let print_repl_output model =
       }
   | Some spans ->
       let row, col = model.repl_cursor in
-      print_string (cursor_to row col);
-      print_string "\x1b[J";
+      print_string (Terminal_ops.cursor_to row col);
+      print_string Terminal_ops.clear_to_eos;
       print_string (Terminal_ops.render_spans spans);
       flush stdout;
       let new_row, new_col = get_cursor_position () in
