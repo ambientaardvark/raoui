@@ -182,38 +182,27 @@ let insert_paste model text =
 
 let apply_key key model =
   let open Tty_listener in
-  match key with
-  | Ctrl 'c' | Escape ->
-    Continue (cancel model)
-  | Enter ->
-    Continue (submit model)
-  | Up | Down | Ctrl 'p' ->
-    Continue model
-  | Ctrl 'd' ->
-    let search = get_input model in
-    if Unicode_string.is_empty search then Continue (cancel model)
-    else Continue (delete_char_after model |> search_and_update)
-  | Ctrl 'u' ->
-    Continue (delete_before_cursor model |> search_and_update)
-  | Ctrl 'a' ->
-    Continue (go_to_start model)
-  | Ctrl 'e' ->
-    Continue (go_to_end model)
-  | Other "next word" ->
-    Continue (go_to_next_word model)
-  | Other "last word" ->
-    Continue (go_to_last_word model)
-  | Char c ->
-    Continue (insert_char model c |> search_and_update)
-  | Backspace ->
-    let search = get_input model in
-    if Unicode_string.is_empty search then Continue (cancel model)
-    else Continue (delete_char model |> search_and_update)
-  | Left ->
-    Continue (move_left model)
-  | Right ->
-    Continue (move_right model)
-  | Paste text ->
-    Continue (insert_paste model text |> search_and_update)
-  | _ ->
-    Continue model
+  let m = match key with
+    | Ctrl 'c' | Escape -> cancel model
+    | Enter -> submit model
+    | Up | Down | Ctrl 'p' -> model
+    | Ctrl 'd' ->
+      let search = get_input model in
+      if Unicode_string.is_empty search then cancel model
+      else delete_char_after model |> search_and_update
+    | Ctrl 'u' -> delete_before_cursor model |> search_and_update
+    | Ctrl 'a' -> go_to_start model
+    | Ctrl 'e' -> go_to_end model
+    | Other "next word" -> go_to_next_word model
+    | Other "last word" -> go_to_last_word model
+    | Char c -> insert_char model c |> search_and_update
+    | Backspace ->
+      let search = get_input model in
+      if Unicode_string.is_empty search then cancel model
+      else delete_char model |> search_and_update
+    | Left -> move_left model
+    | Right -> move_right model
+    | Paste text -> insert_paste model text |> search_and_update
+    | _ -> model
+  in
+  (m, [])

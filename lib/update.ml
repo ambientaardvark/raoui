@@ -562,12 +562,10 @@ let submit_in_shell_mode model =
     Printf.sprintf "system(r\"%s(%s)%s\")" guard text guard
   in
   History.add_to_history model.history model.lines;
-  Submit (r_command, clear_model_for_submit { model with mode = Normal })
+  (clear_model_for_submit { model with mode = Normal }, [Repl_effect.Submit r_command])
 
 let submit_in_readline_mode model =
-  (* In readline mode: submit single line as input *)
   let text = Unicode_string.to_string (current_line model) in
-  Ffi_backend.submit_readline_input text;
   let new_model =
     {
       model with
@@ -578,20 +576,22 @@ let submit_in_readline_mode model =
       cursor_col = 0;
       cursor_line = 0;
       cursor_pos = 0;
-      (* Keep awaiting_response = true: R is still evaluating *)
     }
   in
-  Continue new_model
+  (new_model, [Repl_effect.SubmitReadlineInput text])
 
 let submit_normal_text model =
   let text =
     String.concat "\n" (List.map Unicode_string.to_string model.lines)
   in
   History.add_to_history model.history model.lines;
-  Submit (text, clear_model_for_submit model)
+  if String.equal (String.trim text) "q()" then
+    (model, [Repl_effect.Quit])
+  else
+    (clear_model_for_submit model, [Repl_effect.Submit text])
 
 let submit_in_normal_mode model =
-  if inside_empty_brackets model then Continue (expand_empty_brackets model)
+  if inside_empty_brackets model then (expand_empty_brackets model, [])
   else if at_empty_line model then submit_normal_text model
   else
     let tokens = tokens_before_cursor model in
@@ -606,12 +606,8 @@ let submit_in_normal_mode model =
         let rec repeat_n_times n f m =
           if n <= 0 then m else repeat_n_times (n - 1) f (f m)
         in
-        Continue
-          (model |> insert_newline
-          |> repeat_n_times indent_spaces (fun m -> insert_char m ' '))
-
-let switch_to_normal_mode model =
-  Continue { model with mode = Normal }
+        (model |> insert_newline
+         |> repeat_n_times indent_spaces (fun m -> insert_char m ' '), [])
 
 (* Submit router *)
 let submit model =
@@ -619,7 +615,7 @@ let submit model =
   | Readline _ -> submit_in_readline_mode model
   | Shell -> submit_in_shell_mode model
   | Normal -> submit_in_normal_mode model
-  | History_search _ -> switch_to_normal_mode model
+  | History_search _ -> ({ model with mode = Normal }, [])
 
 let handle_vertical_cursor_movement model =
   let width = effective_width model in
@@ -761,15 +757,12 @@ let apply_key_in_shell_mode key model =
   let open Tty_listener in
   match key with
   | Ctrl 'c' ->
-      Continue (set_mode_normal_blank model)
+      (set_mode_normal_blank model, [])
   | Ctrl 'p' | Up | Down ->
-      (* No history navigation in shell mode *)
-      Continue model
+      (model, [])
   | Enter ->
-      (* Enter always submits in shell mode *)
       submit model
   | _ ->
-      (* All other editing keys work normally *)
       let model = match key with
         | Tab | Escape -> model
         | _ -> (match model.completion with
@@ -779,37 +772,31 @@ let apply_key_in_shell_mode key model =
       in
       match key with
       | Ctrl 'd' ->
-          if is_empty_input model then Continue (set_mode_normal_blank model)
-          else Continue (delete_char_after_cursor model)
-      | Ctrl 'u' -> Continue (delete_before_cursor model)
-      | Ctrl 'a' -> Continue (go_to_line_start model)
-      | Ctrl 'e' -> Continue (go_to_line_end model)
-      | Other "next word" -> Continue (go_to_next_word model)
-      | Other "last word" -> Continue (go_to_last_word model)
-      | Char c -> Continue (user_input_char model c)
-      | Backspace when prompt_is_empty model -> Continue (set_mode_normal_blank model)
-      | Backspace -> Continue (user_input_delete model)
-      | Left -> Continue (move_left model)
-      | Right -> Continue (move_right model)
-      | Paste text -> Continue (insert_paste model text)
-      | _ -> Continue model
+          if is_empty_input model then (set_mode_normal_blank model, [])
+          else (delete_char_after_cursor model, [])
+      | Ctrl 'u' -> (delete_before_cursor model, [])
+      | Ctrl 'a' -> (go_to_line_start model, [])
+      | Ctrl 'e' -> (go_to_line_end model, [])
+      | Other "next word" -> (go_to_next_word model, [])
+      | Other "last word" -> (go_to_last_word model, [])
+      | Char c -> (user_input_char model c, [])
+      | Backspace when prompt_is_empty model -> (set_mode_normal_blank model, [])
+      | Backspace -> (user_input_delete model, [])
+      | Left -> (move_left model, [])
+      | Right -> (move_right model, [])
+      | Paste text -> (insert_paste model text, [])
+      | _ -> (model, [])
 
 let apply_key_in_readline_mode key model =
   let open Tty_listener in
   match key with
   | Ctrl 'c' ->
-      (* Ctrl-C in readline mode: submit empty string and exit *)
-      (* TODO: update should not be calling backend directly *)
-      Ffi_backend.submit_readline_input "";
-      Continue (set_mode_normal_blank model)
+      (set_mode_normal_blank model, [Repl_effect.SubmitReadlineInput ""])
   | Ctrl 'p' | Up | Down ->
-      (* No history navigation in readline mode *)
-      Continue model
+      (model, [])
   | Enter ->
-      (* Enter always submits in readline mode *)
       submit model
   | _ ->
-      (* All other editing keys work normally *)
       let model = match key with
         | Tab | Escape -> model
         | _ -> (match model.completion with
@@ -819,24 +806,23 @@ let apply_key_in_readline_mode key model =
       in
       match key with
       | Ctrl 'd' ->
-          if is_empty_input model then Exit
-          else Continue (delete_char_after_cursor model)
-      | Ctrl 'u' -> Continue (delete_before_cursor model)
-      | Ctrl 'a' -> Continue (go_to_line_start model)
-      | Ctrl 'e' -> Continue (go_to_line_end model)
-      | Other "next word" -> Continue (go_to_next_word model)
-      | Other "last word" -> Continue (go_to_last_word model)
-      | Char c -> Continue (user_input_char model c)
-      | Backspace -> Continue (user_input_delete model)
-      | Left -> Continue (move_left model)
-      | Right -> Continue (move_right model)
-      | Paste text -> Continue (insert_paste model text)
-      | _ -> Continue model
+          if is_empty_input model then (model, [Repl_effect.Quit])
+          else (delete_char_after_cursor model, [])
+      | Ctrl 'u' -> (delete_before_cursor model, [])
+      | Ctrl 'a' -> (go_to_line_start model, [])
+      | Ctrl 'e' -> (go_to_line_end model, [])
+      | Other "next word" -> (go_to_next_word model, [])
+      | Other "last word" -> (go_to_last_word model, [])
+      | Char c -> (user_input_char model c, [])
+      | Backspace -> (user_input_delete model, [])
+      | Left -> (move_left model, [])
+      | Right -> (move_right model, [])
+      | Paste text -> (insert_paste model text, [])
+      | _ -> (model, [])
 
 
 let apply_key_in_normal_mode key model =
   let open Tty_listener in
-  (* Lock in completion on any key except Tab/Escape *)
   let model = match key with
     | Tab | Escape -> model
     | _ -> (match model.completion with
@@ -845,17 +831,17 @@ let apply_key_in_normal_mode key model =
         | _ -> model)
   in
   match key with
-  | Ctrl 'c' when model.awaiting_response -> Cancel
-  | Ctrl 'p' when model.awaiting_response -> Continue model
+  | Ctrl 'c' when model.awaiting_response -> (model, [Repl_effect.Cancel])
+  | Ctrl 'p' when model.awaiting_response -> (model, [])
   | Ctrl 'd' ->
-      if is_empty_input model then Exit
-      else Continue (delete_char_after_cursor model)
+      if is_empty_input model then (model, [Repl_effect.Quit])
+      else (delete_char_after_cursor model, [])
   | Enter -> submit model
-  | Ctrl 'u' -> Continue (delete_before_cursor model)
-  | Ctrl '\r' -> Continue (insert_newline model)
-  | Ctrl 'p' -> Continue (shift_history model ~amount:1)
+  | Ctrl 'u' -> (delete_before_cursor model, [])
+  | Ctrl '\r' -> (insert_newline model, [])
+  | Ctrl 'p' -> (shift_history model ~amount:1, [])
   | Ctrl 'r' ->
-    Continue { model with
+    ({ model with
       mode = History_search Unicode_string.empty;
       lines = [ Unicode_string.empty ];
       lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
@@ -863,38 +849,38 @@ let apply_key_in_normal_mode key model =
       cursor_col = 0;
       cursor_row = 0;
       cursor_line = 0;
-    }
-  | Ctrl 'a' -> Continue (go_to_line_start model)
-  | Ctrl 'e' -> Continue (go_to_line_end model)
-  | Other "next word" -> Continue (go_to_next_word model)
-  | Other "last word" -> Continue (go_to_last_word model)
+    }, [])
+  | Ctrl 'a' -> (go_to_line_start model, [])
+  | Ctrl 'e' -> (go_to_line_end model, [])
+  | Other "next word" -> (go_to_next_word model, [])
+  | Other "last word" -> (go_to_last_word model, [])
   | Char ';' when prompt_is_empty model ->
-    Continue { model with mode = Frontend_types.Shell }
-  | Char c -> Continue (user_input_char model c)
-  | Backspace -> Continue (user_input_delete model)
-  | Left -> Continue (move_left model)
-  | Right -> Continue (move_right model)
+    ({ model with mode = Frontend_types.Shell }, [])
+  | Char c -> (user_input_char model c, [])
+  | Backspace -> (user_input_delete model, [])
+  | Left -> (move_left model, [])
+  | Right -> (move_right model, [])
   | Up ->
       if at_first_line model || Option.is_some model.flipping_through_history
-      then Continue (shift_history model ~amount:1)
-      else Continue (move_up model)
+      then (shift_history model ~amount:1, [])
+      else (move_up model, [])
   | Down ->
       if at_last_line model || Option.is_some model.flipping_through_history
-      then Continue (shift_history model ~amount:(-1))
-      else Continue (move_down model)
-  | Paste text -> Continue (insert_paste model text)
+      then (shift_history model ~amount:(-1), [])
+      else (move_down model, [])
+  | Paste text -> (insert_paste model text, [])
   | Tab ->
-    Continue (handle_tab model)
+    (handle_tab model, [])
   | Escape -> (
       match model.completion with
       | Some cs when Completion.is_in_completion_mode cs ->
           let token_start = Completion.token_start cs in
           let original = Completion.original_token cs in
           let reverted = replace_token model token_start original in
-          Continue { reverted with completion = None }
-      | Some _ -> Continue { model with completion = None }
-      | None -> Continue model)
-  | _ -> Continue model
+          ({ reverted with completion = None }, [])
+      | Some _ -> ({ model with completion = None }, [])
+      | None -> (model, []))
+  | _ -> (model, [])
 
 (* Key handler router *)
 let apply_key key model =
@@ -928,10 +914,8 @@ let handle_key_input key model =
     | History_search _ -> model
     | _ -> sync_internal_coords model
   in
-  model |> apply_key key
-  |> function
-  | Continue s -> Continue (universal_corrections key s)
-  | other -> other
+  let m, effects = apply_key key model in
+  (universal_corrections key m, effects)
 
 let process_response model =
   match model.backend_response with
@@ -978,22 +962,43 @@ let process_response model =
         mode;
       }
 
+let completion_effects model =
+  let in_completion_mode = match model.completion with
+    | Some cs when Completion.is_in_completion_mode cs -> true
+    | _ -> false
+  in
+  if not model.awaiting_response && not in_completion_mode then
+    match List.nth_opt model.lines model.cursor_line with
+    | Some line ->
+        let text = Unicode_string.to_string line in
+        [Repl_effect.RequestCompletions (text, model.cursor_pos)]
+    | None -> []
+  else []
+
 let update msg model =
   let model = { model with scroll_amount = 0 } in
   match msg with
   | Key key ->
-      (match handle_key_input key model with
-       | Continue m -> Continue { m with completion_dirty = true }
-       | other -> other)
+      let m, effects = handle_key_input key model in
+      if effects <> [] then (m, effects)
+      else
+        let m = { m with completion_dirty = true } in
+        let effects = completion_effects m in
+        let m = { m with completion_dirty = false } in
+        (m, effects)
   | Response response ->
       (match response with
-       | Ffi_backend.Shutdown -> Exit
+       | Ffi_backend.Shutdown -> (model, [Repl_effect.Quit])
        | _ ->
-           { model with backend_response = Some response }
-           |> process_response
-           |> handle_vertical_cursor_movement
-           |> fun m -> Continue m)
+           let m =
+             { model with backend_response = Some response }
+             |> process_response
+             |> handle_vertical_cursor_movement
+           in
+           (m, []))
   | TermResize (width, height) ->
-      handle_resize width height model
-      |> handle_vertical_cursor_movement
-      |> fun m -> Continue m
+      let m =
+        handle_resize width height model
+        |> handle_vertical_cursor_movement
+      in
+      (m, [])

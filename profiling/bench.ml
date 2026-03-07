@@ -53,11 +53,9 @@ let iterations = 10_000
 
 let run_case model key =
   for _ = 1 to iterations do
-    match Update.update key model with
-    | Frontend_types.Continue m ->
-        let _ = V.view m in
-        ()
-    | _ -> ()
+    let m, _ = Update.update key model in
+    let _ = V.view m in
+    ()
   done
 
 let () =

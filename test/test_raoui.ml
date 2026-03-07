@@ -1,6 +1,23 @@
 open Raoui
 open Frontend_types
 
+type test_result =
+  | Continue of model
+  | Submit of string * model
+  | Exit
+  | Cancel
+
+let classify (m, effects) =
+  match effects with
+  | [] -> Continue m
+  | [Repl_effect.Submit t] -> Submit (t, m)
+  | [Repl_effect.Quit] -> Exit
+  | [Repl_effect.Cancel] -> Cancel
+  | _ -> Continue m
+
+let update msg model = classify (Update.update msg model)
+let submit model = classify (Update.submit model)
+
 (* Helper to extract text from spans for testing *)
 let spans_to_text = function
   | None -> None
@@ -97,8 +114,9 @@ let insert_many model n =
   let rec loop s n =
     if n = 0 then s
     else
-      let res = Update.update (Update.Key (Tty_listener.Char 'a')) s in
-      match res with Continue s' -> loop s' (n - 1) | _ -> s
+      let s' = match update (Update.Key (Tty_listener.Char 'a')) s with
+        | Continue m -> m | _ -> s in
+      loop s' (n - 1)
   in
   loop model n
 
@@ -114,7 +132,7 @@ let test_wrap_crash () =
   Alcotest.(check int) "cursor col after insertion" 1 model.cursor_col;
 
   (* Now try to move cursor. *)
-  let res_left = Update.update (Update.Key Tty_listener.Left) model in
+  let res_left = update (Update.Key Tty_listener.Left) model in
   match res_left with
   | Continue _ -> Alcotest.(check bool) "move left success" true true
   | _ -> Alcotest.fail "Failed to move left"
@@ -149,7 +167,7 @@ let test_resize_crash () =
   (* Specifically when inserting a char or doing an action that uses the old cursor position *)
   try
     let res =
-      Update.update (Update.Key (Tty_listener.Char 'b'))
+      update (Update.Key (Tty_listener.Char 'b'))
         { model with term_width = new_width }
     in
     match res with
@@ -172,7 +190,7 @@ let test_resize_narrower_crash () =
 
   try
     let res =
-      Update.update (Update.Key (Tty_listener.Char 'b'))
+      update (Update.Key (Tty_listener.Char 'b'))
         { model with term_width = new_width }
     in
     match res with
@@ -189,7 +207,7 @@ let test_submit_basic () =
 
   Alcotest.(check string) "lines before submit" "aaaaa" (first_line_str model);
 
-  match Update.submit model with
+  match submit model with
   | Submit (text, new_model) ->
       Alcotest.(check string) "submitted text" "aaaaa" text;
       Alcotest.(check bool) "awaiting_response" true new_model.awaiting_response;
@@ -204,7 +222,7 @@ let test_submit_prompt_position () =
   let model = insert_many model 5 in
 
   (* Single line of 5 chars, so 1 row *)
-  match Update.submit model with
+  match submit model with
   | Submit (_, new_model) ->
       (* repl_cursor should be at row after the prompt box *)
       let repl_row, _ = new_model.repl_cursor in
@@ -318,7 +336,7 @@ let test_scroll_when_cursor_below_screen () =
   in
 
   (* Send any key to trigger universal_corrections *)
-  match Update.update (Update.Key (Tty_listener.Char 'a')) model with
+  match update (Update.Key (Tty_listener.Char 'a')) model with
   | Continue new_model ->
       (* No physical scroll needed — just reposition the prompt *)
       Alcotest.(check int) "scroll_amount" 0 new_model.scroll_amount;
@@ -333,7 +351,7 @@ let test_submit_scrolls_when_at_bottom () =
   in
   let model = insert_many model 3 in
 
-  match Update.submit model with
+  match submit model with
   | Submit (_, new_model) ->
       (* output_row would be 11, new_prompt_top would be 12 *)
       (* need to scroll up by 2 to fit *)
@@ -510,7 +528,7 @@ let test_typing_while_awaiting () =
   let width = 10 in
   let model = { (initial_model width) with awaiting_response = true } in
 
-  match Update.update (Update.Key (Tty_listener.Char 'a')) model with
+  match update (Update.Key (Tty_listener.Char 'a')) model with
   | Continue new_model ->
       Alcotest.(check string) "char inserted" "a" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected Continue with char inserted"
@@ -524,7 +542,7 @@ let test_submit_blocked_while_awaiting () =
     }
   in
 
-  match Update.update (Update.Key (Tty_listener.Ctrl 'p')) model with
+  match update (Update.Key (Tty_listener.Ctrl 'p')) model with
   | Continue new_model ->
       (* Submit should be blocked, model unchanged *)
       Alcotest.(check string)
@@ -537,7 +555,7 @@ let test_cancel_while_awaiting () =
   let width = 10 in
   let model = { (initial_model width) with awaiting_response = true } in
 
-  match Update.update (Update.Key (Tty_listener.Ctrl 'c')) model with
+  match update (Update.Key (Tty_listener.Ctrl 'c')) model with
   | Cancel -> Alcotest.(check bool) "cancel works" true true
   | _ -> Alcotest.fail "Expected Cancel"
 
@@ -552,7 +570,7 @@ let test_backspace_while_awaiting () =
       ~line:0 ~pos:2
   in
 
-  match Update.update (Update.Key Tty_listener.Backspace) model with
+  match update (Update.Key Tty_listener.Backspace) model with
   | Continue new_model ->
       Alcotest.(check string) "backspace works" "a" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected Continue"
@@ -562,7 +580,7 @@ let test_left_at_start () =
   let width = 10 in
   let model = initial_model width in
 
-  match Update.update (Update.Key Tty_listener.Left) model with
+  match update (Update.Key Tty_listener.Left) model with
   | Continue new_model ->
       Alcotest.(check int) "col stays 0" 0 new_model.cursor_col;
       Alcotest.(check int) "row stays 0" 0 new_model.cursor_row
@@ -576,7 +594,7 @@ let test_right_at_end () =
       ~line:0 ~pos:2
   in
 
-  match Update.update (Update.Key Tty_listener.Right) model with
+  match update (Update.Key Tty_listener.Right) model with
   | Continue new_model ->
       Alcotest.(check int) "col stays at end" 2 new_model.cursor_col
   | _ -> Alcotest.fail "Expected Continue"
@@ -589,19 +607,19 @@ let test_cursor_moves_over_wide_grapheme () =
       ~line:0 ~pos:0
   in
   let model =
-    match Update.update (Update.Key Tty_listener.Right) model with
+    match update (Update.Key Tty_listener.Right) model with
     | Continue new_model -> new_model
     | _ -> Alcotest.fail "Expected Continue after first right"
   in
   Alcotest.(check int) "col after 'a'" 1 model.cursor_col;
   let model =
-    match Update.update (Update.Key Tty_listener.Right) model with
+    match update (Update.Key Tty_listener.Right) model with
     | Continue new_model -> new_model
     | _ -> Alcotest.fail "Expected Continue after second right"
   in
   Alcotest.(check int) "col after '中'" 3 model.cursor_col;
   let model =
-    match Update.update (Update.Key Tty_listener.Left) model with
+    match update (Update.Key Tty_listener.Left) model with
     | Continue new_model -> new_model
     | _ -> Alcotest.fail "Expected Continue after left"
   in
@@ -615,19 +633,19 @@ let test_cursor_moves_over_emoji_zwj () =
       ~line:0 ~pos:0
   in
   let model =
-    match Update.update (Update.Key Tty_listener.Right) model with
+    match update (Update.Key Tty_listener.Right) model with
     | Continue new_model -> new_model
     | _ -> Alcotest.fail "Expected Continue after first right"
   in
   Alcotest.(check int) "col after 'a'" 1 model.cursor_col;
   let model =
-    match Update.update (Update.Key Tty_listener.Right) model with
+    match update (Update.Key Tty_listener.Right) model with
     | Continue new_model -> new_model
     | _ -> Alcotest.fail "Expected Continue after second right"
   in
   Alcotest.(check int) "col after emoji" 3 model.cursor_col;
   let model =
-    match Update.update (Update.Key Tty_listener.Left) model with
+    match update (Update.Key Tty_listener.Left) model with
     | Continue new_model -> new_model
     | _ -> Alcotest.fail "Expected Continue after left"
   in
@@ -637,7 +655,7 @@ let test_backspace_at_start () =
   let width = 10 in
   let model = initial_model width in
 
-  match Update.update (Update.Key Tty_listener.Backspace) model with
+  match update (Update.Key Tty_listener.Backspace) model with
   | Continue new_model ->
       Alcotest.(check string)
         "empty line unchanged" "" (first_line_str new_model)
@@ -651,7 +669,7 @@ let test_backspace_merges_lines () =
       ~line:1 ~pos:0
   in
 
-  match Update.update (Update.Key Tty_listener.Backspace) model with
+  match update (Update.Key Tty_listener.Backspace) model with
   | Continue new_model ->
       Alcotest.(check int) "lines merged" 1 (List.length new_model.lines);
       Alcotest.(check string)
@@ -666,7 +684,7 @@ let test_newline_splits_line () =
       ~line:0 ~pos:5
   in
 
-  match Update.update (Update.Key (Tty_listener.Ctrl '\r')) model with
+  match update (Update.Key (Tty_listener.Ctrl '\r')) model with
   | Continue new_model ->
       Alcotest.(check int) "two lines" 2 (List.length new_model.lines);
       Alcotest.(check (list string))
@@ -678,7 +696,7 @@ let test_ctrl_d_exit_on_empty () =
   let width = 10 in
   let model = initial_model width in
 
-  match Update.update (Update.Key (Tty_listener.Ctrl 'd')) model with
+  match update (Update.Key (Tty_listener.Ctrl 'd')) model with
   | Exit -> Alcotest.(check bool) "exits on empty" true true
   | _ -> Alcotest.fail "Expected Exit"
 
@@ -690,7 +708,7 @@ let test_ctrl_d_deletes_char () =
       ~line:0 ~pos:0
   in
 
-  match Update.update (Update.Key (Tty_listener.Ctrl 'd')) model with
+  match update (Update.Key (Tty_listener.Ctrl 'd')) model with
   | Continue new_model ->
       Alcotest.(check string) "char deleted" "b" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected Continue"
@@ -703,7 +721,7 @@ let test_submit_multiline () =
       ~line:2 ~pos:2
   in
 
-  match Update.submit model with
+  match submit model with
   | Submit (text, new_model) ->
       Alcotest.(check string) "submitted text" "c(1,\n2,\n3)" text;
       Alcotest.(check bool) "awaiting_response" true new_model.awaiting_response;
@@ -720,7 +738,7 @@ let test_submit_continuation_if_paren () =
       ~line:0
       ~pos:(Unicode_string.length line)
   in
-  match Update.submit model with
+  match submit model with
   | Continue new_model ->
       Alcotest.(check int) "lines count" 2 (List.length new_model.lines);
       Alcotest.(check string)
@@ -736,7 +754,7 @@ let test_submit_continuation_function_paren () =
       ~line:0
       ~pos:(Unicode_string.length line)
   in
-  match Update.submit model with
+  match submit model with
   | Continue new_model ->
       Alcotest.(check int) "lines count" 2 (List.length new_model.lines);
       Alcotest.(check string)
@@ -752,7 +770,7 @@ let test_submit_if_braced_single_line () =
       ~line:0
       ~pos:(Unicode_string.length line)
   in
-  match Update.submit model with
+  match submit model with
   | Submit (text, _new_model) ->
       Alcotest.(check string) "submitted text" "if (x) { 1 }" text
   | _ -> Alcotest.fail "Expected Submit for if (x) { 1 }"
@@ -766,7 +784,7 @@ let test_submit_lambda_body_same_line () =
       ~line:0
       ~pos:(Unicode_string.length line)
   in
-  match Update.submit model with
+  match submit model with
   | Submit (text, _new_model) ->
       Alcotest.(check string) "submitted text" "map_dbl(li, \\(x) x + 1)" text
   | _ -> Alcotest.fail "Expected Submit for lambda body on same line"
@@ -774,7 +792,7 @@ let test_submit_lambda_body_same_line () =
 let test_paste_simple () =
   let width = 40 in
   let model = initial_model width in
-  match Update.update (Update.Key (Tty_listener.Paste "hello")) model with
+  match update (Update.Key (Tty_listener.Paste "hello")) model with
   | Continue new_model ->
       Alcotest.(check (list string))
         "lines" [ "hello" ]
@@ -786,7 +804,7 @@ let test_paste_multiline () =
   let width = 40 in
   let model = initial_model width in
   match
-    Update.update (Update.Key (Tty_listener.Paste "line1\nline2\nline3")) model
+    update (Update.Key (Tty_listener.Paste "line1\nline2\nline3")) model
   with
   | Continue new_model ->
       Alcotest.(check (list string))
@@ -804,7 +822,7 @@ let test_paste_at_cursor () =
       (with_lines (initial_model width) [ us "helloworld" ])
       ~line:0 ~pos:5
   in
-  match Update.update (Update.Key (Tty_listener.Paste "XXX")) model with
+  match update (Update.Key (Tty_listener.Paste "XXX")) model with
   | Continue new_model ->
       Alcotest.(check (list string))
         "lines" [ "helloXXXworld" ]
@@ -819,7 +837,7 @@ let test_paste_multiline_at_cursor () =
       (with_lines (initial_model width) [ us "helloworld" ])
       ~line:0 ~pos:5
   in
-  match Update.update (Update.Key (Tty_listener.Paste "A\nB\nC")) model with
+  match update (Update.Key (Tty_listener.Paste "A\nB\nC")) model with
   | Continue new_model ->
       Alcotest.(check (list string))
         "lines"
@@ -833,7 +851,7 @@ let test_paste_truncates_large () =
   let width = 40 in
   let model = initial_model width in
   let large_text = String.make 10000 'x' in
-  match Update.update (Update.Key (Tty_listener.Paste large_text)) model with
+  match update (Update.Key (Tty_listener.Paste large_text)) model with
   | Continue new_model ->
       let total_len =
         List.fold_left ( + ) 0
@@ -851,7 +869,7 @@ let test_lex_cache_single_line_edit () =
       ~line:0
       ~pos:(Unicode_string.length line)
   in
-  match Update.update (Update.Key (Tty_listener.Char ')')) model with
+  match update (Update.Key (Tty_listener.Char ')')) model with
   | Continue new_model ->
       check_lex_cache ~msg:"lex cache matches after single-line edit" new_model
   | _ -> Alcotest.fail "Expected Continue"
@@ -866,7 +884,7 @@ let test_lex_cache_multiline_mode_change () =
       ~line:0
       ~pos:(Unicode_string.length line0)
   in
-  match Update.update (Update.Key (Tty_listener.Char '"')) model with
+  match update (Update.Key (Tty_listener.Char '"')) model with
   | Continue new_model ->
       check_lex_cache ~msg:"lex cache matches after multiline edit" new_model
   | _ -> Alcotest.fail "Expected Continue"
@@ -878,7 +896,7 @@ let test_lex_delete_empty_line : unit -> unit =
   let model =
     with_cursor_internal (with_lines (initial_model width) lines) ~line:2 ~pos:0
   in
-  match Update.update (Update.Key Tty_listener.Backspace) model with
+  match update (Update.Key Tty_listener.Backspace) model with
   | Continue new_model ->
       let lexemes =
         List.concat_map
@@ -896,7 +914,7 @@ let test_lex_delete_empty_line : unit -> unit =
 let test_insert_matched_paren () =
   let width = 40 in
   let model = initial_model width in
-  match Update.update (Update.Key (Tty_listener.Char '(')) model with
+  match update (Update.Key (Tty_listener.Char '(')) model with
   | Continue new_model ->
       Alcotest.(check string) "inserts pair" "()" (first_line_str new_model);
       Alcotest.(check int) "cursor between" 1 new_model.cursor_col
@@ -905,7 +923,7 @@ let test_insert_matched_paren () =
 let test_insert_matched_bracket () =
   let width = 40 in
   let model = initial_model width in
-  match Update.update (Update.Key (Tty_listener.Char '[')) model with
+  match update (Update.Key (Tty_listener.Char '[')) model with
   | Continue new_model ->
       Alcotest.(check string) "inserts pair" "[]" (first_line_str new_model);
       Alcotest.(check int) "cursor between" 1 new_model.cursor_col
@@ -914,7 +932,7 @@ let test_insert_matched_bracket () =
 let test_insert_matched_brace () =
   let width = 40 in
   let model = initial_model width in
-  match Update.update (Update.Key (Tty_listener.Char '{')) model with
+  match update (Update.Key (Tty_listener.Char '{')) model with
   | Continue new_model ->
       Alcotest.(check string) "inserts pair" "{}" (first_line_str new_model);
       Alcotest.(check int) "cursor between" 1 new_model.cursor_col
@@ -923,7 +941,7 @@ let test_insert_matched_brace () =
 let test_insert_matched_quote () =
   let width = 40 in
   let model = initial_model width in
-  match Update.update (Update.Key (Tty_listener.Char '"')) model with
+  match update (Update.Key (Tty_listener.Char '"')) model with
   | Continue new_model ->
       Alcotest.(check string) "inserts pair" "\"\"" (first_line_str new_model);
       Alcotest.(check int) "cursor between" 1 new_model.cursor_col
@@ -936,7 +954,7 @@ let test_skip_closing_paren () =
       (with_lines (initial_model width) [ us "()" ])
       ~line:0 ~pos:1
   in
-  match Update.update (Update.Key (Tty_listener.Char ')')) model with
+  match update (Update.Key (Tty_listener.Char ')')) model with
   | Continue new_model ->
       Alcotest.(check string) "no extra char" "()" (first_line_str new_model);
       Alcotest.(check int) "cursor moved past" 2 new_model.cursor_col
@@ -949,7 +967,7 @@ let test_skip_closing_quote () =
       (with_lines (initial_model width) [ us "\"\"" ])
       ~line:0 ~pos:1
   in
-  match Update.update (Update.Key (Tty_listener.Char '"')) model with
+  match update (Update.Key (Tty_listener.Char '"')) model with
   | Continue new_model ->
       Alcotest.(check string) "no extra char" "\"\"" (first_line_str new_model);
       Alcotest.(check int) "cursor moved past" 2 new_model.cursor_col
@@ -962,7 +980,7 @@ let test_delete_matched_paren () =
       (with_lines (initial_model width) [ us "()" ])
       ~line:0 ~pos:1
   in
-  match Update.update (Update.Key Tty_listener.Backspace) model with
+  match update (Update.Key Tty_listener.Backspace) model with
   | Continue new_model ->
       Alcotest.(check string) "both deleted" "" (first_line_str new_model);
       Alcotest.(check int) "cursor at start" 0 new_model.cursor_col
@@ -975,7 +993,7 @@ let test_delete_matched_bracket () =
       (with_lines (initial_model width) [ us "[]" ])
       ~line:0 ~pos:1
   in
-  match Update.update (Update.Key Tty_listener.Backspace) model with
+  match update (Update.Key Tty_listener.Backspace) model with
   | Continue new_model ->
       Alcotest.(check string) "both deleted" "" (first_line_str new_model);
       Alcotest.(check int) "cursor at start" 0 new_model.cursor_col
@@ -988,7 +1006,7 @@ let test_delete_matched_brace () =
       (with_lines (initial_model width) [ us "{}" ])
       ~line:0 ~pos:1
   in
-  match Update.update (Update.Key Tty_listener.Backspace) model with
+  match update (Update.Key Tty_listener.Backspace) model with
   | Continue new_model ->
       Alcotest.(check string) "both deleted" "" (first_line_str new_model);
       Alcotest.(check int) "cursor at start" 0 new_model.cursor_col
@@ -1001,7 +1019,7 @@ let test_delete_matched_quote () =
       (with_lines (initial_model width) [ us "\"\"" ])
       ~line:0 ~pos:1
   in
-  match Update.update (Update.Key Tty_listener.Backspace) model with
+  match update (Update.Key Tty_listener.Backspace) model with
   | Continue new_model ->
       Alcotest.(check string) "both deleted" "" (first_line_str new_model);
       Alcotest.(check int) "cursor at start" 0 new_model.cursor_col
@@ -1015,7 +1033,7 @@ let test_delete_unmatched_paren () =
       (with_lines (initial_model width) [ us "(x)" ])
       ~line:0 ~pos:1
   in
-  match Update.update (Update.Key Tty_listener.Backspace) model with
+  match update (Update.Key Tty_listener.Backspace) model with
   | Continue new_model ->
       Alcotest.(check string) "only ( deleted" "x)" (first_line_str new_model);
       Alcotest.(check int) "cursor at start" 0 new_model.cursor_col
@@ -1028,7 +1046,7 @@ let test_matched_insert_with_content () =
       (with_lines (initial_model width) [ us "abc" ])
       ~line:0 ~pos:1
   in
-  match Update.update (Update.Key (Tty_listener.Char '(')) model with
+  match update (Update.Key (Tty_listener.Char '(')) model with
   | Continue new_model ->
       Alcotest.(check string) "pair inserted" "a(bc" (first_line_str new_model);
       Alcotest.(check int) "cursor between" 2 new_model.cursor_col
@@ -1041,7 +1059,7 @@ let test_empty_brace_expands_on_enter () =
       (with_lines (initial_model width) [ us "{}" ])
       ~line:0 ~pos:1
   in
-  match Update.update (Update.Key Tty_listener.Enter) model with
+  match update (Update.Key Tty_listener.Enter) model with
   | Continue new_model ->
       Alcotest.(check (list string))
         "expanded lines" [ "{"; "  "; "}" ]
@@ -1057,7 +1075,7 @@ let test_brace_continuation_keeps_indent () =
       (with_lines (initial_model width) [ us "{"; us "  foo <- 1"; us "}" ])
       ~line:1 ~pos:10
   in
-  match Update.update (Update.Key Tty_listener.Enter) model with
+  match update (Update.Key Tty_listener.Enter) model with
   | Continue new_model ->
       Alcotest.(check (list string))
         "lines after enter"
@@ -1140,7 +1158,7 @@ let test_submit_prompt_box_height () =
     { (initial_model width) with prompt_top_row = 5; term_height = 25 }
   in
   let model = insert_many model 3 in
-  match Update.submit model with
+  match submit model with
   | Submit (_, new_model) ->
       Alcotest.(check int)
         "prompt_box_height is min_prompt_height"
@@ -1238,7 +1256,7 @@ let test_readline_done_resets_mode () =
 let test_readline_typing_works () =
   let width = 20 in
   let model = readline_model width "Enter name: " in
-  match Update.update (Update.Key (Tty_listener.Char 'A')) model with
+  match update (Update.Key (Tty_listener.Char 'A')) model with
   | Continue new_model ->
       Alcotest.(check string) "char inserted" "A" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected Continue"
@@ -1246,7 +1264,7 @@ let test_readline_typing_works () =
 let test_readline_up_blocked () =
   let width = 20 in
   let model = with_lines (readline_model width "Enter: ") [ us "hello" ] in
-  match Update.update (Update.Key Tty_listener.Up) model with
+  match update (Update.Key Tty_listener.Up) model with
   | Continue new_model ->
       Alcotest.(check string)
         "line unchanged" "hello" (first_line_str new_model)
@@ -1255,7 +1273,7 @@ let test_readline_up_blocked () =
 let test_readline_down_blocked () =
   let width = 20 in
   let model = with_lines (readline_model width "Enter: ") [ us "hello" ] in
-  match Update.update (Update.Key Tty_listener.Down) model with
+  match update (Update.Key Tty_listener.Down) model with
   | Continue new_model ->
       Alcotest.(check string)
         "line unchanged" "hello" (first_line_str new_model)

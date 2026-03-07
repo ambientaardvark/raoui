@@ -37,12 +37,6 @@ type model = {
   mode : mode;
 }
 
-type update_result =
-  | Continue of model
-  | Submit of string * model
-  | Exit
-  | Cancel
-
 (* Line wrapping utilities - uses display width *)
 let wrap_line width line = Unicode_string.wrap line ~width
 
