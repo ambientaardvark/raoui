@@ -1,8 +1,6 @@
 open Frontend_types
 
-module Term = Terminal_ops.Make (struct
-  let term_type = "ansi"
-end)
+module Make (Term : Terminal_ops.TERMINAL) = struct
 
 let completion_max_width = 30
 let readline_prompt_max_length = 20
@@ -266,3 +264,5 @@ let view_ops model =
   ops
 
 let view model = Term.render (view_ops model)
+
+end

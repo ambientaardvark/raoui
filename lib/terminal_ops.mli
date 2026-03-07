@@ -46,6 +46,14 @@ type op =
 
 module type TERMINAL = sig
   val render : op Queue.t -> string
+  val render_spans : span list -> string
+  val cursor_to : int -> int -> string
+  val clear_to_eos : string
+  val solid_cursor : string
+  val enable_bracketed_paste : string
+  val disable_bracketed_paste : string
+  val cursor_position_request : string
+  val scroll_up : term_height:int -> int -> string
 end
 
 module type CONFIG = sig
@@ -53,28 +61,3 @@ module type CONFIG = sig
 end
 
 module Make (_ : CONFIG) : TERMINAL
-
-(** Render spans to ANSI string *)
-val render_spans : span list -> string
-
-(** Absolute cursor positioning — returns escape string *)
-val cursor_to : int -> int -> string
-
-(** Clear from cursor to end of screen *)
-val clear_to_eos : string
-
-(** Set cursor shape to solid block *)
-val solid_cursor : string
-
-(** Enable bracketed paste mode *)
-val enable_bracketed_paste : string
-
-(** Disable bracketed paste mode *)
-val disable_bracketed_paste : string
-
-(** Request cursor position report (terminal replies with ESC[row;colR) *)
-val cursor_position_request : string
-
-(** Scroll the viewport up by n lines using natural scrolling that preserves
-    the scrollback buffer.  Returns an escape string. *)
-val scroll_up : term_height:int -> int -> string

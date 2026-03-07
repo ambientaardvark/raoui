@@ -32,6 +32,14 @@ type op =
 
 module type TERMINAL = sig
   val render : op Queue.t -> string
+  val render_spans : span list -> string
+  val cursor_to : int -> int -> string
+  val clear_to_eos : string
+  val solid_cursor : string
+  val enable_bracketed_paste : string
+  val disable_bracketed_paste : string
+  val cursor_position_request : string
+  val scroll_up : term_height:int -> int -> string
 end
 
 module type CONFIG = sig
@@ -85,22 +93,6 @@ let render_op_ansi buf op =
   | Show_cursor -> Printf.bprintf buf "%s?25h" csi
   | Hide_cursor -> Printf.bprintf buf "%s?25l" csi
 
-let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
-let clear_to_eos = "\x1b[J"
-let solid_cursor = "\x1b[2 q"
-let enable_bracketed_paste = "\x1b[?2004h"
-let disable_bracketed_paste = "\x1b[?2004l"
-let cursor_position_request = "\x1b[6n"
-
-(* Scroll the viewport up by n lines using natural scrolling (newlines at the
-   bottom row) so that the displaced lines are preserved in the scrollback
-   buffer.  CSI n S discards lines in many terminal emulators. *)
-let scroll_up ~term_height n =
-  let buf = Buffer.create (16 + n) in
-  Printf.bprintf buf "\x1b[%d;1H" term_height;
-  for _ = 1 to n do Buffer.add_char buf '\n' done;
-  Buffer.contents buf
-
 module Make (C : CONFIG) : TERMINAL = struct
   let render ops =
     let buf = Buffer.create 256 in
@@ -109,4 +101,18 @@ module Make (C : CONFIG) : TERMINAL = struct
         Queue.iter (render_op_ansi buf) ops;
         Buffer.contents buf
     | _ -> failwith ("Unsupported terminal type: " ^ C.term_type)
+
+  let render_spans = render_spans
+  let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col
+  let clear_to_eos = "\x1b[J"
+  let solid_cursor = "\x1b[2 q"
+  let enable_bracketed_paste = "\x1b[?2004h"
+  let disable_bracketed_paste = "\x1b[?2004l"
+  let cursor_position_request = "\x1b[6n"
+
+  let scroll_up ~term_height n =
+    let buf = Buffer.create (16 + n) in
+    Printf.bprintf buf "\x1b[%d;1H" term_height;
+    for _ = 1 to n do Buffer.add_char buf '\n' done;
+    Buffer.contents buf
 end

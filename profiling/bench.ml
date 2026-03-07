@@ -1,5 +1,11 @@
 open Raoui
 
+module Term = Terminal_ops.Make (struct
+  let term_type = "ansi"
+end)
+
+module V = View.Make (Term)
+
 let us s =
   match Unicode_string.of_string s with
   | Ok u -> u
@@ -51,7 +57,7 @@ let run_case model key =
   for _ = 1 to iterations do
     match Update.update key model with
     | Frontend_types.Continue m ->
-        let _ = View.view m in
+        let _ = V.view m in
         ()
     | _ -> ()
   done

@@ -1,6 +1,12 @@
 open Raoui
 open Frontend_types
 
+module Term = Terminal_ops.Make (struct
+  let term_type = "ansi"
+end)
+
+module V = View.Make (Term)
+
 let set_raw_mode () =
   let termio = Unix.tcgetattr Unix.stdin in
   let raw_termio =
@@ -19,19 +25,19 @@ let set_raw_mode () =
 let restore_mode termio = Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH termio
 
 let set_solid_cursor () =
-  print_string Terminal_ops.solid_cursor;
+  print_string Term.solid_cursor;
   flush stdout
 
 let enable_bracketed_paste () =
-  print_string Terminal_ops.enable_bracketed_paste;
+  print_string Term.enable_bracketed_paste;
   flush stdout
 
 let disable_bracketed_paste () =
-  print_string Terminal_ops.disable_bracketed_paste;
+  print_string Term.disable_bracketed_paste;
   flush stdout
 
 let get_cursor_position () =
-  print_string Terminal_ops.cursor_position_request;
+  print_string Term.cursor_position_request;
   flush stdout;
   let buf = Buffer.create 16 in
   let rec read_until_r () =
@@ -86,7 +92,7 @@ let make_init () : Frontend_types.model =
   let clamped = Frontend_types.clamp_prompt_top term_height row in
   let scroll_needed = row - clamped in
   if scroll_needed > 0 then begin
-    print_string (Terminal_ops.scroll_up ~term_height scroll_needed);
+    print_string (Term.scroll_up ~term_height scroll_needed);
     flush stdout
   end;
   {
@@ -131,7 +137,7 @@ let print_repl_output model =
       let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
       let scroll_needed = natural - clamped in
       if scroll_needed > 0 then begin
-        print_string (Terminal_ops.scroll_up ~term_height:model.term_height scroll_needed);
+        print_string (Term.scroll_up ~term_height:model.term_height scroll_needed);
         flush stdout
       end;
       {
@@ -143,9 +149,9 @@ let print_repl_output model =
       }
   | Some spans ->
       let row, col = model.repl_cursor in
-      print_string (Terminal_ops.cursor_to row col);
-      print_string Terminal_ops.clear_to_eos;
-      print_string (Terminal_ops.render_spans spans);
+      print_string (Term.cursor_to row col);
+      print_string Term.clear_to_eos;
+      print_string (Term.render_spans spans);
       flush stdout;
       let new_row, new_col = get_cursor_position () in
       let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
@@ -195,7 +201,7 @@ let run env backend ~orig_termios =
   in
   let rec loop model =
     let _ = Ffi_backend.poll_ready backend in
-    print_string (View.view model);
+    print_string (V.view model);
     flush stdout;
     let msg =
         Eio.Fiber.any
@@ -245,7 +251,7 @@ let run env backend ~orig_termios =
               let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
               let scroll_needed = natural - clamped in
               if scroll_needed > 0 then begin
-                print_string (Terminal_ops.scroll_up ~term_height:model.term_height scroll_needed);
+                print_string (Term.scroll_up ~term_height:model.term_height scroll_needed);
                 flush stdout
               end;
               loop { model with
