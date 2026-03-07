@@ -199,7 +199,6 @@ let run env backend ~orig_termios =
     let _ = Ffi_backend.poll_ready backend in
     print_string (View.view model);
     flush stdout;
-    let model = { model with scroll_amount = 0 } in
     let msg =
         Eio.Fiber.any
           [
@@ -272,11 +271,11 @@ let run env backend ~orig_termios =
           | Some cs when Completion.is_in_completion_mode cs -> true
           | _ -> false
         in
-        if in_completion_mode then loop model
+        if in_completion_mode then loop { model with scroll_amount = 0 }
         else
           let token_start = model.cursor_pos - String.length token in
           let completion = Completion.create ~token_start items in
-          let model = { model with completion = Some completion } in
+          let model = { model with completion = Some completion; scroll_amount = 0 } in
           loop (Update.filter_completions model)
     | Update.Response _r ->
         let new_model = match Update.update msg model with

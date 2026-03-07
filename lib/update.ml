@@ -922,8 +922,7 @@ let sync_internal_coords model =
 
 let handle_key_input key model =
   let model =
-    { model with scroll_amount = 0 }
-    |> handle_resize model.term_width model.term_height
+    model |> handle_resize model.term_width model.term_height
   in
   let model = match model.mode with
     | History_search _ -> model
@@ -980,6 +979,7 @@ let process_response model =
       }
 
 let update msg model =
+  let model = { model with scroll_amount = 0 } in
   match msg with
   | Key key ->
       (match handle_key_input key model with
