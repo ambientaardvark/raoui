@@ -205,9 +205,10 @@ let enter_passthrough model backend orig_termios loop =
   passthrough_loop ()
 
 let run env backend ~orig_termios =
-  let clock = Eio.Stdenv.clock env in
-  let stdin = Eio.Stdenv.stdin env in
+  let clock = Eio.Stdenv.clock env
+  and stdin = Eio.Stdenv.stdin env in
   let cached_keys = Tty_listener.drain_to_keys ~clock ~stdin in
+
   let init_model = make_init () in
   let init_width = init_model.term_width in
   let startup_file =
@@ -215,8 +216,10 @@ let run env backend ~orig_termios =
     let bundled = Filename.concat dir "startup.R" in
     if Sys.file_exists bundled then bundled else "r_scripts/startup.R"
   in
-  Ffi_backend.background_submit backend (Printf.sprintf "source('%s')" startup_file);
-  Ffi_backend.background_submit backend (Printf.sprintf "options(width=%d)" init_width);
+
+  Ffi_backend.background_submit backend
+    (Printf.sprintf "source('%s');options(width=%d)" startup_file init_width);
+
   let model_after_cached =
     List.fold_left
       (fun m key ->
@@ -229,6 +232,7 @@ let run env backend ~orig_termios =
       init_model
       cached_keys
   in
+
   let rec loop model =
     let _ = Ffi_backend.poll_ready backend in
     print_string (V.view model);
