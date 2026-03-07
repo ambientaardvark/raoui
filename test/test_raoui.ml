@@ -51,7 +51,13 @@ let with_cursor_internal model ~line ~pos =
   let row, col =
     internal_to_terminal (effective_width model) model.lines (line, pos)
   in
-  { model with cursor_line = line; cursor_pos = pos; cursor_row = row; cursor_col = col }
+  {
+    model with
+    cursor_line = line;
+    cursor_pos = pos;
+    cursor_row = row;
+    cursor_col = col;
+  }
 
 let style_to_string = function
   | `Raw -> "Raw"
@@ -76,7 +82,8 @@ let pp_span fmt (style, text) =
 
 let spans_of_cache cache =
   List.map
-    (fun (l : Syntax.Cache.entry) -> List.map (fun t -> Syntax.token_to_span t) l.tokens)
+    (fun (l : Syntax.Cache.entry) ->
+      List.map (fun t -> Syntax.token_to_span t) l.tokens)
     cache
 
 let check_lex_cache ~msg model =
@@ -267,7 +274,8 @@ let test_process_response_r_error () =
   let model =
     {
       (initial_model width) with
-      backend_response = Some (Ffi_backend.R_error "Error: object 'x' not found");
+      backend_response =
+        Some (Ffi_backend.R_error "Error: object 'x' not found");
       awaiting_response = true;
     }
   in
@@ -537,7 +545,10 @@ let test_backspace_while_awaiting () =
   let width = 10 in
   let model =
     with_cursor_internal
-      { (with_lines (initial_model width) [ us "ab" ]) with awaiting_response = true }
+      {
+        (with_lines (initial_model width) [ us "ab" ]) with
+        awaiting_response = true;
+      }
       ~line:0 ~pos:2
   in
 
@@ -706,7 +717,8 @@ let test_submit_continuation_if_paren () =
   let model =
     with_cursor_internal
       (with_lines (initial_model width) [ line ])
-      ~line:0 ~pos:(Unicode_string.length line)
+      ~line:0
+      ~pos:(Unicode_string.length line)
   in
   match Update.submit model with
   | Continue new_model ->
@@ -721,7 +733,8 @@ let test_submit_continuation_function_paren () =
   let model =
     with_cursor_internal
       (with_lines (initial_model width) [ line ])
-      ~line:0 ~pos:(Unicode_string.length line)
+      ~line:0
+      ~pos:(Unicode_string.length line)
   in
   match Update.submit model with
   | Continue new_model ->
@@ -736,7 +749,8 @@ let test_submit_if_braced_single_line () =
   let model =
     with_cursor_internal
       (with_lines (initial_model width) [ line ])
-      ~line:0 ~pos:(Unicode_string.length line)
+      ~line:0
+      ~pos:(Unicode_string.length line)
   in
   match Update.submit model with
   | Submit (text, _new_model) ->
@@ -749,12 +763,12 @@ let test_submit_lambda_body_same_line () =
   let model =
     with_cursor_internal
       (with_lines (initial_model width) [ line ])
-      ~line:0 ~pos:(Unicode_string.length line)
+      ~line:0
+      ~pos:(Unicode_string.length line)
   in
   match Update.submit model with
   | Submit (text, _new_model) ->
-      Alcotest.(check string)
-        "submitted text" "map_dbl(li, \\(x) x + 1)" text
+      Alcotest.(check string) "submitted text" "map_dbl(li, \\(x) x + 1)" text
   | _ -> Alcotest.fail "Expected Submit for lambda body on same line"
 
 let test_paste_simple () =
@@ -771,7 +785,9 @@ let test_paste_simple () =
 let test_paste_multiline () =
   let width = 40 in
   let model = initial_model width in
-  match Update.update (Update.Key (Tty_listener.Paste "line1\nline2\nline3")) model with
+  match
+    Update.update (Update.Key (Tty_listener.Paste "line1\nline2\nline3")) model
+  with
   | Continue new_model ->
       Alcotest.(check (list string))
         "lines"
@@ -832,7 +848,8 @@ let test_lex_cache_single_line_edit () =
   let model =
     with_cursor_internal
       (with_lines (initial_model width) [ line ])
-      ~line:0 ~pos:(Unicode_string.length line)
+      ~line:0
+      ~pos:(Unicode_string.length line)
   in
   match Update.update (Update.Key (Tty_listener.Char ')')) model with
   | Continue new_model ->
@@ -846,26 +863,33 @@ let test_lex_cache_multiline_mode_change () =
   let model =
     with_cursor_internal
       (with_lines (initial_model width) [ line0; line1 ])
-      ~line:0 ~pos:(Unicode_string.length line0)
+      ~line:0
+      ~pos:(Unicode_string.length line0)
   in
   match Update.update (Update.Key (Tty_listener.Char '"')) model with
   | Continue new_model ->
       check_lex_cache ~msg:"lex cache matches after multiline edit" new_model
   | _ -> Alcotest.fail "Expected Continue"
 
-let test_lex_delete_empty_line: unit -> unit = fun () ->
+let test_lex_delete_empty_line : unit -> unit =
+ fun () ->
   let width = 80 in
-  let lines = List.map us ["a"; "b"; ""; "c"; "d"] in
+  let lines = List.map us [ "a"; "b"; ""; "c"; "d" ] in
   let model =
-  with_cursor_internal
-    (with_lines (initial_model width) lines) ~line:2 ~pos:0 in
+    with_cursor_internal (with_lines (initial_model width) lines) ~line:2 ~pos:0
+  in
   match Update.update (Update.Key Tty_listener.Backspace) model with
   | Continue new_model ->
-    let lexemes = List.concat_map (fun (line : Syntax.Cache.entry) -> List.map Syntax.token_to_lexeme line.tokens) new_model.lex_cache in
-    Alcotest.(check string) "First letter is a" "a" (List.nth lexemes 0);
-    Alcotest.(check string) "Second letter is b" "b" (List.nth lexemes 1);
-    Alcotest.(check string) "Third letter is c" "c" (List.nth lexemes 2);
-    Alcotest.(check string) "Fourth letter is d" "d" (List.nth lexemes 3)
+      let lexemes =
+        List.concat_map
+          (fun (line : Syntax.Cache.entry) ->
+            List.map Syntax.token_to_lexeme line.tokens)
+          new_model.lex_cache
+      in
+      Alcotest.(check string) "First letter is a" "a" (List.nth lexemes 0);
+      Alcotest.(check string) "Second letter is b" "b" (List.nth lexemes 1);
+      Alcotest.(check string) "Third letter is c" "c" (List.nth lexemes 2);
+      Alcotest.(check string) "Fourth letter is d" "d" (List.nth lexemes 3)
   | _ -> Alcotest.fail "expected continue"
 
 (* Matched bracket insertion/deletion tests *)
@@ -1006,7 +1030,7 @@ let test_matched_insert_with_content () =
   in
   match Update.update (Update.Key (Tty_listener.Char '(')) model with
   | Continue new_model ->
-      Alcotest.(check string) "pair inserted" "a()bc" (first_line_str new_model);
+      Alcotest.(check string) "pair inserted" "a(bc" (first_line_str new_model);
       Alcotest.(check int) "cursor between" 2 new_model.cursor_col
   | _ -> Alcotest.fail "Expected Continue"
 
@@ -1020,8 +1044,7 @@ let test_empty_brace_expands_on_enter () =
   match Update.update (Update.Key Tty_listener.Enter) model with
   | Continue new_model ->
       Alcotest.(check (list string))
-        "expanded lines"
-        [ "{"; "  "; "}" ]
+        "expanded lines" [ "{"; "  "; "}" ]
         (to_strings new_model.lines);
       Alcotest.(check int) "cursor line" 1 new_model.cursor_line;
       Alcotest.(check int) "cursor pos" 2 new_model.cursor_pos
@@ -1075,7 +1098,8 @@ let test_prompt_only_moves_down () =
   (* Prompt at row 8, after short output ending at row 6: prompt stays at 8 *)
   let width = 20 in
   let model =
-    { (initial_model width) with
+    {
+      (initial_model width) with
       prompt_top_row = 8;
       term_height = 25;
       prompt_box_height = Frontend_types.min_prompt_height;
@@ -1091,10 +1115,7 @@ let test_prompt_moves_down_with_output () =
   (* Prompt at row 5, output pushes next prompt to row 10 *)
   let width = 20 in
   let model =
-    { (initial_model width) with
-      prompt_top_row = 5;
-      term_height = 25;
-    }
+    { (initial_model width) with prompt_top_row = 5; term_height = 25 }
   in
   let next_prompt_row = 10 in
   let natural = max model.prompt_top_row next_prompt_row in
@@ -1105,10 +1126,7 @@ let test_prompt_capped_at_bottom_zone () =
   (* Prompt at row 15, output pushes to row 24, capped at 21 *)
   let width = 20 in
   let model =
-    { (initial_model width) with
-      prompt_top_row = 15;
-      term_height = 25;
-    }
+    { (initial_model width) with prompt_top_row = 15; term_height = 25 }
   in
   let next_prompt_row = 24 in
   let natural = max model.prompt_top_row next_prompt_row in
@@ -1118,11 +1136,14 @@ let test_prompt_capped_at_bottom_zone () =
 let test_submit_prompt_box_height () =
   (* After submit, prompt_box_height should be min_prompt_height *)
   let width = 20 in
-  let model = { (initial_model width) with prompt_top_row = 5; term_height = 25 } in
+  let model =
+    { (initial_model width) with prompt_top_row = 5; term_height = 25 }
+  in
   let model = insert_many model 3 in
   match Update.submit model with
   | Submit (_, new_model) ->
-      Alcotest.(check int) "prompt_box_height is min_prompt_height"
+      Alcotest.(check int)
+        "prompt_box_height is min_prompt_height"
         Frontend_types.min_prompt_height new_model.prompt_box_height
   | _ -> Alcotest.fail "Expected Submit"
 
@@ -1130,10 +1151,7 @@ let test_resize_clamps_prompt () =
   (* Prompt at row 15, terminal shrinks from 25 to 12 *)
   let width = 20 in
   let model =
-    { (initial_model width) with
-      prompt_top_row = 15;
-      term_height = 25;
-    }
+    { (initial_model width) with prompt_top_row = 15; term_height = 25 }
   in
   let new_model = Update.handle_resize 20 12 model in
   (* default_prompt_top 12 = max(2, 12-4) = 8. clamp(12, 15) = min(15, 8) = 8 *)
@@ -1143,10 +1161,7 @@ let test_resize_preserves_prompt_in_zone () =
   (* Prompt at row 5, terminal stays 25: no change *)
   let width = 20 in
   let model =
-    { (initial_model width) with
-      prompt_top_row = 5;
-      term_height = 25;
-    }
+    { (initial_model width) with prompt_top_row = 5; term_height = 25 }
   in
   let new_model = Update.handle_resize 20 25 model in
   (* No change: 5 <= 21, so stays at 5 *)
@@ -1156,20 +1171,23 @@ let test_min_prompt_height_enforced () =
   (* handle_vertical_cursor_movement enforces min_prompt_height *)
   let width = 20 in
   let model =
-    { (initial_model width) with
+    {
+      (initial_model width) with
       prompt_top_row = 5;
       term_height = 25;
       prompt_box_height = 1;
     }
   in
   let new_model = Update.handle_vertical_cursor_movement model in
-  Alcotest.(check int) "prompt_box_height at least min"
-    Frontend_types.min_prompt_height new_model.prompt_box_height
+  Alcotest.(check int)
+    "prompt_box_height at least min" Frontend_types.min_prompt_height
+    new_model.prompt_box_height
 
 (* Readline mode tests *)
 
 let readline_model width prompt =
-  { (initial_model width) with
+  {
+    (initial_model width) with
     mode = Frontend_types.Readline prompt;
     awaiting_response = true;
   }
@@ -1177,38 +1195,45 @@ let readline_model width prompt =
 let test_readline_response_sets_mode () =
   let width = 20 in
   let model =
-    { (initial_model width) with
+    {
+      (initial_model width) with
       backend_response = Some (Ffi_backend.Readline "Enter name: ");
       awaiting_response = true;
     }
   in
   let new_model = Update.process_response model in
-  Alcotest.(check bool) "mode is Readline"
-    true (new_model.mode = Frontend_types.Readline "Enter name: ");
-  Alcotest.(check bool) "awaiting_response stays true" true new_model.awaiting_response
+  Alcotest.(check bool)
+    "mode is Readline" true
+    (new_model.mode = Frontend_types.Readline "Enter name: ");
+  Alcotest.(check bool)
+    "awaiting_response stays true" true new_model.awaiting_response
 
 let test_readline_empty_prompt_normalized () =
   let width = 20 in
   let model =
-    { (initial_model width) with
+    {
+      (initial_model width) with
       backend_response = Some (Ffi_backend.Readline "");
       awaiting_response = true;
     }
   in
   let new_model = Update.process_response model in
-  Alcotest.(check bool) "empty prompt normalized to 'input'"
-    true (new_model.mode = Frontend_types.Readline "input")
+  Alcotest.(check bool)
+    "empty prompt normalized to 'input'" true
+    (new_model.mode = Frontend_types.Readline "input")
 
 let test_readline_done_resets_mode () =
   let width = 20 in
   let model =
-    { (readline_model width "Enter name: ") with
+    {
+      (readline_model width "Enter name: ") with
       backend_response = Some Ffi_backend.Done;
     }
   in
   let new_model = Update.process_response model in
-  Alcotest.(check bool) "mode reset to Normal"
-    true (new_model.mode = Frontend_types.Normal)
+  Alcotest.(check bool)
+    "mode reset to Normal" true
+    (new_model.mode = Frontend_types.Normal)
 
 let test_readline_typing_works () =
   let width = 20 in
@@ -1223,7 +1248,8 @@ let test_readline_up_blocked () =
   let model = with_lines (readline_model width "Enter: ") [ us "hello" ] in
   match Update.update (Update.Key Tty_listener.Up) model with
   | Continue new_model ->
-      Alcotest.(check string) "line unchanged" "hello" (first_line_str new_model)
+      Alcotest.(check string)
+        "line unchanged" "hello" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected Continue"
 
 let test_readline_down_blocked () =
@@ -1231,7 +1257,8 @@ let test_readline_down_blocked () =
   let model = with_lines (readline_model width "Enter: ") [ us "hello" ] in
   match Update.update (Update.Key Tty_listener.Down) model with
   | Continue new_model ->
-      Alcotest.(check string) "line unchanged" "hello" (first_line_str new_model)
+      Alcotest.(check string)
+        "line unchanged" "hello" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected Continue"
 
 let () =
@@ -1352,26 +1379,39 @@ let () =
       ( "prompt_placement",
         [
           test_case "Clamp mid screen" `Quick test_clamp_prompt_top_mid_screen;
-          test_case "Clamp at bottom zone" `Quick test_clamp_prompt_top_at_bottom_zone;
-          test_case "Clamp past bottom zone" `Quick test_clamp_prompt_top_past_bottom_zone;
+          test_case "Clamp at bottom zone" `Quick
+            test_clamp_prompt_top_at_bottom_zone;
+          test_case "Clamp past bottom zone" `Quick
+            test_clamp_prompt_top_past_bottom_zone;
           test_case "Clamp at top" `Quick test_clamp_prompt_top_at_top;
-          test_case "Clamp small terminal" `Quick test_clamp_prompt_top_small_terminal;
+          test_case "Clamp small terminal" `Quick
+            test_clamp_prompt_top_small_terminal;
           test_case "Prompt only moves down" `Quick test_prompt_only_moves_down;
-          test_case "Prompt moves down with output" `Quick test_prompt_moves_down_with_output;
-          test_case "Prompt capped at bottom zone" `Quick test_prompt_capped_at_bottom_zone;
-          test_case "Submit sets prompt_box_height" `Quick test_submit_prompt_box_height;
+          test_case "Prompt moves down with output" `Quick
+            test_prompt_moves_down_with_output;
+          test_case "Prompt capped at bottom zone" `Quick
+            test_prompt_capped_at_bottom_zone;
+          test_case "Submit sets prompt_box_height" `Quick
+            test_submit_prompt_box_height;
           test_case "Resize clamps prompt" `Quick test_resize_clamps_prompt;
-          test_case "Resize preserves prompt in zone" `Quick test_resize_preserves_prompt_in_zone;
-          test_case "Min prompt height enforced" `Quick test_min_prompt_height_enforced;
+          test_case "Resize preserves prompt in zone" `Quick
+            test_resize_preserves_prompt_in_zone;
+          test_case "Min prompt height enforced" `Quick
+            test_min_prompt_height_enforced;
         ] );
       ( "readline_mode",
         [
-          test_case "Readline response sets mode" `Quick test_readline_response_sets_mode;
-          test_case "Empty prompt normalized" `Quick test_readline_empty_prompt_normalized;
+          test_case "Readline response sets mode" `Quick
+            test_readline_response_sets_mode;
+          test_case "Empty prompt normalized" `Quick
+            test_readline_empty_prompt_normalized;
           test_case "Done resets mode" `Quick test_readline_done_resets_mode;
-          test_case "Typing works in readline mode" `Quick test_readline_typing_works;
-          test_case "Up blocked in readline mode" `Quick test_readline_up_blocked;
-          test_case "Down blocked in readline mode" `Quick test_readline_down_blocked;
+          test_case "Typing works in readline mode" `Quick
+            test_readline_typing_works;
+          test_case "Up blocked in readline mode" `Quick
+            test_readline_up_blocked;
+          test_case "Down blocked in readline mode" `Quick
+            test_readline_down_blocked;
         ] );
       ( "matched_brackets",
         [
