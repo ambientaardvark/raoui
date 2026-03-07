@@ -56,8 +56,4 @@ module type TERMINAL = sig
   val scroll_up : term_height:int -> int -> string
 end
 
-module type CONFIG = sig
-  val term_type : string
-end
-
-module Make (_ : CONFIG) : TERMINAL
+module Ansi : TERMINAL

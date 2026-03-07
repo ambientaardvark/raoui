@@ -42,9 +42,6 @@ module type TERMINAL = sig
   val scroll_up : term_height:int -> int -> string
 end
 
-module type CONFIG = sig
-  val term_type : string
-end
 
 let style_to_ansi = function
   | `Raw -> "\x1b[0m"       (* reset before pass-through content *)
@@ -93,14 +90,11 @@ let render_op_ansi buf op =
   | Show_cursor -> Printf.bprintf buf "%s?25h" csi
   | Hide_cursor -> Printf.bprintf buf "%s?25l" csi
 
-module Make (C : CONFIG) : TERMINAL = struct
+module Ansi : TERMINAL = struct
   let render ops =
     let buf = Buffer.create 256 in
-    match C.term_type with
-    | "ansi" ->
-        Queue.iter (render_op_ansi buf) ops;
-        Buffer.contents buf
-    | _ -> failwith ("Unsupported terminal type: " ^ C.term_type)
+    Queue.iter (render_op_ansi buf) ops;
+    Buffer.contents buf
 
   let render_spans = render_spans
   let cursor_to row col = Printf.sprintf "\x1b[%d;%dH" row col

@@ -1,8 +1,6 @@
 open Raoui
 
-module Term = Terminal_ops.Make (struct
-  let term_type = "ansi"
-end)
+module Term = Terminal_ops.Ansi
 
 module V = View.Make (Term)
 
