@@ -14,6 +14,7 @@ let classify (m, effects) =
   | [Repl_effect.Quit] -> Exit
   | [Repl_effect.Cancel] -> Cancel
   | [Repl_effect.RequestCompletions _] -> Continue m
+  | [Repl_effect.BackgroundSubmit _] -> Continue m
   | _ -> failwith (Printf.sprintf "unexpected effects: %d" (List.length effects))
 
 let update msg model = classify (Update.update msg model)

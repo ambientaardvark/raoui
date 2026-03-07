@@ -985,6 +985,27 @@ let update msg model =
   | Response response ->
       (match response with
        | Ffi_backend.Shutdown -> (model, [Repl_effect.Quit])
+       | Ffi_backend.Passthrough -> (model, [Repl_effect.EnterPassthrough])
+       | Ffi_backend.Passthrough_end -> (model, [])
+       | Ffi_backend.Completions (token, items) ->
+           let in_completion_mode = match model.completion with
+             | Some cs when Completion.is_in_completion_mode cs -> true
+             | _ -> false
+           in
+           if in_completion_mode then (model, [])
+           else
+             let token_start = model.cursor_pos - String.length token in
+             let completion = Completion.create ~token_start items in
+             let m = { model with completion = Some completion } in
+             (filter_completions m, [])
+       | Ffi_backend.Restarted _ ->
+           let m =
+             { model with backend_response = Some response }
+             |> process_response
+             |> handle_vertical_cursor_movement
+           in
+           (m, [Repl_effect.BackgroundSubmit
+                  (Printf.sprintf "options(width=%d)" model.term_width)])
        | _ ->
            let m =
              { model with backend_response = Some response }
@@ -997,4 +1018,5 @@ let update msg model =
         handle_resize width height model
         |> handle_vertical_cursor_movement
       in
-      (m, [])
+      (m, [Repl_effect.BackgroundSubmit
+             (Printf.sprintf "options(width=%d)" width)])

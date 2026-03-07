@@ -168,12 +168,43 @@ let execute_one backend = function
       Ffi_backend.request_completions backend text ~cursor_pos
   | Repl_effect.SubmitReadlineInput text ->
       Ffi_backend.submit_readline_input text
+  | Repl_effect.BackgroundSubmit text ->
+      Ffi_backend.background_submit backend text
+  | Repl_effect.EnterPassthrough -> ()
   | Repl_effect.Quit -> ()
 
 let has_quit effects = List.exists (fun e -> e = Repl_effect.Quit) effects
 
 let execute_effects backend effects =
   List.iter (execute_one backend) effects
+
+let enter_passthrough model backend orig_termios loop =
+  restore_mode orig_termios;
+  disable_bracketed_paste ();
+  Ffi_backend.signal_passthrough ();
+  let rec passthrough_loop () =
+    Eio.Fiber.yield ();
+    match Ffi_backend.await_response backend with
+    | Ffi_backend.Passthrough_end ->
+        ignore (set_raw_mode ());
+        enable_bracketed_paste ();
+        let new_row, new_col = get_cursor_position () in
+        let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
+        let natural = max model.prompt_top_row next_prompt_row in
+        let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
+        let scroll_needed = natural - clamped in
+        if scroll_needed > 0 then begin
+          print_string (Term.scroll_up ~term_height:model.term_height scroll_needed);
+          flush stdout
+        end;
+        loop { model with
+          prompt_top_row = clamped;
+          repl_cursor = (new_row - scroll_needed, new_col);
+          prompt_box_height = Frontend_types.min_prompt_height;
+        }
+    | _ -> passthrough_loop ()
+  in
+  passthrough_loop ()
 
 let run env backend ~orig_termios =
   let clock = Eio.Stdenv.clock env in
@@ -223,57 +254,10 @@ let run env backend ~orig_termios =
         else new_model
       in
       execute_effects backend effects;
-      match msg with
-      | Update.Response Ffi_backend.Passthrough ->
-          restore_mode orig_termios;
-          disable_bracketed_paste ();
-          Ffi_backend.signal_passthrough ();
-          let rec passthrough_loop () =
-            Eio.Fiber.yield ();
-            match Ffi_backend.await_response backend with
-            | Ffi_backend.Passthrough_end ->
-                ignore (set_raw_mode ());
-                enable_bracketed_paste ();
-                let new_row, new_col = get_cursor_position () in
-                let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
-                let natural = max model.prompt_top_row next_prompt_row in
-                let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
-                let scroll_needed = natural - clamped in
-                if scroll_needed > 0 then begin
-                  print_string (Term.scroll_up ~term_height:model.term_height scroll_needed);
-                  flush stdout
-                end;
-                loop { model with
-                  prompt_top_row = clamped;
-                  repl_cursor = (new_row - scroll_needed, new_col);
-                  prompt_box_height = Frontend_types.min_prompt_height;
-                }
-            | _ -> passthrough_loop ()
-          in
-          passthrough_loop ()
-      | Update.Response (Ffi_backend.Restarted _) ->
-          Ffi_backend.background_submit backend
-            (Printf.sprintf "options(width=%d)" model.term_width);
-          loop (print_repl_output new_model)
-      | Update.Response (Ffi_backend.Completions (token, items)) ->
-          let in_completion_mode = match model.completion with
-            | Some cs when Completion.is_in_completion_mode cs -> true
-            | _ -> false
-          in
-          if in_completion_mode then loop { model with scroll_amount = 0 }
-          else
-            let token_start = model.cursor_pos - String.length token in
-            let completion = Completion.create ~token_start items in
-            let model = { model with completion = Some completion; scroll_amount = 0 } in
-            loop (Update.filter_completions model)
-      | Update.Response _ ->
-          loop (print_repl_output new_model)
-      | Update.TermResize (term_width, _term_height) ->
-          Ffi_backend.background_submit backend
-            (Printf.sprintf "options(width=%d)" term_width);
-          loop new_model
-      | Update.Key _ ->
-          loop new_model
+      if List.exists (fun e -> e = Repl_effect.EnterPassthrough) effects then
+        enter_passthrough model backend orig_termios loop
+      else
+        loop (print_repl_output new_model)
     end
   in
   loop model_after_cached
