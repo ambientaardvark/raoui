@@ -5,3 +5,4 @@ _build
 .DS_Store
 debug_log.txt
 vendor/
+rchitecht/
