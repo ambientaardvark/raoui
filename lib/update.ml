@@ -980,8 +980,9 @@ let update msg model =
   match msg with
   | Key key ->
       let m, effects = handle_key_input key model in
-      if effects <> [] then (m, effects)
-      else (m, completion_effects m)
+      (match effects with
+       | [] -> (m, completion_effects m)
+       | _ -> (m, effects))
   | Response response ->
       (match response with
        | Ffi_backend.Shutdown -> (model, [Repl_effect.Quit])

@@ -173,8 +173,6 @@ let execute_one backend = function
   | Repl_effect.EnterPassthrough -> ()
   | Repl_effect.Quit -> ()
 
-let has_quit effects = List.exists (fun e -> e = Repl_effect.Quit) effects
-
 let execute_effects backend effects =
   List.iter (execute_one backend) effects
 
@@ -223,11 +221,11 @@ let run env backend ~orig_termios =
     List.fold_left
       (fun m key ->
         let m', effects = Update.update (Update.Key key) m in
-        if has_quit effects then m
-        else begin
+        match effects with
+        | [Repl_effect.Quit] -> m
+        | _ ->
           execute_effects backend effects;
-          m'
-        end)
+          m')
       init_model
       cached_keys
   in
@@ -246,19 +244,17 @@ let run env backend ~orig_termios =
           ]
     in
     let new_model, effects = Update.update msg model in
-    if has_quit effects then ()
-    else begin
-      let new_model =
-        if List.exists (fun e -> e = Repl_effect.Cancel) effects then
-          make_init ()
-        else new_model
-      in
-      execute_effects backend effects;
-      if List.exists (fun e -> e = Repl_effect.EnterPassthrough) effects then
-        enter_passthrough model backend orig_termios loop
-      else
+    match effects with
+    | [Repl_effect.Quit] -> ()
+    | [Repl_effect.Cancel] ->
+        execute_effects backend effects;
+        loop (make_init ())
+    | [Repl_effect.EnterPassthrough] ->
+        execute_effects backend effects;
+        enter_passthrough new_model backend orig_termios loop
+    | _ ->
+        execute_effects backend effects;
         loop (print_repl_output new_model)
-    end
   in
   loop model_after_cached
 
