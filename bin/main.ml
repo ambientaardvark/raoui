@@ -199,6 +199,7 @@ let run env backend ~orig_termios =
     let _ = Ffi_backend.poll_ready backend in
     print_string (View.view model);
     flush stdout;
+    let model = { model with scroll_amount = 0 } in
     let msg =
         Eio.Fiber.any
           [
