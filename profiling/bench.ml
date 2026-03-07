@@ -45,7 +45,6 @@ let make_model () =
     flipping_through_history = None;
     running_in_ide = false;
     completion = None;
-    completion_dirty = false;
     mode = Frontend_types.Normal;
   }
 

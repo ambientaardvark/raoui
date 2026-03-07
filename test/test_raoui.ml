@@ -13,7 +13,8 @@ let classify (m, effects) =
   | [Repl_effect.Submit t] -> Submit (t, m)
   | [Repl_effect.Quit] -> Exit
   | [Repl_effect.Cancel] -> Cancel
-  | _ -> Continue m
+  | [Repl_effect.RequestCompletions _] -> Continue m
+  | _ -> failwith (Printf.sprintf "unexpected effects: %d" (List.length effects))
 
 let update msg model = classify (Update.update msg model)
 let submit model = classify (Update.submit model)
@@ -57,7 +58,6 @@ let initial_model width =
     flipping_through_history = None;
     running_in_ide = false;
     completion = None;
-    completion_dirty = false;
     mode = Frontend_types.Normal;
   }
 

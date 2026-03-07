@@ -33,7 +33,6 @@ type model = {
   flipping_through_history : int option;
   running_in_ide : bool;
   completion : Completion.t option;
-  completion_dirty : bool;
   mode : mode;
 }
 

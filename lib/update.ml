@@ -981,11 +981,7 @@ let update msg model =
   | Key key ->
       let m, effects = handle_key_input key model in
       if effects <> [] then (m, effects)
-      else
-        let m = { m with completion_dirty = true } in
-        let effects = completion_effects m in
-        let m = { m with completion_dirty = false } in
-        (m, effects)
+      else (m, completion_effects m)
   | Response response ->
       (match response with
        | Ffi_backend.Shutdown -> (model, [Repl_effect.Quit])
