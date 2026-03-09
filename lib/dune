@@ -1,9 +1,10 @@
 (library
  (name raoui)
  (libraries
-  unix
+ unix
   eio
   eio_main
+  logs
  ptime
  uutf
   uuseg

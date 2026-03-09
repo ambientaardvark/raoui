@@ -35,6 +35,9 @@ void rffi_request_completions(const char *line, int cursor_pos);
 /* Signal the passthrough gate so the R thread can proceed with system(). */
 void rffi_signal_passthrough(void);
 
+/* Configure the path used by fatal crash handlers. */
+void rffi_set_crash_log_path(const char *path);
+
 /* Submit input for readline() callback and signal the readline gate. */
 void rffi_submit_readline_input(const char *input);
 

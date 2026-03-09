@@ -22,6 +22,13 @@ type t = {
   mutable stashed : (int * int * string) option;
 }
 
+let log_snippet s =
+  let compact =
+    s |> String.split_on_char '\n' |> String.concat "\\n" |> String.trim
+  in
+  if String.length compact > 200 then String.sub compact 0 200 ^ "..."
+  else compact
+
 let r_home () =
   let has_libr home =
     let libdir = Filename.concat home "lib" in
@@ -60,26 +67,31 @@ let r_home () =
 
 let start_eval t code =
   t.busy <- true;
+  Logs.debug (fun m -> m "starting R eval: %s" (log_snippet code));
   Rffi.submit code
 
 let flush_pending t =
   match Queue.pop t.pending with
   | `User code ->
     t.suppressing <- false;
+    Logs.debug (fun m -> m "flushing queued user eval");
     start_eval t code
   | `Background code ->
     t.suppressing <- true;
+    Logs.debug (fun m -> m "flushing queued background eval");
     start_eval t code
   | exception Queue.Empty -> ()
 
 let create ~sw () =
   let home = r_home () in
+  Logs.info (fun m -> m "using R home %s" home);
   let t = { ready = false; busy = false; suppressing = false;
             pending = Queue.create (); stashed = None } in
   Eio.Fiber.fork_daemon ~sw (fun () ->
     let rc = Eio_unix.run_in_systhread (fun () -> Rffi.init home) in
     if rc <> 0 then failwith "Failed to initialize R runtime";
     t.ready <- true;
+    Logs.info (fun m -> m "R runtime initialized");
     flush_pending t;
     `Stop_daemon);
   t
@@ -89,14 +101,20 @@ let poll_ready t = t.ready
 let submit t code =
   t.suppressing <- false;
   if t.ready && not t.busy then start_eval t code
-  else Queue.push (`User code) t.pending
+  else begin
+    Logs.debug (fun m -> m "queueing user eval");
+    Queue.push (`User code) t.pending
+  end
 
 let background_submit t code =
   if t.ready && not t.busy then begin
     t.suppressing <- true;
+    Logs.info (fun m -> m "starting background eval: %s" (log_snippet code));
     start_eval t code
-  end else
+  end else begin
+    Logs.debug (fun m -> m "queueing background eval");
     Queue.push (`Background code) t.pending
+  end
 
 let map_kind kind payload =
   match kind with
@@ -142,7 +160,13 @@ let await_response t =
     match pop () with
     | None -> loop ()
     | Some (kind, _flags, payload) ->
-      if t.suppressing && kind <> 5 && kind <> 8 && kind <> 9 && kind <> 10 then loop ()
+      if t.suppressing && kind <> 5 && kind <> 8 && kind <> 9 && kind <> 10 then begin
+        (match kind with
+         | 3 -> Logs.err (fun m -> m "suppressed background R error: %s" (log_snippet payload))
+         | 4 -> Logs.err (fun m -> m "suppressed background internal error: %s" (log_snippet payload))
+         | _ -> Logs.debug (fun m -> m "suppressed background message kind=%d: %s" kind (log_snippet payload)));
+        loop ()
+      end
       else begin
         match kind with
         | 0 | 1 ->
@@ -152,8 +176,17 @@ let await_response t =
         | 5 ->
           let was_suppressing = t.suppressing in
           handle_done ();
+          if was_suppressing then
+            Logs.info (fun m -> m "background eval completed");
           if t.busy || was_suppressing then loop () else Done
-        | _ -> map_kind kind payload
+        | _ ->
+          (match kind with
+           | 4 -> Logs.err (fun m -> m "received internal error: %s" (log_snippet payload))
+           | 8 -> Logs.info (fun m -> m "entering passthrough mode")
+           | 9 -> Logs.info (fun m -> m "leaving passthrough mode")
+           | 11 -> Logs.info (fun m -> m "readline requested: %s" (log_snippet payload))
+           | _ -> ());
+          map_kind kind payload
       end
   in
   loop ()

@@ -87,6 +87,9 @@ let make_init () : Frontend_types.model =
     | Some "vscode" -> true
     | _ -> false
   in
+  Logs.info (fun m ->
+      m "initial terminal state: row=%d width=%d height=%d ide=%b"
+        row term_width term_height running_in_ide);
   let clamped = Frontend_types.clamp_prompt_top term_height row in
   let scroll_needed = row - clamped in
   if scroll_needed > 0 then begin
@@ -216,6 +219,13 @@ let run env backend ~orig_termios =
     let bundled = Filename.concat dir "startup.R" in
     if Sys.file_exists bundled then bundled else "r_scripts/startup.R"
   in
+  Logs.info (fun m ->
+      m "startup: cwd=%s exe=%s term_program=%s vscode_init_r=%s startup_file=%s"
+        (Sys.getcwd ())
+        Sys.executable_name
+        (Option.value ~default:"" (Sys.getenv_opt "TERM_PROGRAM"))
+        (Option.value ~default:"" (Sys.getenv_opt "VSCODE_INIT_R"))
+        startup_file);
 
   Ffi_backend.background_submit backend
     (Printf.sprintf "source('%s');options(width=%d)" startup_file init_width);
@@ -263,17 +273,25 @@ let run env backend ~orig_termios =
   loop model_after_cached
 
 let () =
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  let backend = Ffi_backend.create ~sw () in
-  let orig = set_raw_mode () in
-  set_solid_cursor ();
-  enable_bracketed_paste ();
-  Fun.protect
-    (fun () -> run env backend ~orig_termios:orig)
-    ~finally:(fun () ->
-      disable_bracketed_paste ();
-      print_endline "";
-      restore_mode orig;
-      if Lazy.is_val history then History.close (Lazy.force history);
-      Ffi_backend.deinit backend)
+  Printexc.record_backtrace true;
+  let log_path = App_log.init () in
+  Rffi.set_crash_log_path log_path;
+  Logs.app (fun m -> m "logging to %s" log_path);
+  try
+    Eio_main.run @@ fun env ->
+    Eio.Switch.run @@ fun sw ->
+    let backend = Ffi_backend.create ~sw () in
+    let orig = set_raw_mode () in
+    set_solid_cursor ();
+    enable_bracketed_paste ();
+    Fun.protect
+      (fun () -> run env backend ~orig_termios:orig)
+      ~finally:(fun () ->
+        disable_bracketed_paste ();
+        print_endline "";
+        restore_mode orig;
+        if Lazy.is_val history then History.close (Lazy.force history);
+        Ffi_backend.deinit backend)
+  with exn ->
+    App_log.log_exception ~context:"fatal toplevel exception" exn;
+    raise exn

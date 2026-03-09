@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdatomic.h>
+#include <signal.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/time.h>
 
@@ -40,6 +42,7 @@ static pthread_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t init_cond = PTHREAD_COND_INITIALIZER;
 static int init_done = 0;
 static int init_result = -1;
+static char *crash_log_path = NULL;
 
 /* Command queue */
 static pthread_mutex_t cmd_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -48,6 +51,85 @@ static char *pending_cmd = NULL;
 static char *pending_completion_line = NULL;
 static int   pending_completion_pos  = 0;
 static atomic_int shutdown_flag = 0;
+
+/* ---- Crash logging ---- */
+
+static void append_literal(int fd, const char *s) {
+    size_t len = strlen(s);
+    while (len > 0) {
+        ssize_t written = write(fd, s, len);
+        if (written <= 0)
+            return;
+        s += written;
+        len -= (size_t)written;
+    }
+}
+
+static void append_int(int fd, int value) {
+    char buf[32];
+    int len = 0;
+    unsigned int n;
+
+    if (value < 0) {
+        buf[len++] = '-';
+        n = (unsigned int)(-value);
+    } else {
+        n = (unsigned int)value;
+    }
+
+    if (n == 0) {
+        buf[len++] = '0';
+    } else {
+        char digits[16];
+        int digits_len = 0;
+        while (n > 0 && digits_len < (int)sizeof(digits)) {
+            digits[digits_len++] = (char)('0' + (n % 10));
+            n /= 10;
+        }
+        while (digits_len > 0)
+            buf[len++] = digits[--digits_len];
+    }
+
+    (void)write(fd, buf, (size_t)len);
+}
+
+static void crash_signal_handler(int signum) {
+    const char *path = crash_log_path ? crash_log_path : "raoui-crash.log";
+    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0600);
+
+    if (fd >= 0) {
+        append_literal(fd, "fatal signal ");
+        append_int(fd, signum);
+        append_literal(fd, " in rffi bridge\n");
+        close(fd);
+    }
+
+    signal(signum, SIG_DFL);
+    raise(signum);
+}
+
+static void install_crash_signal_handlers(void) {
+    static int installed = 0;
+    if (installed)
+        return;
+
+    int signals[] = { SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE };
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = crash_signal_handler;
+    sigemptyset(&sa.sa_mask);
+
+    for (size_t i = 0; i < sizeof(signals) / sizeof(signals[0]); i++)
+        sigaction(signals[i], &sa, NULL);
+
+    installed = 1;
+}
+
+void rffi_set_crash_log_path(const char *path) {
+    free(crash_log_path);
+    crash_log_path = path ? strdup(path) : NULL;
+    install_crash_signal_handlers();
+}
 
 /* ---- Function pointers (loaded via dlsym) ---- */
 

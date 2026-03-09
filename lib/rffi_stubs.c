@@ -88,6 +88,11 @@ CAMLprim value caml_rffi_signal_passthrough(value v_unit) {
     return Val_unit;
 }
 
+CAMLprim value caml_rffi_set_crash_log_path(value v_path) {
+    rffi_set_crash_log_path(String_val(v_path));
+    return Val_unit;
+}
+
 CAMLprim value caml_rffi_request_completions(value v_line, value v_cursor_pos) {
     rffi_request_completions(String_val(v_line), Int_val(v_cursor_pos));
     return Val_unit;

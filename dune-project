@@ -23,6 +23,7 @@
   ocaml
   eio
   eio_main
+  logs
   terminal_size
   uutf
   uuseg
