@@ -1,6 +1,8 @@
 open Raoui
 open Frontend_types
 
+module V = View.Make (Terminal_ops.Ansi)
+
 type test_result =
   | Continue of model
   | Submit of string * model
@@ -97,6 +99,23 @@ let style_to_string = function
 
 let pp_span fmt (style, text) =
   Format.fprintf fmt "(%s,%S)" (style_to_string style) text
+
+let printed_rows model =
+  let model =
+    if model.prompt_top_row < 1 then { model with prompt_top_row = 1 } else model
+  in
+  let rows_rev = ref [] in
+  Queue.iter
+    (function
+      | Terminal_ops.Print spans -> rows_rev := spans :: !rows_rev
+      | _ -> ())
+    (V.view_ops model);
+  List.rev !rows_rev
+
+let row_content spans =
+  match spans with
+  | _prompt :: content -> content
+  | [] -> []
 
 let spans_of_cache cache =
   List.map
@@ -200,6 +219,52 @@ let test_resize_narrower_crash () =
     | _ -> Alcotest.fail "Unexpected result"
   with Invalid_argument s ->
     Alcotest.fail ("Crashed with Invalid_argument on narrowing: " ^ s)
+
+let test_wrapped_syntax_highlighting () =
+  let model = with_lines (initial_model 7) [ us "glue(\"abcdef\")" ] in
+  let rows = printed_rows model |> List.map row_content in
+  Alcotest.(check int) "three wrapped rows" 3 (List.length rows);
+  let row0 = List.nth rows 0 in
+  let row1 = List.nth rows 1 in
+  let row2 = List.nth rows 2 in
+  Alcotest.(check (list string))
+    "row 0 styles"
+    [ "Function"; "Bracket" ]
+    (List.map (fun (style, _) -> style_to_string style) row0);
+  Alcotest.(check string)
+    "row 0 text"
+    "glue("
+    (String.concat "" (List.map snd row0));
+  Alcotest.(check (list string))
+    "row 1 styles"
+    [ "String" ]
+    (List.map (fun (style, _) -> style_to_string style) row1);
+  Alcotest.(check string)
+    "row 1 text"
+    "\"abcd"
+    (String.concat "" (List.map snd row1));
+  Alcotest.(check (list string))
+    "row 2 styles"
+    [ "String"; "Bracket" ]
+    (List.map (fun (style, _) -> style_to_string style) row2);
+  Alcotest.(check string)
+    "row 2 text"
+    "ef\")"
+    (String.concat "" (List.map snd row2))
+
+let test_wrapped_exact_width_keeps_trailing_row () =
+  let model = with_lines (initial_model 7) [ us "12345" ] in
+  let rows = printed_rows model |> List.map row_content in
+  Alcotest.(check int) "exact-width row count" 2 (List.length rows);
+  Alcotest.(check (list string))
+    "first row styles"
+    [ "Number" ]
+    (List.map (fun (style, _) -> style_to_string style) (List.nth rows 0));
+  Alcotest.(check string)
+    "first row text"
+    "12345"
+    (String.concat "" (List.map snd (List.nth rows 0)));
+  Alcotest.(check int) "second row is empty" 0 (List.length (List.nth rows 1))
 
 let test_submit_basic () =
   let width = 10 in
@@ -1318,6 +1383,10 @@ let () =
           test_case "Exact width wrap" `Quick test_exact_width_wrap;
           test_case "Resize crash" `Quick test_resize_crash;
           test_case "Resize narrow crash" `Quick test_resize_narrower_crash;
+          test_case "Wrapped syntax highlighting" `Quick
+            test_wrapped_syntax_highlighting;
+          test_case "Exact width wrapped row stays aligned" `Quick
+            test_wrapped_exact_width_keeps_trailing_row;
         ] );
       ( "awaiting_response",
         [

@@ -67,6 +67,101 @@ let should_show_completions model =
           let prev2 = Unicode_string.cluster_at line (model.cursor_pos - 2) in
           is_word_char prev1 && is_word_char prev2
 
+let push_span acc style text =
+  if text = "" then acc
+  else
+    match acc with
+    | (prev_style, prev_text) :: rest when prev_style = style ->
+        (style, prev_text ^ text) :: rest
+    | _ -> (style, text) :: acc
+
+let wrap_spans width spans =
+  if width <= 0 then [spans]
+  else
+    let prepared =
+      List.filter_map
+        (fun (style, text) ->
+          if text = "" then None
+          else
+            match Unicode_string.of_string text with
+            | Ok us -> Some (style, us)
+            | Error _ -> Some (style, Unicode_string.empty))
+        spans
+    in
+    let total_width =
+      List.fold_left
+        (fun acc (_, us) -> acc + Unicode_string.display_width us)
+        0 prepared
+    in
+    let rows_rev = ref [] in
+    let row_rev = ref [] in
+    let row_width = ref 0 in
+    let flush_row () =
+      rows_rev := List.rev !row_rev :: !rows_rev;
+      row_rev := [];
+      row_width := 0
+    in
+    let add_piece style us start len =
+      if len > 0 then
+        let piece = Unicode_string.sub us ~start ~len |> Unicode_string.to_string in
+        row_rev := push_span !row_rev style piece
+    in
+    let add_wide_piece style us idx =
+      add_piece style us idx 1;
+      row_width := !row_width + Unicode_string.width_at us idx;
+      flush_row ()
+    in
+    List.iter
+      (fun (style, us) ->
+        let span_len = Unicode_string.length us in
+        let rec consume idx =
+          if idx >= span_len then ()
+          else if !row_width = width then begin
+            flush_row ();
+            consume idx
+          end else
+            let available = width - !row_width in
+            let rec find_end end_idx used_width =
+              if end_idx >= span_len then (end_idx, used_width)
+              else
+                let cluster_width = Unicode_string.width_at us end_idx in
+                if used_width + cluster_width > available then
+                  (end_idx, used_width)
+                else
+                  find_end (end_idx + 1) (used_width + cluster_width)
+            in
+            let end_idx, used_width = find_end idx 0 in
+            if end_idx = idx then
+              if !row_width > 0 then begin
+                flush_row ();
+                consume idx
+              end else begin
+                add_wide_piece style us idx;
+                consume (idx + 1)
+              end
+            else begin
+              add_piece style us idx (end_idx - idx);
+              row_width := !row_width + used_width;
+              if !row_width = width then flush_row ();
+              consume end_idx
+            end
+        in
+        consume 0)
+      prepared;
+    if !row_rev <> [] || prepared = [] then flush_row ();
+    let rows = List.rev !rows_rev in
+    if total_width > 0 && total_width mod width = 0 then rows @ [ [] ] else rows
+
+let wrap_line_with_spans width line spans =
+  let wrapped_text = wrap_line width line in
+  let wrapped_spans = wrap_spans width spans in
+  if List.length wrapped_text = List.length wrapped_spans then
+    List.combine wrapped_text wrapped_spans
+  else
+    List.map
+      (fun chunk -> (chunk, [ (`Plain, Unicode_string.to_string chunk) ]))
+      wrapped_text
+
 let view_completions model ops =
   let add op = Queue.add op ops in
   if not (should_show_completions model) then ()
@@ -113,17 +208,14 @@ let view_ops model =
   in
 
   (* Wrap each line's spans for display *)
-  let wrapped_with_spans =
-    List.concat_map
-      (fun spans ->
-        (* For now, treat each logical line as one wrapped row *)
-        (* TODO: proper wrapping that preserves span boundaries *)
-        [ spans ])
+  let wrapped_rows =
+    List.map2
+      (wrap_line_with_spans width)
+      model.lines
       highlighted_lines
+    |> List.concat
   in
-  (* Also need wrapped lines for cursor positioning *)
-  let wrapped = wrap_lines width model.lines in
-  let total_rows = List.length wrapped in
+  let total_rows = List.length wrapped_rows in
 
   let show_cursor =
     match model.mode with
@@ -143,20 +235,8 @@ let view_ops model =
   add (Cursor_to (viewport_start, 1));
   let skip_rows = viewport_start - model.prompt_top_row in
 
-  (* Map wrapped row index to logical line index *)
-  let row_to_line_idx =
-    let rec build acc line_idx = function
-      | [] -> List.rev acc
-      | line :: rest ->
-          let num_wrapped = List.length (wrap_line width line) in
-          let entries = List.init num_wrapped (fun _ -> line_idx) in
-          build (List.rev_append entries acc) (line_idx + 1) rest
-    in
-    build [] 0 model.lines |> Array.of_list
-  in
-
   List.iteri
-    (fun i line ->
+    (fun i (_line, content) ->
       if i >= skip_rows && i < skip_rows + model.term_height then begin
         add Clear_to_eol;
         let p =
@@ -177,30 +257,12 @@ let view_ops model =
           | Normal, 0, true -> pending_prompt
           | Normal, _, _ -> continued_prompt
         in
-        (* Get the highlighted spans for this row's logical line *)
-        let line_idx =
-          if i < Array.length row_to_line_idx then row_to_line_idx.(i) else 0
-        in
-        let spans =
-          match List.nth_opt wrapped_with_spans line_idx with
-          | Some spans -> spans
-          | None -> [ (`Plain, Unicode_string.to_string line) ]
-        in
-        (* For wrapped lines, we need to slice the spans - for now just use the line content *)
-        (* TODO: proper span slicing for wrapped lines *)
-        let content =
-          match List.nth_opt model.lines line_idx with
-          | Some model_line when List.length (wrap_line width model_line) > 1 ->
-              (* Multi-wrap line: fall back to plain text for this wrapped segment *)
-              [ (`Plain, Unicode_string.to_string line) ]
-          | _ -> spans
-        in
         if model.mode = Shell then add (Print ((`Shell_prompt, p) :: content))
         else add (Print ((`Accent, p) :: content));
         if i < skip_rows + model.term_height - 1 && i < total_rows - 1 then
           add Newline
       end)
-    wrapped;
+    wrapped_rows;
 
   let visible_rows = max 0 (min (total_rows - skip_rows) model.term_height) in
 
