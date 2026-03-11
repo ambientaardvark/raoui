@@ -1,5 +1,5 @@
 type key =
-  | Char of char
+  | Char of string
   | Ctrl of char
   | Up
   | Down
@@ -22,6 +22,31 @@ let read_byte stdin =
   let buf = Cstruct.create 1 in
   let n = Eio.Flow.single_read stdin buf in
   if n = 0 then None else Some (Cstruct.get_char buf 0)
+
+let utf8_continuation_bytes leading_byte =
+  let b = Char.code leading_byte in
+  if b land 0x80 = 0 then 0
+  else if b land 0xE0 = 0xC0 then 1
+  else if b land 0xF0 = 0xE0 then 2
+  else if b land 0xF8 = 0xF0 then 3
+  else 0
+
+let read_utf8_char stdin leading_byte =
+  let n = utf8_continuation_bytes leading_byte in
+  if n = 0 then String.make 1 leading_byte
+  else
+    let bytes = Bytes.create (n + 1) in
+    Bytes.set bytes 0 leading_byte;
+    let rec read_rest i =
+      if i > n then Bytes.to_string bytes
+      else
+        match read_byte stdin with
+        | None -> Bytes.sub_string bytes 0 i
+        | Some c ->
+            Bytes.set bytes i c;
+            read_rest (i + 1)
+    in
+    read_rest 1
 
 let read_byte_timeout clock stdin timeout_sec =
   match
@@ -104,7 +129,7 @@ let await_input ~clock ~stdin =
   | Some '\t' -> Tab
   | Some '\r' | Some '\n' -> Enter
   | Some c when Char.code c < 32 -> Ctrl (Char.chr (Char.code c + 96))
-  | Some c -> Char c
+  | Some c -> Char (read_utf8_char stdin c)
 
 let drain_to_keys ~clock ~stdin =
   let rec loop acc =

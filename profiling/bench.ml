@@ -63,7 +63,7 @@ let () =
   let cases =
     [
       ( base,
-        Tty_listener.Char 'x' );
+        Tty_listener.Char "x" );
       ( { base with cursor_col = 0 },
         Tty_listener.Backspace );
       ( { base with cursor_col = Unicode_string.length line;

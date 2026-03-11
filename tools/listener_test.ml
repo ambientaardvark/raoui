@@ -19,7 +19,9 @@ let restore_mode termio = Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH termio
 let examine ~clock ~stdin =
   let desc =
     match await_input ~clock ~stdin with
-    | Char key -> Printf.sprintf "Char '%c' (0x%02x)" key (Char.code key)
+    | Char key -> Printf.sprintf "Char %S (bytes: %s)" key
+        (String.to_seq key |> Seq.map (fun c -> Printf.sprintf "0x%02x" (Char.code c))
+         |> List.of_seq |> String.concat " ")
     | Ctrl key -> Printf.sprintf "Ctrl-%c" (Char.uppercase_ascii key)
     | Up -> "Up"
     | Down -> "Down"

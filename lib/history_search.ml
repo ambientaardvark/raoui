@@ -69,7 +69,7 @@ let submit model =
 
 let insert_char model c =
   let search = get_input model in
-  match Unicode_string.insert_string search ~pos:model.cursor_pos (String.make 1 c) with
+  match Unicode_string.insert_string search ~pos:model.cursor_pos c with
   | Error _ -> model
   | Ok new_search ->
     { model with

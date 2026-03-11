@@ -38,11 +38,11 @@ let same_cursor_pos m1 m2 =
 let prompt_is_empty model =
   model.lines = [] || model.lines = [ Unicode_string.empty ]
 
-let insert_char model c =
+let insert_char model s =
   let width = effective_width model in
   let line = current_line model in
   match
-    Unicode_string.insert_string line ~pos:model.cursor_pos (String.make 1 c)
+    Unicode_string.insert_string line ~pos:model.cursor_pos s
   with
   | Error _ -> model (* Invalid UTF-8 byte, ignore it *)
   | Ok new_line ->
@@ -301,25 +301,25 @@ let move_down model =
 
 let user_input_char model c =
   match c with
-  | '[' | '{' | '(' -> (
+  | "[" | "{" | "(" -> (
     let after1 = insert_char model c in
     match c with
     | _ when not (at_line_end model) -> after1
-    | '[' -> move_left (insert_char after1 ']')
-    | '(' -> move_left (insert_char after1 ')')
-    | '{' -> move_left (insert_char after1 '}')
+    | "[" -> move_left (insert_char after1 "]")
+    | "(" -> move_left (insert_char after1 ")")
+    | "{" -> move_left (insert_char after1 "}")
     | _ -> after1)
-  | ']' | '}' | ')' ->
+  | "]" | "}" | ")" ->
     (if at_line_end model then insert_char model c
     else
       match char_at model with
-      | Some s when String.get s 0 = c -> move_right model
+      | Some s when s = c -> move_right model
       | _ -> insert_char model c)
-  | '\'' | '"' -> (
+  | "'" | "\"" -> (
     if at_line_end model then insert_char (insert_char model c) c |> move_left
     else
       match char_at model with
-      | Some s when String.get s 0 = c -> move_right model
+      | Some s when s = c -> move_right model
       | _ -> insert_char (insert_char model c) c |> move_left)
   | _ -> insert_char model c
 
@@ -500,7 +500,7 @@ let leading_spaces s =
   loop 0
 
 let insert_spaces count model =
-  let rec loop m n = if n <= 0 then m else loop (insert_char m ' ') (n - 1) in
+  let rec loop m n = if n <= 0 then m else loop (insert_char m " ") (n - 1) in
   loop model count
 
 let expand_empty_brackets model =
@@ -607,7 +607,7 @@ let submit_in_normal_mode model =
           if n <= 0 then m else repeat_n_times (n - 1) f (f m)
         in
         (model |> insert_newline
-         |> repeat_n_times indent_spaces (fun m -> insert_char m ' '), [])
+         |> repeat_n_times indent_spaces (fun m -> insert_char m " "), [])
 
 (* Submit router *)
 let submit model =
@@ -854,7 +854,7 @@ let apply_key_in_normal_mode key model =
   | Ctrl 'e' -> (go_to_line_end model, [])
   | Other "next word" -> (go_to_next_word model, [])
   | Other "last word" -> (go_to_last_word model, [])
-  | Char ';' when prompt_is_empty model ->
+  | Char ";" when prompt_is_empty model ->
     ({ model with mode = Frontend_types.Shell }, [])
   | Char c -> (user_input_char model c, [])
   | Backspace -> (user_input_delete model, [])

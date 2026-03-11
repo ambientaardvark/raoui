@@ -1,5 +1,5 @@
 type key =
-  | Char of char
+  | Char of string
   | Ctrl of char
   | Up
   | Down
