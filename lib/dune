@@ -9,7 +9,6 @@
  uutf
   uuseg
   uucp
-  sqlite3
   sedlex)
  (foreign_stubs
   (language c)

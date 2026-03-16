@@ -73,8 +73,8 @@ let rec await_dim_change prev_width prev_height =
 
 let history_path =
   match Sys.getenv_opt "HOME" with
-  | Some home -> home ^ "/.raoui_history.db"
-  | None -> ".raoui_history.db"
+  | Some home -> home ^ "/.raoui_history.txt"
+  | None -> ".raoui_history.txt"
 
 let history = lazy (History.init history_path)
 

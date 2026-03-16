@@ -29,7 +29,6 @@
   uuseg
   uucp
   ptime
-  sqlite3
   sedlex
   (alcotest :with-test))
  (tags

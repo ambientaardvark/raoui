@@ -20,7 +20,6 @@ depends: [
   "uuseg"
   "uucp"
   "ptime"
-  "sqlite3"
   "sedlex"
   "alcotest" {with-test}
   "odoc" {with-doc}
