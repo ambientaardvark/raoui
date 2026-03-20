@@ -14,7 +14,8 @@ let lexer_update start_line end_line model =
           Syntax.Cache.update ~start_line ~end_line ~lines:model.lines
             model.lex_cache;
       }
-  | _ -> { model with lex_cache = Syntax.Cache.make_all_default model.lines }
+  | Shell | Readline _ ->
+      { model with lex_cache = Syntax.Cache.make_all_default model.lines }
 
 (* Cursor context primitives *)
 let current_line model = List.nth model.lines model.cursor_line

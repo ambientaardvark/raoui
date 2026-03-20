@@ -51,6 +51,7 @@ module Make (L : LEXER) : sig
   (** {2 Incremental updates} *)
 
   val make_all_default : Unicode_string.t list -> t
+  (** Create a cache with all lines as default (unhighlighted) tokens *)
 
   val update :
     start_line:int -> end_line:int -> lines:Unicode_string.t list -> t -> t
