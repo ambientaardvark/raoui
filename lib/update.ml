@@ -6,12 +6,15 @@ type msg =
   | TermResize of int * int
 
 let lexer_update start_line end_line model =
-  {
-    model with
-    lex_cache =
-      Syntax.Cache.update ~start_line ~end_line ~lines:model.lines
-        model.lex_cache;
-  }
+  match model.mode with
+  | Normal | History_search _ ->
+      {
+        model with
+        lex_cache =
+          Syntax.Cache.update ~start_line ~end_line ~lines:model.lines
+            model.lex_cache;
+      }
+  | _ -> { model with lex_cache = Syntax.Cache.make_all_default model.lines }
 
 (* Cursor context primitives *)
 let current_line model = List.nth model.lines model.cursor_line
@@ -41,9 +44,7 @@ let prompt_is_empty model =
 let insert_char model s =
   let width = effective_width model in
   let line = current_line model in
-  match
-    Unicode_string.insert_string line ~pos:model.cursor_pos s
-  with
+  match Unicode_string.insert_string line ~pos:model.cursor_pos s with
   | Error _ -> model (* Invalid UTF-8 byte, ignore it *)
   | Ok new_line ->
       let new_lines = update_line model.lines model.cursor_line new_line in
@@ -298,29 +299,28 @@ let move_down model =
     }
   else model
 
-
 let user_input_char model c =
   match c with
   | "[" | "{" | "(" -> (
-    let after1 = insert_char model c in
-    match c with
-    | _ when not (at_line_end model) -> after1
-    | "[" -> move_left (insert_char after1 "]")
-    | "(" -> move_left (insert_char after1 ")")
-    | "{" -> move_left (insert_char after1 "}")
-    | _ -> after1)
-  | "]" | "}" | ")" ->
-    (if at_line_end model then insert_char model c
-    else
-      match char_at model with
-      | Some s when s = c -> move_right model
-      | _ -> insert_char model c)
+      let after1 = insert_char model c in
+      match c with
+      | _ when not (at_line_end model) -> after1
+      | "[" -> move_left (insert_char after1 "]")
+      | "(" -> move_left (insert_char after1 ")")
+      | "{" -> move_left (insert_char after1 "}")
+      | _ -> after1)
+  | "]" | "}" | ")" -> (
+      if at_line_end model then insert_char model c
+      else
+        match char_at model with
+        | Some s when s = c -> move_right model
+        | _ -> insert_char model c)
   | "'" | "\"" -> (
-    if at_line_end model then insert_char (insert_char model c) c |> move_left
-    else
-      match char_at model with
-      | Some s when s = c -> move_right model
-      | _ -> insert_char (insert_char model c) c |> move_left)
+      if at_line_end model then insert_char (insert_char model c) c |> move_left
+      else
+        match char_at model with
+        | Some s when s = c -> move_right model
+        | _ -> insert_char (insert_char model c) c |> move_left)
   | _ -> insert_char model c
 
 let user_input_delete model =
@@ -379,9 +379,9 @@ let is_word_char s =
   if String.length s > 1 then true
   else
     match String.get s 0 with
-    | ' ' | '\t' | '/' | ',' | '=' | '-' | '+' | '[' | ']' | '{' | '}'
-    | '(' | ')' | '|' | '\\' | '?' | '<' | '>' | '`' | '~' | '!' | '@'
-    | '#' | '$' | '%' | '^' | '&' | '*' | ';' | ':' | '\'' | '"' ->
+    | ' ' | '\t' | '/' | ',' | '=' | '-' | '+' | '[' | ']' | '{' | '}' | '('
+    | ')' | '|' | '\\' | '?' | '<' | '>' | '`' | '~' | '!' | '@' | '#' | '$'
+    | '%' | '^' | '&' | '*' | ';' | ':' | '\'' | '"' ->
         false
     | _ -> true
 
@@ -465,8 +465,7 @@ let delete_char_after_cursor model =
 let continuation_indent_size = 2
 
 let tokens_before_cursor model =
-  Syntax.Cache.tokens_before_line model.lex_cache
-    ~line:(model.cursor_line + 1)
+  Syntax.Cache.tokens_before_line model.lex_cache ~line:(model.cursor_line + 1)
 
 let mode_at_cursor model =
   let entry = Syntax.Cache.get_entry model.lex_cache ~line:model.cursor_line in
@@ -482,14 +481,17 @@ let mode_at_cursor model =
       end_mode
 
 let inside_empty_brackets model =
-  match Syntax.Cache.get_line_tokens model.lex_cache ~line:model.cursor_line with
+  match
+    Syntax.Cache.get_line_tokens model.lex_cache ~line:model.cursor_line
+  with
   | None -> false
   | Some tokens ->
       let line = current_line model in
       let cursor_byte =
         Language_syntax.cursor_byte_offset ~line ~cursor_pos:model.cursor_pos
       in
-      Syntax.Continuation.inside_empty_brackets ~tokens ~cursor_byte_offset:cursor_byte
+      Syntax.Continuation.inside_empty_brackets ~tokens
+        ~cursor_byte_offset:cursor_byte
 
 let leading_spaces s =
   let rec loop i =
@@ -529,10 +531,12 @@ let scroll_terminal_after_submit model =
   (output_row, scroll_amount, new_prompt_top)
 
 let clear_model_for_submit ?(awaiting_response = true) model =
-  let output_row, scroll_amount, new_prompt_top = scroll_terminal_after_submit model in
+  let output_row, scroll_amount, new_prompt_top =
+    scroll_terminal_after_submit model
+  in
   {
     model with
-    awaiting_response = awaiting_response;
+    awaiting_response;
     repl_cursor = (output_row + scroll_amount, 1);
     prompt_top_row = new_prompt_top + scroll_amount;
     previous_prompt_top_row = new_prompt_top + scroll_amount;
@@ -558,11 +562,10 @@ let submit_in_shell_mode model =
     if tl >= cl && found 0 then safe_guard (n + 1) else g
   in
   let guard = safe_guard 1 in
-  let r_command =
-    Printf.sprintf "system(r\"%s(%s)%s\")" guard text guard
-  in
+  let r_command = Printf.sprintf "system(r\"%s(%s)%s\")" guard text guard in
   History.add_to_history model.history model.lines;
-  (clear_model_for_submit { model with mode = Normal }, [Repl_effect.Submit r_command])
+  ( clear_model_for_submit { model with mode = Normal },
+    [ Repl_effect.Submit r_command ] )
 
 let submit_in_readline_mode model =
   let text = Unicode_string.to_string (current_line model) in
@@ -578,17 +581,15 @@ let submit_in_readline_mode model =
       cursor_pos = 0;
     }
   in
-  (new_model, [Repl_effect.SubmitReadlineInput text])
+  (new_model, [ Repl_effect.SubmitReadlineInput text ])
 
 let submit_normal_text model =
   let text =
     String.concat "\n" (List.map Unicode_string.to_string model.lines)
   in
   History.add_to_history model.history model.lines;
-  if String.equal (String.trim text) "q()" then
-    (model, [Repl_effect.Quit])
-  else
-    (clear_model_for_submit model, [Repl_effect.Submit text])
+  if String.equal (String.trim text) "q()" then (model, [ Repl_effect.Quit ])
+  else (clear_model_for_submit model, [ Repl_effect.Submit text ])
 
 let submit_in_normal_mode model =
   if inside_empty_brackets model then (expand_empty_brackets model, [])
@@ -606,8 +607,9 @@ let submit_in_normal_mode model =
         let rec repeat_n_times n f m =
           if n <= 0 then m else repeat_n_times (n - 1) f (f m)
         in
-        (model |> insert_newline
-         |> repeat_n_times indent_spaces (fun m -> insert_char m " "), [])
+        ( model |> insert_newline
+          |> repeat_n_times indent_spaces (fun m -> insert_char m " "),
+          [] )
 
 (* Submit router *)
 let submit model =
@@ -623,8 +625,7 @@ let handle_vertical_cursor_movement model =
      contribute to prompt box height or scrolling math. *)
   let dropdown_rows = 0 in
   let new_height =
-    model.lines |> wrap_lines width |> List.length
-    |> ( + ) dropdown_rows
+    model.lines |> wrap_lines width |> List.length |> ( + ) dropdown_rows
     |> max model.prompt_box_height
     |> max min_prompt_height
   in
@@ -648,7 +649,8 @@ let handle_vertical_cursor_movement model =
     model with
     prompt_box_height = new_height;
     prompt_top_row =
-      model.prompt_top_row + scrolls_from_expansion + scrolls_from_cursor_movement;
+      model.prompt_top_row + scrolls_from_expansion
+      + scrolls_from_cursor_movement;
     scroll_amount = scrolls_from_expansion;
   }
 
@@ -681,10 +683,12 @@ let replace_token model token_start text =
   let after_start = model.cursor_pos in
   let after_len = Unicode_string.length line - after_start in
   let after = Unicode_string.sub line ~start:after_start ~len:after_len in
-  let text_us = match Unicode_string.of_string text with
-    | Ok u -> u | Error _ -> Unicode_string.empty
+  let text_us =
+    match Unicode_string.of_string text with
+    | Ok u -> u
+    | Error _ -> Unicode_string.empty
   in
-  let new_line = Unicode_string.concat [before; text_us; after] in
+  let new_line = Unicode_string.concat [ before; text_us; after ] in
   let new_lines = update_line model.lines model.cursor_line new_line in
   let new_cursor_pos = token_start + Unicode_string.length text_us in
   let model = { model with lines = new_lines; cursor_pos = new_cursor_pos } in
@@ -699,8 +703,8 @@ let filter_completions model =
   match model.completion with
   | None -> model
   | Some cs when Completion.is_in_completion_mode cs ->
-      model  (* completion mode: set is fixed *)
-  | Some cs ->
+      model (* completion mode: set is fixed *)
+  | Some cs -> (
       let line = current_line model in
       let line_len = Unicode_string.length line in
       let token_start = Completion.token_start cs in
@@ -708,16 +712,18 @@ let filter_completions model =
         { model with completion = None }
       else
         let prefix_len = model.cursor_pos - token_start in
-        let prefix = Unicode_string.to_string
-          (Unicode_string.sub line ~start:token_start ~len:prefix_len) in
+        let prefix =
+          Unicode_string.to_string
+            (Unicode_string.sub line ~start:token_start ~len:prefix_len)
+        in
         match Completion.filter cs ~prefix with
         | None -> { model with completion = None }
-        | Some filtered -> { model with completion = Some filtered }
+        | Some filtered -> { model with completion = Some filtered })
 
 let handle_tab model =
   match model.completion with
   | None -> model
-  | Some cs ->
+  | Some cs -> (
       if List.length (Completion.filtered_items cs) = 0 then model
       else
         let cs_with_original =
@@ -733,17 +739,18 @@ let handle_tab model =
           else cs
         in
         let cs_cycled = Completion.cycle_next cs_with_original in
-        (match Completion.current_completion cs_cycled with
-         | None -> model
-         | Some completion_text ->
-             let token_start = Completion.token_start cs_cycled in
-             let inserted = replace_token model token_start completion_text in
-             { inserted with completion = Some cs_cycled })
+        match Completion.current_completion cs_cycled with
+        | None -> model
+        | Some completion_text ->
+            let token_start = Completion.token_start cs_cycled in
+            let inserted = replace_token model token_start completion_text in
+            { inserted with completion = Some cs_cycled })
 
 (* Key handlers per mode *)
 
 let set_mode_normal_blank model =
-  { model with
+  {
+    model with
     mode = Frontend_types.Normal;
     lines = [ Unicode_string.empty ];
     lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
@@ -756,16 +763,15 @@ let set_mode_normal_blank model =
 let apply_key_in_shell_mode key model =
   let open Tty_listener in
   match key with
-  | Ctrl 'c' ->
-      (set_mode_normal_blank model, [])
-  | Ctrl 'p' | Up | Down ->
-      (model, [])
-  | Enter ->
-      submit model
-  | _ ->
-      let model = match key with
+  | Ctrl 'c' -> (set_mode_normal_blank model, [])
+  | Ctrl 'p' | Up | Down -> (model, [])
+  | Enter -> submit model
+  | _ -> (
+      let model =
+        match key with
         | Tab | Escape -> model
-        | _ -> (match model.completion with
+        | _ -> (
+            match model.completion with
             | Some cs when Completion.is_in_completion_mode cs ->
                 { model with completion = None }
             | _ -> model)
@@ -785,28 +791,28 @@ let apply_key_in_shell_mode key model =
       | Left -> (move_left model, [])
       | Right -> (move_right model, [])
       | Paste text -> (insert_paste model text, [])
-      | _ -> (model, [])
+      | _ -> (model, []))
 
 let apply_key_in_readline_mode key model =
   let open Tty_listener in
   match key with
   | Ctrl 'c' ->
-      (set_mode_normal_blank model, [Repl_effect.SubmitReadlineInput ""])
-  | Ctrl 'p' | Up | Down ->
-      (model, [])
-  | Enter ->
-      submit model
-  | _ ->
-      let model = match key with
+      (set_mode_normal_blank model, [ Repl_effect.SubmitReadlineInput "" ])
+  | Ctrl 'p' | Up | Down -> (model, [])
+  | Enter -> submit model
+  | _ -> (
+      let model =
+        match key with
         | Tab | Escape -> model
-        | _ -> (match model.completion with
+        | _ -> (
+            match model.completion with
             | Some cs when Completion.is_in_completion_mode cs ->
                 { model with completion = None }
             | _ -> model)
       in
       match key with
       | Ctrl 'd' ->
-          if is_empty_input model then (model, [Repl_effect.Quit])
+          if is_empty_input model then (model, [ Repl_effect.Quit ])
           else (delete_char_after_cursor model, [])
       | Ctrl 'u' -> (delete_before_cursor model, [])
       | Ctrl 'a' -> (go_to_line_start model, [])
@@ -818,44 +824,47 @@ let apply_key_in_readline_mode key model =
       | Left -> (move_left model, [])
       | Right -> (move_right model, [])
       | Paste text -> (insert_paste model text, [])
-      | _ -> (model, [])
-
+      | _ -> (model, []))
 
 let apply_key_in_normal_mode key model =
   let open Tty_listener in
-  let model = match key with
+  let model =
+    match key with
     | Tab | Escape -> model
-    | _ -> (match model.completion with
+    | _ -> (
+        match model.completion with
         | Some cs when Completion.is_in_completion_mode cs ->
             { model with completion = None }
         | _ -> model)
   in
   match key with
-  | Ctrl 'c' when model.awaiting_response -> (model, [Repl_effect.Cancel])
+  | Ctrl 'c' when model.awaiting_response -> (model, [ Repl_effect.Cancel ])
   | Ctrl 'p' when model.awaiting_response -> (model, [])
   | Ctrl 'd' ->
-      if is_empty_input model then (model, [Repl_effect.Quit])
+      if is_empty_input model then (model, [ Repl_effect.Quit ])
       else (delete_char_after_cursor model, [])
   | Enter -> submit model
   | Ctrl 'u' -> (delete_before_cursor model, [])
   | Ctrl '\r' -> (insert_newline model, [])
   | Ctrl 'p' -> (shift_history model ~amount:1, [])
   | Ctrl 'r' ->
-    ({ model with
-      mode = History_search Unicode_string.empty;
-      lines = [ Unicode_string.empty ];
-      lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
-      cursor_pos = 0;
-      cursor_col = 0;
-      cursor_row = 0;
-      cursor_line = 0;
-    }, [])
+      ( {
+          model with
+          mode = History_search Unicode_string.empty;
+          lines = [ Unicode_string.empty ];
+          lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
+          cursor_pos = 0;
+          cursor_col = 0;
+          cursor_row = 0;
+          cursor_line = 0;
+        },
+        [] )
   | Ctrl 'a' -> (go_to_line_start model, [])
   | Ctrl 'e' -> (go_to_line_end model, [])
   | Other "next word" -> (go_to_next_word model, [])
   | Other "last word" -> (go_to_last_word model, [])
   | Char ";" when prompt_is_empty model ->
-    ({ model with mode = Frontend_types.Shell }, [])
+      ({ model with mode = Frontend_types.Shell }, [])
   | Char c -> (user_input_char model c, [])
   | Backspace -> (user_input_delete model, [])
   | Left -> (move_left model, [])
@@ -869,8 +878,7 @@ let apply_key_in_normal_mode key model =
       then (shift_history model ~amount:(-1), [])
       else (move_down model, [])
   | Paste text -> (insert_paste model text, [])
-  | Tab ->
-    (handle_tab model, [])
+  | Tab -> (handle_tab model, [])
   | Escape -> (
       match model.completion with
       | Some cs when Completion.is_in_completion_mode cs ->
@@ -907,10 +915,9 @@ let sync_internal_coords model =
   { model with cursor_line; cursor_pos }
 
 let handle_key_input key model =
+  let model = model |> handle_resize model.term_width model.term_height in
   let model =
-    model |> handle_resize model.term_width model.term_height
-  in
-  let model = match model.mode with
+    match model.mode with
     | History_search _ -> model
     | _ -> sync_internal_coords model
   in
@@ -931,7 +938,8 @@ let process_response model =
         | Ffi_backend.Done -> []
         | Ffi_backend.Shutdown -> []
         | Ffi_backend.Passthrough | Ffi_backend.Passthrough_end
-        | Ffi_backend.Completions _ | Ffi_backend.Readline _ -> []
+        | Ffi_backend.Completions _ | Ffi_backend.Readline _ ->
+            []
       in
       let awaiting_response =
         match response with
@@ -950,8 +958,8 @@ let process_response model =
         | Ffi_backend.Readline prompt ->
             let normalized_prompt = if prompt = "" then "input" else prompt in
             Frontend_types.Readline normalized_prompt
-        | Ffi_backend.Done -> Frontend_types.Normal  (* Reset on completion *)
-        | _ -> model.mode  (* Preserve current mode *)
+        | Ffi_backend.Done -> Frontend_types.Normal (* Reset on completion *)
+        | _ -> model.mode (* Preserve current mode *)
       in
       {
         model with
@@ -963,61 +971,64 @@ let process_response model =
       }
 
 let completion_effects model =
-  let in_completion_mode = match model.completion with
+  let in_completion_mode =
+    match model.completion with
     | Some cs when Completion.is_in_completion_mode cs -> true
     | _ -> false
   in
-  if not model.awaiting_response && not in_completion_mode then
+  if (not model.awaiting_response) && not in_completion_mode then
     match List.nth_opt model.lines model.cursor_line with
     | Some line ->
         let text = Unicode_string.to_string line in
-        [Repl_effect.RequestCompletions (text, model.cursor_pos)]
+        [ Repl_effect.RequestCompletions (text, model.cursor_pos) ]
     | None -> []
   else []
 
 let update msg model =
   let model = { model with scroll_amount = 0 } in
   match msg with
-  | Key key ->
+  | Key key -> (
       let m, effects = handle_key_input key model in
-      (match effects with
-       | [] -> (m, completion_effects m)
-       | _ -> (m, effects))
-  | Response response ->
-      (match response with
-       | Ffi_backend.Shutdown -> (model, [Repl_effect.Quit])
-       | Ffi_backend.Passthrough -> (model, [Repl_effect.EnterPassthrough])
-       | Ffi_backend.Passthrough_end -> (model, [])
-       | Ffi_backend.Completions (token, items) ->
-           let in_completion_mode = match model.completion with
-             | Some cs when Completion.is_in_completion_mode cs -> true
-             | _ -> false
-           in
-           if in_completion_mode then (model, [])
-           else
-             let token_start = model.cursor_pos - String.length token in
-             let completion = Completion.create ~token_start items in
-             let m = { model with completion = Some completion } in
-             (filter_completions m, [])
-       | Ffi_backend.Restarted _ ->
-           let m =
-             { model with backend_response = Some response }
-             |> process_response
-             |> handle_vertical_cursor_movement
-           in
-           (m, [Repl_effect.BackgroundSubmit
-                  (Printf.sprintf "options(width=%d)" model.term_width)])
-       | _ ->
-           let m =
-             { model with backend_response = Some response }
-             |> process_response
-             |> handle_vertical_cursor_movement
-           in
-           (m, []))
+      match effects with [] -> (m, completion_effects m) | _ -> (m, effects))
+  | Response response -> (
+      match response with
+      | Ffi_backend.Shutdown -> (model, [ Repl_effect.Quit ])
+      | Ffi_backend.Passthrough -> (model, [ Repl_effect.EnterPassthrough ])
+      | Ffi_backend.Passthrough_end -> (model, [])
+      | Ffi_backend.Completions (token, items) ->
+          let in_completion_mode =
+            match model.completion with
+            | Some cs when Completion.is_in_completion_mode cs -> true
+            | _ -> false
+          in
+          if in_completion_mode then (model, [])
+          else
+            let token_start = model.cursor_pos - String.length token in
+            let completion = Completion.create ~token_start items in
+            let m = { model with completion = Some completion } in
+            (filter_completions m, [])
+      | Ffi_backend.Restarted _ ->
+          let m =
+            { model with backend_response = Some response }
+            |> process_response |> handle_vertical_cursor_movement
+          in
+          ( m,
+            [
+              Repl_effect.BackgroundSubmit
+                (Printf.sprintf "options(width=%d)" model.term_width);
+            ] )
+      | _ ->
+          let m =
+            { model with backend_response = Some response }
+            |> process_response |> handle_vertical_cursor_movement
+          in
+          (m, []))
   | TermResize (width, height) ->
       let m =
-        handle_resize width height model
-        |> handle_vertical_cursor_movement
+        handle_resize width height model |> handle_vertical_cursor_movement
       in
-      (m, [Repl_effect.BackgroundSubmit
-             (Printf.sprintf "options(width=%d)" width)])
+      ( m,
+        [
+          Repl_effect.BackgroundSubmit
+            (Printf.sprintf "options(width=%d)" width);
+        ] )

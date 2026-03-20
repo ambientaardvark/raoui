@@ -20,6 +20,9 @@ module Cache : sig
   (** Create a fresh cache for the given lines *)
   val create : Unicode_string.t list -> t
 
+  (** Create a cache with all lines as default (unhighlighted) tokens *)
+  val make_all_default : Unicode_string.t list -> t
+
   (** Update cache when lines change *)
   val update :
     start_line:int ->

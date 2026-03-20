@@ -3,11 +3,13 @@ open Terminal_ops
 (** {1 Lexer cache instantiation} *)
 
 (** Instantiate the generic incremental lexer cache for R *)
-module Cache = Language_syntax.Make(struct
+module Cache = Language_syntax.Make (struct
   type token = R_lexer.token
   type mode = R_lexer.mode
+
   let initial_mode = R_lexer.Normal
   let lex_line = R_lexer.lex_line
+  let lex_as_default = R_lexer.lex_as_default
 end)
 
 (** {1 Syntax highlighting} *)
@@ -31,6 +33,7 @@ let style_of_token : Lexer.token -> style = function
       `Bracket
   | WHITESPACE _ -> `Plain
   | UNKNOWN _ -> `Error
+  | DEFAULT _ -> `Plain
   | EOF -> `Plain
 
 let token_to_lexeme : Lexer.token -> string = function
@@ -52,6 +55,7 @@ let token_to_lexeme : Lexer.token -> string = function
   | RIGHT_BRACE -> "}"
   | WHITESPACE s -> s
   | UNKNOWN s -> s
+  | DEFAULT s -> s
   | EOF -> ""
 
 (** Convert a token to a styled span *)
@@ -145,19 +149,15 @@ let highlight_line (mode : Lexer.mode) (line : string) : span list * Lexer.mode
 module Continuation = struct
   type signal =
     | Submit
-    | Continue of {
-        indent_levels : int;
-        in_empty_brackets : bool;
-      }
+    | Continue of { indent_levels : int; in_empty_brackets : bool }
 
-  (** Internal state for tracking control flow constructs *)
   type pending_control = {
     needs_header : bool;
     header_depth : int;
     header_done : bool;
   }
+  (** Internal state for tracking control flow constructs *)
 
-  (** State accumulated while analyzing tokens *)
   type continuation_state = {
     parens : int;
     brackets : int;
@@ -165,6 +165,7 @@ module Continuation = struct
     last_significant : R_lexer.token option;
     pending : pending_control option;
   }
+  (** State accumulated while analyzing tokens *)
 
   (** Tokens that should be ignored in continuation analysis *)
   let is_ignorable = function
@@ -209,7 +210,8 @@ module Continuation = struct
     | None -> None
     | Some p when p.needs_header && not p.header_done -> (
         match tok with
-        | R_lexer.LEFT_PAREN -> Some { p with header_depth = p.header_depth + 1 }
+        | R_lexer.LEFT_PAREN ->
+            Some { p with header_depth = p.header_depth + 1 }
         | R_lexer.RIGHT_PAREN ->
             if p.header_depth > 0 then
               let depth = p.header_depth - 1 in

@@ -7,6 +7,7 @@ module type LEXER = sig
 
   val initial_mode : mode
   val lex_line : mode -> string -> token list * mode
+  val lex_as_default : string -> token
 end
 
 (** Functor for building a cached incremental lexer *)
@@ -32,11 +33,22 @@ module Make (L : LEXER) = struct
     in
     loop L.initial_mode [] lines
 
+  let make_all_default lines =
+    List.map
+      (fun line ->
+        let text = Unicode_string.to_string line in
+        {
+          text;
+          tokens = [ L.lex_as_default text ];
+          start_mode = L.initial_mode;
+          end_mode = L.initial_mode;
+        })
+      lines
+
   (** Incrementally update cache when lines change *)
   let update ~start_line ~end_line ~lines cache =
     (* If cache structure is inconsistent, rebuild from scratch *)
-    if List.length lines <> List.length cache then
-      create lines
+    if List.length lines <> List.length cache then create lines
     else
       let rec loop i mode lines_rest cache_rest acc =
         match lines_rest with
@@ -46,7 +58,8 @@ module Make (L : LEXER) = struct
               (* Before changed region: reuse cached entry *)
               match cache_rest with
               | cached :: cache_tail ->
-                  loop (i + 1) cached.end_mode lines_tail cache_tail (cached :: acc)
+                  loop (i + 1) cached.end_mode lines_tail cache_tail
+                    (cached :: acc)
               | [] -> List.rev acc
             else if i > end_line && mode = L.initial_mode then
               (* After changed region and back to normal mode: try to reuse rest *)
@@ -59,14 +72,18 @@ module Make (L : LEXER) = struct
                   let text = Unicode_string.to_string line in
                   let tokens, end_mode = L.lex_line mode text in
                   let entry = { text; tokens; start_mode = mode; end_mode } in
-                  let cache_tail = match cache_rest with _ :: tl -> tl | [] -> [] in
+                  let cache_tail =
+                    match cache_rest with _ :: tl -> tl | [] -> []
+                  in
                   loop (i + 1) end_mode lines_tail cache_tail (entry :: acc)
             else
               (* In changed region or mode still propagating: re-lex *)
               let text = Unicode_string.to_string line in
               let tokens, end_mode = L.lex_line mode text in
               let entry = { text; tokens; start_mode = mode; end_mode } in
-              let cache_tail = match cache_rest with _ :: tl -> tl | [] -> [] in
+              let cache_tail =
+                match cache_rest with _ :: tl -> tl | [] -> []
+              in
               loop (i + 1) end_mode lines_tail cache_tail (entry :: acc)
       in
       loop 0 L.initial_mode lines cache []
@@ -86,8 +103,7 @@ module Make (L : LEXER) = struct
     |> List.concat
 
   (** Get the entry for a specific line *)
-  let get_entry cache ~line =
-    List.nth_opt cache line
+  let get_entry cache ~line = List.nth_opt cache line
 
   (** Get tokens for a specific line *)
   let get_line_tokens cache ~line =
@@ -104,17 +120,12 @@ module type CONTINUATION = sig
 
   type signal =
     | Submit
-    | Continue of {
-        indent_levels : int;
-        in_empty_brackets : bool;
-      }
+    | Continue of { indent_levels : int; in_empty_brackets : bool }
 
   val analyze : token list -> signal
 
   val inside_empty_brackets :
-    tokens:token list ->
-    cursor_byte_offset:int ->
-    bool
+    tokens:token list -> cursor_byte_offset:int -> bool
 end
 
 (** Calculate the byte offset of a cursor position within a line *)

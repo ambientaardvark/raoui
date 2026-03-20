@@ -29,6 +29,7 @@ type token =
   | RIGHT_BRACE
   | WHITESPACE of string
   | UNKNOWN of string
+  | DEFAULT of string
   | EOF
 
 type mode =
@@ -106,7 +107,6 @@ let multi_char_operators =
     | "!=" | "%%" | "||" )]
 
 let comment = [%sedlex.regexp? "#", Star (Compl eof)]
-
 let operators = [%sedlex.regexp? Chars "+-*/%^&|=<>!$@~?:"]
 
 let read_double_quote prev buf =
@@ -271,6 +271,7 @@ let print_type = function
   | RIGHT_BRACE -> "RIGHT_BRACE"
   | WHITESPACE s -> Printf.sprintf "WHITESPACE: %s" s
   | UNKNOWN s -> Printf.sprintf "UNKNOWN: %s" s
+  | DEFAULT s -> Printf.sprintf "DEFAULT: %s" s
   | EOF -> "EOF"
 
 let lex_line mode line =
@@ -289,3 +290,5 @@ let lex_line mode line =
       | t, m -> loop (t :: acc) m buf
   in
   loop [] mode for_lexer
+
+let lex_as_default line = DEFAULT line

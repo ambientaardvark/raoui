@@ -28,6 +28,7 @@ let token_lexeme : RL.token -> string = function
   | RL.RIGHT_BRACE -> "}"
   | RL.WHITESPACE s -> s
   | RL.UNKNOWN s -> s
+  | RL.DEFAULT s -> s
   | RL.EOF -> ""
 
 let roundtrip tokens = String.concat "" (List.map token_lexeme tokens)
