@@ -45,6 +45,10 @@ let completion_col_offset model =
   let _, col = absolute_cursor_pos model in
   col
 
+let awaiting_first_output_chunk model =
+  let out_row, out_col = model.repl_cursor in
+  model.awaiting_response && out_col = 1 && model.prompt_top_row = out_row + 1
+
 let is_word_char s =
   if String.length s > 1 then true
   else
@@ -280,10 +284,10 @@ let view_ops model =
     end
   done;
 
-  (* Clear the output row to remove stale completion overlay.
-     Completions are rendered as a screen overlay outside the prompt box,
-     so rows_to_clear doesn't reach them when the prompt moves down. *)
-  if model.awaiting_response then begin
+  (* Clear the reserved output row before the first chunk arrives so stale
+     completion overlay content does not linger there. Once output has been
+     printed, clearing this row would erase streamed content mid-response. *)
+  if awaiting_first_output_chunk model then begin
     let out_row, _ = model.repl_cursor in
     if out_row >= 1 && out_row <= model.term_height then begin
       add (Cursor_to (out_row, 1));

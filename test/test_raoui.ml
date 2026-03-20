@@ -112,6 +112,21 @@ let printed_rows model =
     (V.view_ops model);
   List.rev !rows_rev
 
+let view_ops_list model =
+  let model =
+    if model.prompt_top_row < 1 then { model with prompt_top_row = 1 } else model
+  in
+  Queue.fold (fun acc op -> op :: acc) [] (V.view_ops model) |> List.rev
+
+let clears_row row ops =
+  let rec loop = function
+    | Terminal_ops.Cursor_to (r, 1) :: Terminal_ops.Clear_to_eol :: _ when r = row ->
+        true
+    | _ :: rest -> loop rest
+    | [] -> false
+  in
+  loop ops
+
 let row_content spans =
   match spans with
   | _prompt :: content -> content
@@ -440,6 +455,34 @@ let test_process_response_clears_scroll () =
   let new_model = Update.process_response model in
 
   Alcotest.(check int) "scroll_amount cleared" 0 new_model.scroll_amount
+
+let test_view_clears_reserved_output_row_before_first_chunk () =
+  let width = 20 in
+  let model =
+    {
+      (initial_model width) with
+      prompt_top_row = 5;
+      repl_cursor = (4, 1);
+      awaiting_response = true;
+    }
+  in
+  Alcotest.(check bool)
+    "reserved output row is cleared" true
+    (clears_row 4 (view_ops_list model))
+
+let test_view_preserves_streamed_output_row () =
+  let width = 20 in
+  let model =
+    {
+      (initial_model width) with
+      prompt_top_row = 5;
+      repl_cursor = (4, 10);
+      awaiting_response = true;
+    }
+  in
+  Alcotest.(check bool)
+    "streamed output row is not cleared" false
+    (clears_row 4 (view_ops_list model))
 
 (* This test documents the bug we're fixing:
    After an R_error, the state machine should continue until Done.
@@ -1447,6 +1490,10 @@ let () =
             test_submit_scrolls_when_at_bottom;
           test_case "Process response clears scroll" `Quick
             test_process_response_clears_scroll;
+          test_case "View clears reserved output row" `Quick
+            test_view_clears_reserved_output_row_before_first_chunk;
+          test_case "View preserves streamed output row" `Quick
+            test_view_preserves_streamed_output_row;
         ] );
       ( "paste",
         [
