@@ -8,6 +8,8 @@ type t = {
   original_token : string;      (** Saved token for Escape revert *)
 }
 
+let max_visible_rows = 4
+
 let create ~token_start items =
   {
     items;
@@ -47,8 +49,27 @@ let save_original_token t ~token = { t with original_token = token }
 
 let original_token t = t.original_token
 
-let dropdown_size t = min 5 (List.length t.filtered)
+let dropdown_size t = min max_visible_rows (List.length t.filtered)
 
 let filtered_items t = t.filtered
+
+let visible_window_start t =
+  let len = List.length t.filtered in
+  if t.selected < 0 || len <= max_visible_rows then 0
+  else
+    let desired_start = t.selected - (max_visible_rows - 2) in
+    max 0 (min desired_start (len - max_visible_rows))
+
+let visible_items t =
+  let start = visible_window_start t in
+  t.filtered
+  |> List.filteri (fun idx _ -> idx >= start && idx < start + max_visible_rows)
+
+let selected_index_in_window t =
+  if t.selected < 0 then None
+  else
+    let start = visible_window_start t in
+    let idx = t.selected - start in
+    if idx < 0 || idx >= dropdown_size t then None else Some idx
 
 let selected_index t = t.selected

@@ -132,6 +132,22 @@ let row_content spans =
   | _prompt :: content -> content
   | [] -> []
 
+let is_completion_style = function
+  | `Completion | `Completion_selected -> true
+  | _ -> false
+
+let completion_rows model =
+  printed_rows model
+  |> List.filter (function
+       | (style, _) :: _ -> is_completion_style style
+       | [] -> false)
+
+let completion_row_text spans = String.concat "" (List.map snd spans) |> String.trim
+
+let completion_row_selected = function
+  | (`Completion_selected, _) :: _ -> true
+  | _ -> false
+
 let spans_of_cache cache =
   List.map
     (fun (l : Syntax.Cache.entry) ->
@@ -154,6 +170,15 @@ let insert_many model n =
       loop s' (n - 1)
   in
   loop model n
+
+let cycle_completion_many cs n =
+  let rec loop cs remaining =
+    if remaining <= 0 then cs else loop (Completion.cycle_next cs) (remaining - 1)
+  in
+  loop cs n
+
+let make_completion_items n =
+  List.init n (fun i -> Printf.sprintf "item%d" i)
 
 let test_wrap_crash () =
   let width = 10 in
@@ -1194,6 +1219,135 @@ let test_brace_continuation_keeps_indent () =
       Alcotest.(check int) "cursor pos" 2 new_model.cursor_pos
   | _ -> Alcotest.fail "Expected Continue"
 
+(* Completion tests *)
+
+let test_completion_dropdown_size_max_4 () =
+  let cs = Completion.create ~token_start:0 (make_completion_items 10) in
+  Alcotest.(check int) "dropdown size capped at 4" 4 (Completion.dropdown_size cs)
+
+let test_completion_visible_items_without_selection () =
+  let cs = Completion.create ~token_start:0 (make_completion_items 6) in
+  Alcotest.(check (list string))
+    "shows first four items before cycling"
+    [ "item0"; "item1"; "item2"; "item3" ]
+    (Completion.visible_items cs)
+
+let test_completion_visible_items_short_list () =
+  let cs = Completion.create ~token_start:0 [ "item0"; "item1"; "item2" ] in
+  Alcotest.(check (list string))
+    "shows all items when fewer than four"
+    [ "item0"; "item1"; "item2" ]
+    (Completion.visible_items cs)
+
+let test_completion_visible_window_stays_near_top () =
+  let cs =
+    Completion.create ~token_start:0 (make_completion_items 10)
+    |> fun cs -> cycle_completion_many cs 3
+  in
+  Alcotest.(check int) "window start stays at zero" 0
+    (Completion.visible_window_start cs);
+  Alcotest.(check (list string))
+    "selected index 2 still shows first page"
+    [ "item0"; "item1"; "item2"; "item3" ]
+    (Completion.visible_items cs);
+  Alcotest.(check (option int))
+    "selected row is index 2 in window"
+    (Some 2) (Completion.selected_index_in_window cs)
+
+let test_completion_visible_window_scrolls () =
+  let cs =
+    Completion.create ~token_start:0 (make_completion_items 10)
+    |> fun cs -> cycle_completion_many cs 4
+  in
+  Alcotest.(check int) "window start shifts once selection reaches row 3" 1
+    (Completion.visible_window_start cs);
+  Alcotest.(check (list string))
+    "window scrolls forward"
+    [ "item1"; "item2"; "item3"; "item4" ]
+    (Completion.visible_items cs);
+  Alcotest.(check (option int))
+    "selected stays on third visible row when possible"
+    (Some 2) (Completion.selected_index_in_window cs)
+
+let test_completion_visible_window_clamps_to_end () =
+  let cs =
+    Completion.create ~token_start:0 (make_completion_items 10)
+    |> fun cs -> cycle_completion_many cs 10
+  in
+  Alcotest.(check int) "window clamps to last four items" 6
+    (Completion.visible_window_start cs);
+  Alcotest.(check (list string))
+    "shows final window"
+    [ "item6"; "item7"; "item8"; "item9" ]
+    (Completion.visible_items cs);
+  Alcotest.(check (option int))
+    "final selection can sit on bottom row"
+    (Some 3) (Completion.selected_index_in_window cs)
+
+let test_completion_visible_window_wraps_to_top () =
+  let cs =
+    Completion.create ~token_start:0 (make_completion_items 10)
+    |> fun cs -> cycle_completion_many cs 11
+  in
+  Alcotest.(check int) "window resets after wraparound" 0
+    (Completion.visible_window_start cs);
+  Alcotest.(check (list string))
+    "shows first page again after wrapping"
+    [ "item0"; "item1"; "item2"; "item3" ]
+    (Completion.visible_items cs);
+  Alcotest.(check (option int))
+    "wrapped selection returns to first row"
+    (Some 0) (Completion.selected_index_in_window cs)
+
+let test_view_completion_rows_capped_at_4 () =
+  let completion = Completion.create ~token_start:0 (make_completion_items 10) in
+  let model =
+    { (with_lines (initial_model 20) [ us "item" ]) with completion = Some completion }
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:4
+  in
+  let rows = completion_rows model in
+  Alcotest.(check int) "renders four completion rows" 4 (List.length rows);
+  Alcotest.(check (list string))
+    "renders first four items"
+    [ "item0"; "item1"; "item2"; "item3" ]
+    (List.map completion_row_text rows)
+
+let test_view_completion_rows_scroll_with_tab () =
+  let base_model =
+    with_lines (initial_model 20) [ us "it" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:2
+  in
+  let model =
+    match
+      update
+        (Update.Response (Ffi_backend.Completions ("it", make_completion_items 10)))
+        base_model
+    with
+    | Continue model -> model
+    | _ -> Alcotest.fail "Expected completion response to continue"
+  in
+  let model =
+    List.fold_left
+      (fun model _ ->
+        match update (Update.Key Tty_listener.Tab) model with
+        | Continue model -> model
+        | _ -> Alcotest.fail "Expected tab to keep cycling completions")
+      model [ (); (); (); () ]
+  in
+  Alcotest.(check string) "tab inserts selected completion" "item3"
+    (first_line_str model);
+  let rows = completion_rows model in
+  Alcotest.(check int) "still renders four rows after scrolling" 4
+    (List.length rows);
+  Alcotest.(check (list string))
+    "viewport scrolls to keep selection visible"
+    [ "item1"; "item2"; "item3"; "item4" ]
+    (List.map completion_row_text rows);
+  Alcotest.(check (list bool))
+    "selected row is the third visible row"
+    [ false; false; true; false ]
+    (List.map completion_row_selected rows)
+
 (* Prompt placement tests *)
 
 let test_clamp_prompt_top_mid_screen () =
@@ -1510,6 +1664,27 @@ let () =
           test_case "Multiline mode change" `Quick
             test_lex_cache_multiline_mode_change;
           test_case "Delete empty line" `Quick test_lex_delete_empty_line;
+        ] );
+      ( "completion",
+        [
+          test_case "Dropdown size capped at 4" `Quick
+            test_completion_dropdown_size_max_4;
+          test_case "Visible items without selection" `Quick
+            test_completion_visible_items_without_selection;
+          test_case "Visible items short list" `Quick
+            test_completion_visible_items_short_list;
+          test_case "Visible window stays near top" `Quick
+            test_completion_visible_window_stays_near_top;
+          test_case "Visible window scrolls" `Quick
+            test_completion_visible_window_scrolls;
+          test_case "Visible window clamps to end" `Quick
+            test_completion_visible_window_clamps_to_end;
+          test_case "Visible window wraps to top" `Quick
+            test_completion_visible_window_wraps_to_top;
+          test_case "View caps completion rows at 4" `Quick
+            test_view_completion_rows_capped_at_4;
+          test_case "View scrolls completion rows with tab" `Quick
+            test_view_completion_rows_scroll_with_tab;
         ] );
       ( "prompt_placement",
         [

@@ -3,6 +3,9 @@
 (** Opaque completion state *)
 type t
 
+(** Maximum number of visible completion rows in the dropdown *)
+val max_visible_rows : int
+
 (** Create initial completion state from backend results *)
 val create : token_start:int -> string list -> t
 
@@ -27,11 +30,20 @@ val save_original_token : t -> token:string -> t
 (** Get the saved original token *)
 val original_token : t -> string
 
-(** Get number of rows needed for dropdown (max 5) *)
+(** Get number of rows needed for dropdown (max 4) *)
 val dropdown_size : t -> int
 
 (** Get all filtered completions (for display) *)
 val filtered_items : t -> string list
+
+(** Get the start index of the visible completion window *)
+val visible_window_start : t -> int
+
+(** Get the visible completion items for the dropdown *)
+val visible_items : t -> string list
+
+(** Get the selected index within the visible window, if any *)
+val selected_index_in_window : t -> int option
 
 (** Get selected index (-1 means dropdown only, 0+ means completion mode) *)
 val selected_index : t -> int

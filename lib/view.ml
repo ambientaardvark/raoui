@@ -173,28 +173,28 @@ let view_completions model ops =
     match model.completion with
     | None -> ()
     | Some cs ->
-        let filtered = Completion.filtered_items cs in
-        if filtered = [] then ()
+        let visible = Completion.visible_items cs in
+        if visible = [] then ()
         else
           let cursor_row, _ = absolute_cursor_pos model in
           let start_row = cursor_row + 1 in
           let col_offset = completion_col_offset model in
           let terminal_remaining = max 0 (model.term_width - col_offset + 1) in
           let max_width = min completion_max_width terminal_remaining in
-          let selected = Completion.selected_index cs in
+          let selected = Completion.selected_index_in_window cs in
           let rec loop row idx = function
             | [] -> ()
             | _ when row > model.term_height -> ()
-            | _ when idx >= 4 -> ()
             | item :: rest ->
                 add (Terminal_ops.Cursor_to (row, col_offset));
                 add Terminal_ops.Clear_to_eol;
                 add
-                  (print_completion_line item ~selected:(idx = selected)
+                  (print_completion_line item
+                     ~selected:(selected = Some idx)
                      ~max_width);
                 loop (row + 1) (idx + 1) rest
           in
-          loop start_row 0 filtered
+          loop start_row 0 visible
 
 let view_ops model =
   let open Terminal_ops in
