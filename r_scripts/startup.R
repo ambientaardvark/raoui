@@ -1,6 +1,29 @@
 options(cli.num_colors = 256)
 options(crayon.enabled = TRUE)
 
+# Make modern MacTeX discoverable even when raoui is launched outside a login shell.
+local({
+    texbin <- "/Library/TeX/texbin"
+    pdflatex <- file.path(texbin, "pdflatex")
+    latex_cmd <- unname(Sys.which("pdflatex"))
+    if (Sys.info()[["sysname"]] == "Darwin" &&
+        file.exists(pdflatex) &&
+        !nzchar(latex_cmd)) {
+        current_path <- Sys.getenv("PATH")
+        if (nzchar(current_path)) {
+            Sys.setenv(PATH = paste(texbin, current_path, sep = .Platform$path.sep))
+        } else {
+            Sys.setenv(PATH = texbin)
+        }
+        latex_cmd <- unname(Sys.which("pdflatex"))
+    }
+    if (file.exists(pdflatex) &&
+        identical(latex_cmd, pdflatex) &&
+        is.null(getOption("tikzLatex"))) {
+        options(tikzLatex = pdflatex)
+    }
+})
+
 # Graphics: use httpgd (thread-safe) instead of Quartz (main-thread only)
 local({
     if (requireNamespace("httpgd", quietly = TRUE)) {
