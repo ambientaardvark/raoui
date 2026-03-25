@@ -33,6 +33,16 @@ let char_before model =
 
 let at_line_start model = model.cursor_pos = 0
 let at_line_end model = model.cursor_pos >= line_length model
+
+let should_auto_pair model =
+  match char_at model with
+  | None -> true
+  | Some s ->
+      String.length s = 1
+      && (match String.get s 0 with
+         | ')' | ']' | '}' | ' ' | '\t' -> true
+         | _ -> false)
+
 let at_first_line model = model.cursor_line = 0
 let at_last_line model = model.cursor_line >= List.length model.lines - 1
 
@@ -302,13 +312,15 @@ let move_down model =
 
 let user_input_char model c =
   match c with
-  | "[" | "{" | "(" -> (
-      let after1 = insert_char model c in
-      match c with
-      | "[" -> move_left (insert_char after1 "]")
-      | "(" -> move_left (insert_char after1 ")")
-      | "{" -> move_left (insert_char after1 "}")
-      | _ -> assert false)
+  | "[" | "{" | "(" ->
+      if not (should_auto_pair model) then insert_char model c
+      else (
+        let after1 = insert_char model c in
+        match c with
+        | "[" -> move_left (insert_char after1 "]")
+        | "(" -> move_left (insert_char after1 ")")
+        | "{" -> move_left (insert_char after1 "}")
+        | _ -> assert false)
   | "]" | "}" | ")" -> (
       if at_line_end model then insert_char model c
       else
@@ -316,11 +328,12 @@ let user_input_char model c =
         | Some s when s = c -> move_right model
         | _ -> insert_char model c)
   | "'" | "\"" -> (
-      if at_line_end model then insert_char (insert_char model c) c |> move_left
-      else
-        match char_at model with
-        | Some s when s = c -> move_right model
-        | _ -> insert_char (insert_char model c) c |> move_left)
+      match char_at model with
+      | Some s when s = c -> move_right model
+      | _ ->
+          if should_auto_pair model then
+            insert_char (insert_char model c) c |> move_left
+          else insert_char model c)
   | _ -> insert_char model c
 
 let user_input_delete model =
