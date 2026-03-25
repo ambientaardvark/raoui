@@ -210,7 +210,11 @@ let enter_passthrough model backend orig_termios loop =
 let run env backend ~orig_termios =
   let clock = Eio.Stdenv.clock env
   and stdin = Eio.Stdenv.stdin env in
-  let cached_keys = Tty_listener.drain_to_keys ~clock ~stdin in
+  let cached_keys =
+    Tty_listener.drain_to_keys_with_timeouts ~clock ~stdin
+      ~escape_timeout_sec:0.2
+      ~settle_timeout_sec:0.2
+  in
 
   let init_model = make_init () in
   let init_width = init_model.term_width in

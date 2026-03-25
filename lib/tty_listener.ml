@@ -16,7 +16,7 @@ type key =
   | Other of string
   | Unknown of string
 
-let escape_timeout_sec = 0.05
+let default_escape_timeout_sec = 0.05
 
 let read_byte stdin =
   let buf = Cstruct.create 1 in
@@ -112,7 +112,7 @@ let parse_csi_sequence stdin =
       | _ -> Unknown (Printf.sprintf "\x1b[%s~" params))
   | Some c -> Unknown (Printf.sprintf "\x1b[%s%c" params c)
 
-let parse_escape clock stdin =
+let parse_escape ~escape_timeout_sec clock stdin =
   match read_byte_timeout clock stdin escape_timeout_sec with
   | None -> Escape
   | Some '[' -> parse_csi_sequence stdin
@@ -121,22 +121,33 @@ let parse_escape clock stdin =
   | Some 'f' -> Other "next word"
   | Some c -> Unknown (Printf.sprintf "\x1b%c" c)
 
-let await_input ~clock ~stdin =
+let await_input_with_timeout ~escape_timeout_sec ~clock ~stdin =
   match read_byte stdin with
   | None -> Escape (* EOF, treat as escape? *)
-  | Some '\x1b' -> parse_escape clock stdin
+  | Some '\x1b' -> parse_escape ~escape_timeout_sec clock stdin
   | Some '\x7f' -> Backspace
   | Some '\t' -> Tab
   | Some '\r' | Some '\n' -> Enter
   | Some c when Char.code c < 32 -> Ctrl (Char.chr (Char.code c + 96))
   | Some c -> Char (read_utf8_char stdin c)
 
-let drain_to_keys ~clock ~stdin =
+let await_input ~clock ~stdin =
+  await_input_with_timeout ~escape_timeout_sec:default_escape_timeout_sec ~clock
+    ~stdin
+
+let drain_to_keys_with_timeouts ~escape_timeout_sec ~settle_timeout_sec ~clock
+    ~stdin =
   let rec loop acc =
-    let ready, _, _ = Unix.select [ Unix.stdin ] [] [] 0.0 in
+    let timeout = if acc = [] then 0.0 else settle_timeout_sec in
+    let ready, _, _ = Unix.select [ Unix.stdin ] [] [] timeout in
     if ready = [] then List.rev acc
     else
-      let key = await_input ~clock ~stdin in
+      let key = await_input_with_timeout ~escape_timeout_sec ~clock ~stdin in
       loop (key :: acc)
   in
   loop []
+
+let drain_to_keys ~clock ~stdin =
+  drain_to_keys_with_timeouts
+    ~escape_timeout_sec:default_escape_timeout_sec
+    ~settle_timeout_sec:0.0 ~clock ~stdin
