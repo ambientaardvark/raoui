@@ -305,11 +305,10 @@ let user_input_char model c =
   | "[" | "{" | "(" -> (
       let after1 = insert_char model c in
       match c with
-      | _ when not (at_line_end model) -> after1
       | "[" -> move_left (insert_char after1 "]")
       | "(" -> move_left (insert_char after1 ")")
       | "{" -> move_left (insert_char after1 "}")
-      | _ -> after1)
+      | _ -> assert false)
   | "]" | "}" | ")" -> (
       if at_line_end model then insert_char model c
       else
