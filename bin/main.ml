@@ -254,7 +254,13 @@ let run env backend ~orig_termios =
     let msg =
         Eio.Fiber.any
           [
-            (fun () -> Update.Key (Tty_listener.await_input ~clock ~stdin));
+            (fun () ->
+              let escape_timeout_sec =
+                if model.running_in_ide then 0.2 else 0.05
+              in
+              Update.Key
+                (Tty_listener.await_input_with_timeout ~escape_timeout_sec
+                   ~clock ~stdin));
             (fun () -> Update.Response (Ffi_backend.await_response backend));
             (fun () ->
               let w, h = await_dim_change model.term_width model.term_height in
