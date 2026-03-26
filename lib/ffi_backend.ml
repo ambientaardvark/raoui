@@ -15,6 +15,7 @@ type completion = string
 
 
 type t = {
+  sleep : float -> unit;
   mutable ready : bool;
   mutable busy : bool;
   mutable suppressing : bool;
@@ -82,10 +83,11 @@ let flush_pending t =
     start_eval t code
   | exception Queue.Empty -> ()
 
-let create ~sw () =
+let create ~sw ~clock () =
   let home = r_home () in
   Logs.info (fun m -> m "using R home %s" home);
-  let t = { ready = false; busy = false; suppressing = false;
+  let sleep = Eio.Time.sleep clock in
+  let t = { sleep; ready = false; busy = false; suppressing = false;
             pending = Queue.create (); stashed = None } in
   Eio.Fiber.fork_daemon ~sw (fun () ->
     let rc = Eio_unix.run_in_systhread (fun () -> Rffi.init home) in
@@ -156,7 +158,7 @@ let await_response t =
       Stdout (Buffer.contents buf)
   in
   let rec loop () =
-    Eio.Fiber.yield ();
+    t.sleep 0.01;
     match pop () with
     | None -> loop ()
     | Some (kind, _flags, payload) ->

@@ -184,7 +184,6 @@ let enter_passthrough model backend orig_termios loop =
   disable_bracketed_paste ();
   Ffi_backend.signal_passthrough ();
   let rec passthrough_loop () =
-    Eio.Fiber.yield ();
     match Ffi_backend.await_response backend with
     | Ffi_backend.Passthrough_end ->
         ignore (set_raw_mode ());
@@ -290,7 +289,8 @@ let () =
   try
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    let backend = Ffi_backend.create ~sw () in
+    let clock = Eio.Stdenv.clock env in
+    let backend = Ffi_backend.create ~sw ~clock () in
     let orig = set_raw_mode () in
     set_solid_cursor ();
     enable_bracketed_paste ();

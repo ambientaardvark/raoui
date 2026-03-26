@@ -15,7 +15,7 @@ type response_chunk =
 
 type completion = string
 
-val create : sw:Eio.Switch.t -> unit -> t
+val create : sw:Eio.Switch.t -> clock:_ Eio.Time.clock -> unit -> t
 val poll_ready : t -> bool
 val submit : t -> string -> unit
 val background_submit : t -> string -> unit
