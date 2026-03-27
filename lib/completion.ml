@@ -53,7 +53,8 @@ let filter t ~prefix =
   if filtered = [] then None
   else
     let selected =
-      if t.explicit_selection then t.selected
+      if t.explicit_selection then
+        Option.map (fun i -> min i (List.length filtered - 1)) t.selected
       else infer_selected_index filtered ~prefix
     in
     Some { t with filtered; selected }

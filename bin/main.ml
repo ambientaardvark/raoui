@@ -197,17 +197,15 @@ let quote_r_string s =
 
 let run_command_capture command =
   let ic = Unix.open_process_in command in
-  let output = Buffer.create 256 in
-  (try
-     while true do
-       Buffer.add_string output (input_line ic);
-       Buffer.add_char output '\n'
-     done
-   with End_of_file -> ());
-  let status = Unix.close_process_in ic in
-  match status with
+  let status = ref (Unix.WEXITED 1) in
+  let output =
+    Fun.protect
+      (fun () -> In_channel.input_all ic)
+      ~finally:(fun () -> status := Unix.close_process_in ic)
+  in
+  match !status with
   | Unix.WEXITED 0 ->
-      let result = String.trim (Buffer.contents output) in
+      let result = String.trim output in
       if result = "" then None else Some result
   | Unix.WEXITED _ | Unix.WSIGNALED _ | Unix.WSTOPPED _ -> None
 
@@ -220,8 +218,7 @@ let with_normal_terminal ~orig_termios f =
 
 let choose_file ~orig_termios =
   let command = "osascript -e 'POSIX path of (choose file)'" in
-  if Sys.command "command -v osascript >/dev/null 2>&1" <> 0 then None
-  else with_normal_terminal ~orig_termios (fun () -> run_command_capture command)
+  with_normal_terminal ~orig_termios (fun () -> run_command_capture command)
 
 let run_backslash_effect ~orig_termios = function
   | Repl_effect.Pick_file { token_start; original_token } ->
