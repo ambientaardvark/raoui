@@ -1071,8 +1071,7 @@ let process_response model =
         | Ffi_backend.Done -> []
         | Ffi_backend.Shutdown -> []
         | Ffi_backend.Passthrough | Ffi_backend.Passthrough_end
-        | Ffi_backend.Completions _ | Ffi_backend.Readline _
-        | Ffi_backend.Theme _ ->
+        | Ffi_backend.Completions _ | Ffi_backend.Readline _ ->
             []
       in
       let awaiting_response =
@@ -1084,8 +1083,7 @@ let process_response model =
         (* Terminal responses *)
         | Ffi_backend.Done | Ffi_backend.Shutdown | Ffi_backend.Internal_error _
         | Ffi_backend.Restarted _ | Ffi_backend.Passthrough
-        | Ffi_backend.Passthrough_end | Ffi_backend.Completions _
-        | Ffi_backend.Theme _ ->
+        | Ffi_backend.Passthrough_end | Ffi_backend.Completions _ ->
             false
       in
       let mode =
@@ -1096,11 +1094,6 @@ let process_response model =
         | Ffi_backend.Done -> Frontend_types.Normal (* Reset on completion *)
         | _ -> model.mode (* Preserve current mode *)
       in
-      let theme =
-        match response with
-        | Ffi_backend.Theme name -> Theme.of_name name
-        | _ -> model.theme
-      in
       {
         model with
         backend_response = None;
@@ -1108,7 +1101,6 @@ let process_response model =
         awaiting_response;
         scroll_amount = 0;
         mode;
-        theme;
       }
 
 let update msg model =
@@ -1122,12 +1114,6 @@ let update msg model =
       | Ffi_backend.Shutdown -> (model, [ Repl_effect.Quit ])
       | Ffi_backend.Passthrough -> (model, [ Repl_effect.EnterPassthrough ])
       | Ffi_backend.Passthrough_end -> (model, [])
-      | Ffi_backend.Theme _ ->
-          let m =
-            { model with backend_response = Some response }
-            |> process_response |> handle_vertical_cursor_movement
-          in
-          ({ m with repl_output = None }, [])
       | Ffi_backend.Completions (token, items) -> (
           match model.mode with
           | History_search _ -> ({ model with completion = None }, [])

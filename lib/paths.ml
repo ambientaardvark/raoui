@@ -33,7 +33,7 @@ let resolve () =
     config_dir;
     state_dir;
     cache_dir;
-    options_file = Filename.concat config_dir "options.R";
+    options_file = Filename.concat config_dir "config.toml";
     history_file = Filename.concat state_dir "history";
     log_file = Filename.concat state_dir "raoui.log";
     plots_dir = Filename.concat cache_dir "plots";

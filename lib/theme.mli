@@ -51,4 +51,9 @@ type t = {
 
 val default : t
 val tokyo_night : t
+val gruvbox : t
+val catppuccin : t
+val solarized : t
+val dracula : t
+val nord : t
 val of_name : string -> t

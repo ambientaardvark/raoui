@@ -12,7 +12,6 @@ type response_chunk =
   | Passthrough_end
   | Completions of string * string list  (* token * items *)
   | Readline of string  (* prompt *)
-  | Theme of string
 
 type completion = string
 

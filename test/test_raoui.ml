@@ -135,27 +135,21 @@ let with_temp_file contents f =
     ~finally:(fun () -> if Sys.file_exists path then Sys.remove path)
 
 let test_user_options_reads_theme_name () =
-  with_temp_file
-    "options(raoui.theme = \"default\", raoui.plot_mode = \"auto\")\n"
-    (fun path ->
+  with_temp_file "theme = \"default\"\n" (fun path ->
       Alcotest.(check (option string))
-        "reads direct quoted theme" (Some "default")
+        "reads theme from toml" (Some "default")
         (User_options.read_theme_name path))
 
-let test_user_options_reads_multiline_theme_name () =
-  with_temp_file
-    "options(\n\
-    \  raoui.plot_mode = \"auto\",\n\
-    \  raoui.theme = \"tokyo_night\"\n\
-     )\n" (fun path ->
+let test_user_options_reads_theme_name_among_other_keys () =
+  with_temp_file "other = 42\ntheme = \"tokyo_night\"\n" (fun path ->
       Alcotest.(check (option string))
-        "reads multiline theme" (Some "tokyo_night")
+        "reads theme among other keys" (Some "tokyo_night")
         (User_options.read_theme_name path))
 
-let test_user_options_ignores_non_literal_theme () =
-  with_temp_file "options(raoui.theme = theme_name)\n" (fun path ->
+let test_user_options_returns_none_when_missing () =
+  with_temp_file "other = 42\n" (fun path ->
       Alcotest.(check (option string))
-        "ignores computed value" None
+        "returns none when no theme key" None
         (User_options.read_theme_name path))
 
 let pp_span fmt (style, text) =
@@ -520,40 +514,6 @@ let test_process_response_internal_error () =
   Alcotest.(check bool)
     "awaiting_response false after Internal_error" false
     new_model.awaiting_response
-
-let test_process_response_theme_updates_model () =
-  let width = 10 in
-  let model =
-    {
-      (initial_model width) with
-      theme = Theme.default;
-      backend_response = Some (Ffi_backend.Theme "tokyo_night");
-      awaiting_response = true;
-    }
-  in
-
-  let new_model = Update.process_response model in
-
-  Alcotest.(check string) "theme name" "tokyo_night" new_model.theme.Theme.name;
-  Alcotest.(check (option string))
-    "no repl output" (Some "")
-    (spans_to_text new_model.repl_output);
-  Alcotest.(check bool)
-    "awaiting_response false after Theme" false new_model.awaiting_response
-
-let test_process_response_unknown_theme_falls_back () =
-  let width = 10 in
-  let model =
-    {
-      (initial_model width) with
-      theme = Theme.tokyo_night;
-      backend_response = Some (Ffi_backend.Theme "bogus");
-    }
-  in
-
-  let new_model = Update.process_response model in
-
-  Alcotest.(check string) "theme fallback" "default" new_model.theme.Theme.name
 
 let test_scroll_when_cursor_below_screen () =
   let width = 10 in
@@ -2104,10 +2064,6 @@ let () =
           test_case "R_error response" `Quick test_process_response_r_error;
           test_case "Internal_error response" `Quick
             test_process_response_internal_error;
-          test_case "Theme response" `Quick
-            test_process_response_theme_updates_model;
-          test_case "Unknown theme falls back" `Quick
-            test_process_response_unknown_theme_falls_back;
           test_case "R_error followed by Done" `Quick
             test_r_error_followed_by_done;
         ] );
@@ -2119,10 +2075,10 @@ let () =
       ( "user_options",
         [
           test_case "Reads theme name" `Quick test_user_options_reads_theme_name;
-          test_case "Reads multiline theme name" `Quick
-            test_user_options_reads_multiline_theme_name;
-          test_case "Ignores non-literal theme" `Quick
-            test_user_options_ignores_non_literal_theme;
+          test_case "Reads theme among other keys" `Quick
+            test_user_options_reads_theme_name_among_other_keys;
+          test_case "Returns none when missing" `Quick
+            test_user_options_returns_none_when_missing;
         ] );
       ( "scrolling",
         [

@@ -9,7 +9,8 @@
  uutf
   uuseg
   uucp
-  sedlex)
+  sedlex
+  otoml)
  (foreign_stubs
   (language c)
   (names rffi_stubs)

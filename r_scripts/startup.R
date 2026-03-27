@@ -1,14 +1,6 @@
 options(cli.num_colors = 256)
 options(crayon.enabled = TRUE)
 
-local({
-    options_file <- Sys.getenv("RAOUI_OPTIONS_FILE", "")
-    if (nzchar(options_file) && file.exists(options_file)) {
-        sys.source(options_file, envir = globalenv())
-    }
-    .Call("raoui_set_theme", getOption("raoui.theme", "tokyo_night"))
-})
-
 # Make modern MacTeX discoverable even when raoui is launched outside a login shell.
 local({
     texbin <- "/Library/TeX/texbin"
