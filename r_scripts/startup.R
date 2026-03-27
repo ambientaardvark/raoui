@@ -1,6 +1,13 @@
 options(cli.num_colors = 256)
 options(crayon.enabled = TRUE)
 
+local({
+    options_file <- Sys.getenv("RAOUI_OPTIONS_FILE", "")
+    if (nzchar(options_file) && file.exists(options_file)) {
+        sys.source(options_file, envir = globalenv())
+    }
+})
+
 # Make modern MacTeX discoverable even when raoui is launched outside a login shell.
 local({
     texbin <- "/Library/TeX/texbin"
@@ -26,7 +33,11 @@ local({
 
 # Graphics: use httpgd (thread-safe) instead of Quartz (main-thread only)
 local({
-    if (requireNamespace("httpgd", quietly = TRUE)) {
+    plot_mode <- getOption("raoui.plot_mode", "auto")
+    use_httpgd <- identical(plot_mode, "httpgd") ||
+        (identical(plot_mode, "auto") && requireNamespace("httpgd", quietly = TRUE))
+
+    if (use_httpgd && requireNamespace("httpgd", quietly = TRUE)) {
         opened <- FALSE
         options(device = function(...) {
             httpgd::hgd(...)
@@ -35,9 +46,18 @@ local({
                 opened <<- TRUE
             }
         })
-    } else {
+    } else if (identical(plot_mode, "auto")) {
         message("Install httpgd for plot support: install.packages('httpgd')")
-        plot_file <- file.path(tempdir(), "raoui_plot.png")
+        plot_dir <- Sys.getenv("RAOUI_PLOTS_DIR", tempdir())
+        if (!dir.exists(plot_dir)) dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+        plot_file <- file.path(plot_dir, "raoui_plot.png")
+        options(device = function(...) {
+            grDevices::png(plot_file, width = 800, height = 600, ...)
+        })
+    } else if (identical(plot_mode, "png")) {
+        plot_dir <- Sys.getenv("RAOUI_PLOTS_DIR", tempdir())
+        if (!dir.exists(plot_dir)) dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+        plot_file <- file.path(plot_dir, "raoui_plot.png")
         options(device = function(...) {
             grDevices::png(plot_file, width = 800, height = 600, ...)
         })

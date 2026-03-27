@@ -38,17 +38,10 @@ let rec ensure_dir dir =
     Unix.mkdir dir 0o700
   end
 
-let default_log_dir () =
-  match Sys.getenv_opt "RAOUI_LOG_DIR" with
-  | Some dir when dir <> "" -> dir
-  | _ -> (
-      match Sys.getenv_opt "XDG_STATE_HOME", Sys.getenv_opt "HOME" with
-      | Some xdg, _ when xdg <> "" -> Filename.concat xdg "raoui"
-      | _, Some home when home <> "" ->
-          Filename.concat (Filename.concat home ".local/state") "raoui"
-      | _ -> Filename.concat (Sys.getcwd ()) ".raoui_state")
-
-let default_log_path () = Filename.concat (default_log_dir ()) "raoui.log"
+let default_log_path () =
+  match Sys.getenv_opt "RAOUI_LOG_FILE" with
+  | Some path when path <> "" -> path
+  | _ -> (Paths.resolve ()).log_file
 
 let string_of_level = function
   | Logs.App -> "APP"

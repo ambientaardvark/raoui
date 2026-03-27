@@ -5,6 +5,8 @@ module Term = Terminal_ops.Ansi
 
 module V = View.Make (Term)
 
+let paths = Paths.resolve ()
+
 let set_raw_mode () =
   let termio = Unix.tcgetattr Unix.stdin in
   let raw_termio =
@@ -89,12 +91,7 @@ let rec await_dim_change ~current_w ~current_h =
     await_dim_change ~current_w ~current_h
   else (w, h)
 
-let history_path =
-  match Sys.getenv_opt "HOME" with
-  | Some home -> home ^ "/.raoui_history.txt"
-  | None -> ".raoui_history.txt"
-
-let history = lazy (History.init history_path)
+let history = lazy (History.init paths.history_file)
 
 let make_init () : Frontend_types.model =
   let row, _col = get_cursor_position () in
@@ -361,6 +358,8 @@ let run env backend ~orig_termios =
 
 let () =
   Printexc.record_backtrace true;
+  Paths.ensure_runtime_dirs paths;
+  Paths.export_env paths;
   let log_path = App_log.init () in
   Rffi.set_crash_log_path log_path;
   Logs.app (fun m -> m "logging to %s" log_path);

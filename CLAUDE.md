@@ -7,8 +7,18 @@ An interactive R REPL written in OCaml. Embeds R directly via FFI (dynamically l
 ```
 dune build
 dune exec raoui
-dune test
+dune runtest
 ```
+
+## Configuration
+
+Raoui resolves user config, state, and cache paths separately.
+
+- Config: `~/.config/raoui/options.R` by default
+- State: `~/.local/state/raoui/`
+- Cache: `~/.cache/raoui/`
+
+The bundled R startup script loads `options.R` if present. History is stored under the state dir, logs under the state dir, and plot artifacts under the cache dir. See [configuration.md](./configuration.md) for details.
 
 ## Architecture
 
@@ -22,7 +32,7 @@ Follows an Elm-style MVU (Model-View-Update) pattern with Eio fibers for concurr
 - `Tty_listener` - Parses raw TTY input into key events
 - `Unicode_string` - UTF-8 string type with grapheme cluster and display-width awareness
 - `R_lexer` / `Syntax` - Sedlex-based R lexer and syntax highlighting
-- `History` - SQLite-backed command history with fuzzy prefix search (`~/.raoui_history.db`)
+- `History` - File-backed command history with fuzzy prefix search
 
 **Backend (FFI):**
 - `Ffi_backend` - Submits R code, polls a ring buffer for results, handles output suppression for background submissions and passthrough mode for `system()` calls
