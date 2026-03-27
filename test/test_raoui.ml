@@ -1,6 +1,5 @@
 open Raoui
 open Frontend_types
-
 module V = View.Make (Terminal_ops.Ansi)
 
 type test_result =
@@ -13,19 +12,19 @@ type test_result =
 let classify (m, effects) =
   match effects with
   | [] -> Continue m
-  | [Repl_effect.Submit t] -> Submit (t, m)
-  | [Repl_effect.Quit] -> Exit
-  | [Repl_effect.Cancel] -> Cancel
-  | [Repl_effect.RequestCompletions _] -> Continue m
-  | [Repl_effect.BackgroundSubmit _] -> Continue m
-  | [cmd] -> (
+  | [ Repl_effect.Submit t ] -> Submit (t, m)
+  | [ Repl_effect.Quit ] -> Exit
+  | [ Repl_effect.Cancel ] -> Cancel
+  | [ Repl_effect.RequestCompletions _ ] -> Continue m
+  | [ Repl_effect.BackgroundSubmit _ ] -> Continue m
+  | [ cmd ] -> (
       match cmd with
-      | Repl_effect.Run_backslash_effect cmd ->
-          Trigger_backslash_effect (cmd, m)
+      | Repl_effect.Run_backslash_effect cmd -> Trigger_backslash_effect (cmd, m)
       | _ ->
           failwith
             (Printf.sprintf "unexpected effect variant in singleton list"))
-  | _ -> failwith (Printf.sprintf "unexpected effects: %d" (List.length effects))
+  | _ ->
+      failwith (Printf.sprintf "unexpected effects: %d" (List.length effects))
 
 let update msg model = classify (Update.update msg model)
 let submit model = classify (Update.submit model)
@@ -121,11 +120,11 @@ let test_default_theme_ansi_uses_standard_reset_codes () =
     Terminal_ops.Ansi.render_spans Theme.default [ (`Plain, "x") ]
   in
   Alcotest.(check bool)
-    "uses standard default fg code"
-    true (string_contains rendered "[39;49m");
+    "uses standard default fg code" true
+    (string_contains rendered "[39;49m");
   Alcotest.(check bool)
-    "does not emit invalid default token"
-    false (string_contains rendered "default")
+    "does not emit invalid default token" false
+    (string_contains rendered "default")
 
 let with_temp_file contents f =
   let path = Filename.temp_file "raoui-options" ".R" in
@@ -133,8 +132,7 @@ let with_temp_file contents f =
     (fun () ->
       Out_channel.with_open_text path (fun oc -> output_string oc contents);
       f path)
-    ~finally:(fun () ->
-      if Sys.file_exists path then Sys.remove path)
+    ~finally:(fun () -> if Sys.file_exists path then Sys.remove path)
 
 let test_user_options_reads_theme_name () =
   with_temp_file
@@ -146,16 +144,16 @@ let test_user_options_reads_theme_name () =
 
 let test_user_options_reads_multiline_theme_name () =
   with_temp_file
-    "options(\n  raoui.plot_mode = \"auto\",\n  raoui.theme = \"tokyo_night\"\n)\n"
-    (fun path ->
+    "options(\n\
+    \  raoui.plot_mode = \"auto\",\n\
+    \  raoui.theme = \"tokyo_night\"\n\
+     )\n" (fun path ->
       Alcotest.(check (option string))
         "reads multiline theme" (Some "tokyo_night")
         (User_options.read_theme_name path))
 
 let test_user_options_ignores_non_literal_theme () =
-  with_temp_file
-    "options(raoui.theme = theme_name)\n"
-    (fun path ->
+  with_temp_file "options(raoui.theme = theme_name)\n" (fun path ->
       Alcotest.(check (option string))
         "ignores computed value" None
         (User_options.read_theme_name path))
@@ -165,25 +163,35 @@ let pp_span fmt (style, text) =
 
 let printed_rows model =
   let model =
-    if model.prompt_top_row < 1 then { model with prompt_top_row = 1 } else model
+    if model.prompt_top_row < 1 then { model with prompt_top_row = 1 }
+    else model
   in
   let rows_rev = ref [] in
   Queue.iter
     (function
-      | Terminal_ops.Print spans -> rows_rev := spans :: !rows_rev
-      | _ -> ())
+      | Terminal_ops.Print spans -> rows_rev := spans :: !rows_rev | _ -> ())
     (V.view_ops model);
   List.rev !rows_rev
 
 let view_ops_list model =
   let model =
-    if model.prompt_top_row < 1 then { model with prompt_top_row = 1 } else model
+    if model.prompt_top_row < 1 then { model with prompt_top_row = 1 }
+    else model
   in
   Queue.fold (fun acc op -> op :: acc) [] (V.view_ops model) |> List.rev
 
+let has_cursor_op expected ops =
+  List.exists
+    (function
+      | Terminal_ops.Show_cursor when expected = `Show -> true
+      | Terminal_ops.Hide_cursor when expected = `Hide -> true
+      | _ -> false)
+    ops
+
 let clears_row row ops =
   let rec loop = function
-    | Terminal_ops.Cursor_to (r, 1) :: Terminal_ops.Clear_to_eol :: _ when r = row ->
+    | Terminal_ops.Cursor_to (r, 1) :: Terminal_ops.Clear_to_eol :: _
+      when r = row ->
         true
     | _ :: rest -> loop rest
     | [] -> false
@@ -191,9 +199,7 @@ let clears_row row ops =
   loop ops
 
 let row_content spans =
-  match spans with
-  | _prompt :: content -> content
-  | [] -> []
+  match spans with _prompt :: content -> content | [] -> []
 
 let is_completion_style = function
   | `Completion | `Completion_selected -> true
@@ -202,10 +208,11 @@ let is_completion_style = function
 let completion_rows model =
   printed_rows model
   |> List.filter (function
-       | (style, _) :: _ -> is_completion_style style
-       | [] -> false)
+    | (style, _) :: _ -> is_completion_style style
+    | [] -> false)
 
-let completion_row_text spans = String.concat "" (List.map snd spans) |> String.trim
+let completion_row_text spans =
+  String.concat "" (List.map snd spans) |> String.trim
 
 let completion_row_selected = function
   | (`Completion_selected, _) :: _ -> true
@@ -228,20 +235,23 @@ let insert_many model n =
   let rec loop s n =
     if n = 0 then s
     else
-      let s' = match update (Update.Key (Tty_listener.Char "a")) s with
-        | Continue m -> m | _ -> s in
+      let s' =
+        match update (Update.Key (Tty_listener.Char "a")) s with
+        | Continue m -> m
+        | _ -> s
+      in
       loop s' (n - 1)
   in
   loop model n
 
 let cycle_completion_many cs n =
   let rec loop cs remaining =
-    if remaining <= 0 then cs else loop (Completion.cycle_next cs) (remaining - 1)
+    if remaining <= 0 then cs
+    else loop (Completion.cycle_next cs) (remaining - 1)
   in
   loop cs n
 
-let make_completion_labels n =
-  List.init n (fun i -> Printf.sprintf "item%d" i)
+let make_completion_labels n = List.init n (fun i -> Printf.sprintf "item%d" i)
 
 let make_completion_items n =
   List.map Completion.backend_item (make_completion_labels n)
@@ -336,28 +346,22 @@ let test_wrapped_syntax_highlighting () =
   let row1 = List.nth rows 1 in
   let row2 = List.nth rows 2 in
   Alcotest.(check (list string))
-    "row 0 styles"
-    [ "Function"; "Bracket" ]
+    "row 0 styles" [ "Function"; "Bracket" ]
     (List.map (fun (style, _) -> style_to_string style) row0);
   Alcotest.(check string)
-    "row 0 text"
-    "glue("
+    "row 0 text" "glue("
     (String.concat "" (List.map snd row0));
   Alcotest.(check (list string))
-    "row 1 styles"
-    [ "String" ]
+    "row 1 styles" [ "String" ]
     (List.map (fun (style, _) -> style_to_string style) row1);
   Alcotest.(check string)
-    "row 1 text"
-    "\"abcd"
+    "row 1 text" "\"abcd"
     (String.concat "" (List.map snd row1));
   Alcotest.(check (list string))
-    "row 2 styles"
-    [ "String"; "Bracket" ]
+    "row 2 styles" [ "String"; "Bracket" ]
     (List.map (fun (style, _) -> style_to_string style) row2);
   Alcotest.(check string)
-    "row 2 text"
-    "ef\")"
+    "row 2 text" "ef\")"
     (String.concat "" (List.map snd row2))
 
 let test_wrapped_exact_width_keeps_trailing_row () =
@@ -365,12 +369,10 @@ let test_wrapped_exact_width_keeps_trailing_row () =
   let rows = printed_rows model |> List.map row_content in
   Alcotest.(check int) "exact-width row count" 2 (List.length rows);
   Alcotest.(check (list string))
-    "first row styles"
-    [ "Number" ]
+    "first row styles" [ "Number" ]
     (List.map (fun (style, _) -> style_to_string style) (List.nth rows 0));
   Alcotest.(check string)
-    "first row text"
-    "12345"
+    "first row text" "12345"
     (String.concat "" (List.map snd (List.nth rows 0)));
   Alcotest.(check int) "second row is empty" 0 (List.length (List.nth rows 1))
 
@@ -396,13 +398,14 @@ let test_submit_clears_completion_state () =
     Completion.create ~token_start:0 [ Completion.backend_item "print" ]
   in
   let model =
-    with_lines (initial_model width) [ us "print" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:5
-    |> fun model -> { model with completion = Some completion }
+    with_lines (initial_model width) [ us "print" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:5 |> fun model ->
+    { model with completion = Some completion }
   in
   match submit model with
   | Submit (_, new_model) ->
-      Alcotest.(check bool) "completion cleared on submit" true
+      Alcotest.(check bool)
+        "completion cleared on submit" true
         (Option.is_none new_model.completion)
   | _ -> Alcotest.fail "Expected Submit result"
 
@@ -531,14 +534,12 @@ let test_process_response_theme_updates_model () =
 
   let new_model = Update.process_response model in
 
-  Alcotest.(check string)
-    "theme name" "tokyo_night" new_model.theme.Theme.name;
+  Alcotest.(check string) "theme name" "tokyo_night" new_model.theme.Theme.name;
   Alcotest.(check (option string))
     "no repl output" (Some "")
     (spans_to_text new_model.repl_output);
   Alcotest.(check bool)
-    "awaiting_response false after Theme" false
-    new_model.awaiting_response
+    "awaiting_response false after Theme" false new_model.awaiting_response
 
 let test_process_response_unknown_theme_falls_back () =
   let width = 10 in
@@ -552,8 +553,7 @@ let test_process_response_unknown_theme_falls_back () =
 
   let new_model = Update.process_response model in
 
-  Alcotest.(check string)
-    "theme fallback" "default" new_model.theme.Theme.name
+  Alcotest.(check string) "theme fallback" "default" new_model.theme.Theme.name
 
 let test_scroll_when_cursor_below_screen () =
   let width = 10 in
@@ -629,6 +629,14 @@ let test_view_preserves_streamed_output_row () =
   Alcotest.(check bool)
     "streamed output row is not cleared" false
     (clears_row 4 (view_ops_list model))
+
+let test_history_search_hides_cursor () =
+  let model = { (initial_model 20) with mode = History_search (us "as") } in
+  let ops = view_ops_list model in
+  Alcotest.(check bool)
+    "history search hides cursor" true (has_cursor_op `Hide ops);
+  Alcotest.(check bool)
+    "history search does not show cursor" false (has_cursor_op `Show ops)
 
 (* This test documents the bug we're fixing:
    After an R_error, the state machine should continue until Done.
@@ -1344,7 +1352,9 @@ let test_brace_continuation_keeps_indent () =
 
 let test_completion_dropdown_size_max_4 () =
   let cs = Completion.create ~token_start:0 (make_completion_items 10) in
-  Alcotest.(check int) "dropdown size capped at 4" 4 (Completion.dropdown_size cs)
+  Alcotest.(check int)
+    "dropdown size capped at 4" 4
+    (Completion.dropdown_size cs)
 
 let test_completion_visible_items_without_selection () =
   let cs = Completion.create ~token_start:0 (make_completion_items 6) in
@@ -1365,68 +1375,77 @@ let test_completion_visible_items_short_list () =
 
 let test_completion_visible_window_stays_near_top () =
   let cs =
-    Completion.create ~token_start:0 (make_completion_items 10)
-    |> fun cs -> cycle_completion_many cs 3
+    Completion.create ~token_start:0 (make_completion_items 10) |> fun cs ->
+    cycle_completion_many cs 3
   in
-  Alcotest.(check int) "window start stays at zero" 0
+  Alcotest.(check int)
+    "window start stays at zero" 0
     (Completion.visible_window_start cs);
   Alcotest.(check (list string))
     "selected index 2 still shows first page"
     [ "item0"; "item1"; "item2"; "item3" ]
     (item_labels (Completion.visible_items cs));
   Alcotest.(check (option int))
-    "selected row is index 2 in window"
-    (Some 2) (Completion.selected_index_in_window cs)
+    "selected row is index 2 in window" (Some 2)
+    (Completion.selected_index_in_window cs)
 
 let test_completion_visible_window_scrolls () =
   let cs =
-    Completion.create ~token_start:0 (make_completion_items 10)
-    |> fun cs -> cycle_completion_many cs 4
+    Completion.create ~token_start:0 (make_completion_items 10) |> fun cs ->
+    cycle_completion_many cs 4
   in
-  Alcotest.(check int) "window start shifts once selection reaches row 3" 1
+  Alcotest.(check int)
+    "window start shifts once selection reaches row 3" 1
     (Completion.visible_window_start cs);
   Alcotest.(check (list string))
     "window scrolls forward"
     [ "item1"; "item2"; "item3"; "item4" ]
     (item_labels (Completion.visible_items cs));
   Alcotest.(check (option int))
-    "selected stays on third visible row when possible"
-    (Some 2) (Completion.selected_index_in_window cs)
+    "selected stays on third visible row when possible" (Some 2)
+    (Completion.selected_index_in_window cs)
 
 let test_completion_visible_window_clamps_to_end () =
   let cs =
-    Completion.create ~token_start:0 (make_completion_items 10)
-    |> fun cs -> cycle_completion_many cs 10
+    Completion.create ~token_start:0 (make_completion_items 10) |> fun cs ->
+    cycle_completion_many cs 10
   in
-  Alcotest.(check int) "window clamps to last four items" 6
+  Alcotest.(check int)
+    "window clamps to last four items" 6
     (Completion.visible_window_start cs);
   Alcotest.(check (list string))
     "shows final window"
     [ "item6"; "item7"; "item8"; "item9" ]
     (item_labels (Completion.visible_items cs));
   Alcotest.(check (option int))
-    "final selection can sit on bottom row"
-    (Some 3) (Completion.selected_index_in_window cs)
+    "final selection can sit on bottom row" (Some 3)
+    (Completion.selected_index_in_window cs)
 
 let test_completion_visible_window_wraps_to_top () =
   let cs =
-    Completion.create ~token_start:0 (make_completion_items 10)
-    |> fun cs -> cycle_completion_many cs 11
+    Completion.create ~token_start:0 (make_completion_items 10) |> fun cs ->
+    cycle_completion_many cs 11
   in
-  Alcotest.(check int) "window resets after wraparound" 0
+  Alcotest.(check int)
+    "window resets after wraparound" 0
     (Completion.visible_window_start cs);
   Alcotest.(check (list string))
     "shows first page again after wrapping"
     [ "item0"; "item1"; "item2"; "item3" ]
     (item_labels (Completion.visible_items cs));
   Alcotest.(check (option int))
-    "wrapped selection returns to first row"
-    (Some 0) (Completion.selected_index_in_window cs)
+    "wrapped selection returns to first row" (Some 0)
+    (Completion.selected_index_in_window cs)
 
 let test_view_completion_rows_capped_at_4 () =
-  let completion = Completion.create ~token_start:0 (make_completion_items 10) in
+  let completion =
+    Completion.create ~token_start:0 (make_completion_items 10)
+  in
   let model =
-    { (with_lines (initial_model 20) [ us "item" ]) with completion = Some completion }
+    {
+      (with_lines (initial_model 20) [ us "item" ]) with
+      completion = Some completion;
+    }
     |> fun model -> with_cursor_internal model ~line:0 ~pos:4
   in
   let rows = completion_rows model in
@@ -1438,13 +1457,14 @@ let test_view_completion_rows_capped_at_4 () =
 
 let test_view_completion_rows_scroll_with_tab () =
   let base_model =
-    with_lines (initial_model 20) [ us "it" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:2
+    with_lines (initial_model 20) [ us "it" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:2
   in
   let model =
     match
       update
-        (Update.Response (Ffi_backend.Completions ("it", make_completion_labels 10)))
+        (Update.Response
+           (Ffi_backend.Completions ("it", make_completion_labels 10)))
         base_model
     with
     | Continue model -> model
@@ -1458,11 +1478,11 @@ let test_view_completion_rows_scroll_with_tab () =
         | _ -> Alcotest.fail "Expected tab to keep cycling completions")
       model [ (); (); (); () ]
   in
-  Alcotest.(check string) "tab inserts selected completion" "item3"
-    (first_line_str model);
+  Alcotest.(check string)
+    "tab inserts selected completion" "item3" (first_line_str model);
   let rows = completion_rows model in
-  Alcotest.(check int) "still renders four rows after scrolling" 4
-    (List.length rows);
+  Alcotest.(check int)
+    "still renders four rows after scrolling" 4 (List.length rows);
   Alcotest.(check (list string))
     "viewport scrolls to keep selection visible"
     [ "item1"; "item2"; "item3"; "item4" ]
@@ -1474,8 +1494,8 @@ let test_view_completion_rows_scroll_with_tab () =
 
 let test_backslash_exact_match_is_visually_selected () =
   let base_model =
-    with_lines (initial_model 20) [ us "\\pi" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:3
+    with_lines (initial_model 20) [ us "\\pi" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:3
   in
   let model =
     match update (Update.Key Tty_listener.Right) base_model with
@@ -1484,23 +1504,22 @@ let test_backslash_exact_match_is_visually_selected () =
   in
   let rows = completion_rows model in
   Alcotest.(check (list string))
-    "shows matching row"
-    [ "\\pi" ]
+    "shows matching row" [ "\\pi" ]
     (List.map completion_row_text rows);
   Alcotest.(check (list bool))
-    "exact backslash match is selected"
-    [ true ]
+    "exact backslash match is selected" [ true ]
     (List.map completion_row_selected rows)
 
 let test_backend_exact_match_is_visually_selected () =
   let base_model =
-    with_lines (initial_model 20) [ us "item3" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:5
+    with_lines (initial_model 20) [ us "item3" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:5
   in
   let model =
     match
       update
-        (Update.Response (Ffi_backend.Completions ("item3", make_completion_labels 10)))
+        (Update.Response
+           (Ffi_backend.Completions ("item3", make_completion_labels 10)))
         base_model
     with
     | Continue model -> model
@@ -1508,20 +1527,21 @@ let test_backend_exact_match_is_visually_selected () =
   in
   let rows = completion_rows model in
   Alcotest.(check (list string))
-    "exact backend match narrows to exact row"
-    [ "item3" ]
+    "exact backend match narrows to exact row" [ "item3" ]
     (List.map completion_row_text rows);
   Alcotest.(check (list bool))
-    "exact backend match is selected"
-    [ true ]
+    "exact backend match is selected" [ true ]
     (List.map completion_row_selected rows)
 
 let test_backslash_token_at_start_of_line () =
   let model =
-    with_lines (initial_model 20) [ us "\\p" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:2
+    with_lines (initial_model 20) [ us "\\p" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:2
   in
-  match Backslash_command.token_in_line (List.hd model.lines) ~cursor_pos:model.cursor_pos with
+  match
+    Backslash_command.token_in_line (List.hd model.lines)
+      ~cursor_pos:model.cursor_pos
+  with
   | Some (token : Backslash_command.token) ->
       Alcotest.(check int) "token start" 0 token.token_start;
       Alcotest.(check string) "typed text" "\\p" token.typed_text;
@@ -1530,10 +1550,13 @@ let test_backslash_token_at_start_of_line () =
 
 let test_backslash_token_after_punctuation () =
   let model =
-    with_lines (initial_model 20) [ us "foo(\\fi" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:7
+    with_lines (initial_model 20) [ us "foo(\\fi" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:7
   in
-  match Backslash_command.token_in_line (List.hd model.lines) ~cursor_pos:model.cursor_pos with
+  match
+    Backslash_command.token_in_line (List.hd model.lines)
+      ~cursor_pos:model.cursor_pos
+  with
   | Some (token : Backslash_command.token) ->
       Alcotest.(check int) "token start" 4 token.token_start;
       Alcotest.(check string) "typed text" "\\fi" token.typed_text
@@ -1541,12 +1564,11 @@ let test_backslash_token_after_punctuation () =
 
 let test_backslash_token_not_inside_word () =
   let model =
-    with_lines (initial_model 20) [ us "abc\\fi" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:6
+    with_lines (initial_model 20) [ us "abc\\fi" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:6
   in
   Alcotest.(check (option string))
-    "no token inside word"
-    None
+    "no token inside word" None
     (Option.map
        (fun (token : Backslash_command.token) -> token.typed_text)
        (Backslash_command.token_in_line (List.hd model.lines)
@@ -1554,8 +1576,8 @@ let test_backslash_token_not_inside_word () =
 
 let test_backslash_completion_shows_frontend_commands () =
   let base_model =
-    with_lines (initial_model 20) [ us "\\p" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:2
+    with_lines (initial_model 20) [ us "\\p" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:2
   in
   match update (Update.Key Tty_listener.Right) base_model with
   | Continue model -> (
@@ -1570,19 +1592,20 @@ let test_backslash_completion_shows_frontend_commands () =
 
 let test_backslash_completion_not_shown_for_bare_backslash () =
   let base_model =
-    with_lines (initial_model 20) [ us "\\" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:1
+    with_lines (initial_model 20) [ us "\\" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:1
   in
   match update (Update.Key Tty_listener.Right) base_model with
   | Continue model ->
-      Alcotest.(check bool) "no completion for bare backslash" true
+      Alcotest.(check bool)
+        "no completion for bare backslash" true
         (Option.is_none model.completion)
   | _ -> Alcotest.fail "Expected Continue"
 
 let test_backslash_completion_lists_common_greek_letters () =
   let base_model =
-    with_lines (initial_model 20) [ us "\\a" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:2
+    with_lines (initial_model 20) [ us "\\a" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:2
   in
   let model =
     match update (Update.Key Tty_listener.Right) base_model with
@@ -1592,15 +1615,14 @@ let test_backslash_completion_lists_common_greek_letters () =
   match model.completion with
   | Some cs ->
       Alcotest.(check (list string))
-        "shows common greek completions"
-        [ "\\alpha" ]
+        "shows common greek completions" [ "\\alpha" ]
         (item_labels (Completion.filtered_items cs))
   | None -> Alcotest.fail "Expected backslash completion"
 
 let test_backslash_completion_filters_multiple_greek_matches () =
   let base_model =
-    with_lines (initial_model 20) [ us "\\p" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:2
+    with_lines (initial_model 20) [ us "\\p" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:2
   in
   let model =
     match update (Update.Key Tty_listener.Right) base_model with
@@ -1617,19 +1639,70 @@ let test_backslash_completion_filters_multiple_greek_matches () =
 
 let test_normal_completion_not_shown_for_single_character () =
   let base_model =
-    with_lines (initial_model 20) [ us "p" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:1
+    with_lines (initial_model 20) [ us "p" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:1
   in
   match update (Update.Key Tty_listener.Right) base_model with
   | Continue model ->
-      Alcotest.(check bool) "no completion for one-character normal word" true
+      Alcotest.(check bool)
+        "no completion for one-character normal word" true
         (Option.is_none model.completion)
   | _ -> Alcotest.fail "Expected Continue"
 
+let test_history_search_typing_ignores_completions () =
+  let stale_completion =
+    Completion.create ~token_start:0 (make_completion_items 3)
+  in
+  let model = { (initial_model 20) with completion = Some stale_completion } in
+  let model, effects =
+    Update.update (Update.Key (Tty_listener.Ctrl 'r')) model
+  in
+  Alcotest.(check int) "ctrl-r has no effects" 0 (List.length effects);
+  (match model.mode with
+  | History_search search ->
+      Alcotest.(check string)
+        "starts with empty search" ""
+        (Unicode_string.to_string search)
+  | _ -> Alcotest.fail "Expected history search mode");
+  Alcotest.(check bool)
+    "stale completion cleared on entry" true
+    (Option.is_none model.completion);
+  let model, effects =
+    Update.update (Update.Key (Tty_listener.Char "a")) model
+  in
+  Alcotest.(check int)
+    "typing in history search has no completion effect" 0 (List.length effects);
+  (match model.mode with
+  | History_search search ->
+      Alcotest.(check string)
+        "search stores first char" "a"
+        (Unicode_string.to_string search)
+  | _ -> Alcotest.fail "Expected history search mode after first char");
+  Alcotest.(check string)
+    "no history match leaves empty result" "" (first_line_str model);
+  Alcotest.(check bool)
+    "completion stays cleared after first char" true
+    (Option.is_none model.completion);
+  let model, effects =
+    Update.update (Update.Key (Tty_listener.Char "s")) model
+  in
+  Alcotest.(check int)
+    "second char also has no completion effect" 0 (List.length effects);
+  (match model.mode with
+  | History_search search ->
+      Alcotest.(check string)
+        "search stores typed prefix" "as"
+        (Unicode_string.to_string search)
+  | _ -> Alcotest.fail "Expected history search mode after second char");
+  Alcotest.(check string) "result stays empty" "" (first_line_str model);
+  Alcotest.(check bool)
+    "completion stays cleared after second char" true
+    (Option.is_none model.completion)
+
 let test_backslash_completion_enter_simple_inserts_text () =
   let base_model =
-    with_lines (initial_model 20) [ us "\\p" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:2
+    with_lines (initial_model 20) [ us "\\p" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:2
   in
   let model =
     match update (Update.Key Tty_listener.Right) base_model with
@@ -1643,16 +1716,17 @@ let test_backslash_completion_enter_simple_inserts_text () =
   in
   match update (Update.Key Tty_listener.Enter) model with
   | Continue new_model ->
-      Alcotest.(check string) "simple command inserts unicode" "π"
-        (first_line_str new_model);
-      Alcotest.(check (option int)) "completion cleared" None
+      Alcotest.(check string)
+        "simple command inserts unicode" "π" (first_line_str new_model);
+      Alcotest.(check (option int))
+        "completion cleared" None
         (Option.bind new_model.completion Completion.selected_index)
   | _ -> Alcotest.fail "Expected Continue"
 
 let test_backslash_completion_enter_effect_runs_command () =
   let base_model =
-    with_lines (initial_model 20) [ us "\\fi" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:3
+    with_lines (initial_model 20) [ us "\\fi" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:3
   in
   let model =
     match update (Update.Key Tty_listener.Right) base_model with
@@ -1669,14 +1743,14 @@ let test_backslash_completion_enter_effect_runs_command () =
       (Repl_effect.Pick_file { token_start; original_token }, new_model) ->
       Alcotest.(check int) "token start" 0 token_start;
       Alcotest.(check string) "selected command" "\\file" original_token;
-      Alcotest.(check string) "buffer unchanged while effect runs" "\\file"
-        (first_line_str new_model)
+      Alcotest.(check string)
+        "buffer unchanged while effect runs" "\\file" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected backslash effect"
 
 let test_backslash_completion_enter_exact_simple_match () =
   let base_model =
-    with_lines (initial_model 20) [ us "\\pi" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:3
+    with_lines (initial_model 20) [ us "\\pi" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:3
   in
   let model =
     match update (Update.Key Tty_listener.Right) base_model with
@@ -1685,14 +1759,14 @@ let test_backslash_completion_enter_exact_simple_match () =
   in
   match update (Update.Key Tty_listener.Enter) model with
   | Continue new_model ->
-      Alcotest.(check string) "exact simple command inserts unicode" "π"
-        (first_line_str new_model)
+      Alcotest.(check string)
+        "exact simple command inserts unicode" "π" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected Continue"
 
 let test_backslash_completion_enter_exact_effect_match () =
   let base_model =
-    with_lines (initial_model 20) [ us "\\file" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:5
+    with_lines (initial_model 20) [ us "\\file" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:5
   in
   let model =
     match update (Update.Key Tty_listener.Right) base_model with
@@ -1704,14 +1778,14 @@ let test_backslash_completion_enter_exact_effect_match () =
       (Repl_effect.Pick_file { token_start; original_token }, new_model) ->
       Alcotest.(check int) "token start" 0 token_start;
       Alcotest.(check string) "exact command selected" "\\file" original_token;
-      Alcotest.(check string) "buffer unchanged while effect runs" "\\file"
-        (first_line_str new_model)
+      Alcotest.(check string)
+        "buffer unchanged while effect runs" "\\file" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected backslash effect"
 
 let test_backslash_effect_result_inserts_quoted_path () =
   let model =
-    with_lines (initial_model 20) [ us "\\file" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:5
+    with_lines (initial_model 20) [ us "\\file" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:5
   in
   match
     update
@@ -1724,23 +1798,19 @@ let test_backslash_effect_result_inserts_quoted_path () =
       model
   with
   | Continue new_model ->
-      Alcotest.(check string) "path inserted" "\"/tmp/data.csv\""
-        (first_line_str new_model)
+      Alcotest.(check string)
+        "path inserted" "\"/tmp/data.csv\"" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected Continue"
 
 let test_backslash_effect_cancel_keeps_token () =
   let model =
-    with_lines (initial_model 20) [ us "\\file" ]
-    |> fun model -> with_cursor_internal model ~line:0 ~pos:5
+    with_lines (initial_model 20) [ us "\\file" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:5
   in
   match
     update
       (Update.Backslash_effect_result
-         {
-           token_start = 0;
-           original_token = "\\file";
-           inserted_text = None;
-         })
+         { token_start = 0; original_token = "\\file"; inserted_text = None })
       model
   with
   | Continue new_model ->
@@ -2048,8 +2118,7 @@ let () =
         ] );
       ( "user_options",
         [
-          test_case "Reads theme name" `Quick
-            test_user_options_reads_theme_name;
+          test_case "Reads theme name" `Quick test_user_options_reads_theme_name;
           test_case "Reads multiline theme name" `Quick
             test_user_options_reads_multiline_theme_name;
           test_case "Ignores non-literal theme" `Quick
@@ -2067,6 +2136,8 @@ let () =
             test_view_clears_reserved_output_row_before_first_chunk;
           test_case "View preserves streamed output row" `Quick
             test_view_preserves_streamed_output_row;
+          test_case "History search hides cursor" `Quick
+            test_history_search_hides_cursor;
         ] );
       ( "paste",
         [
@@ -2124,6 +2195,8 @@ let () =
             test_backslash_completion_filters_multiple_greek_matches;
           test_case "Normal completion not shown for single character" `Quick
             test_normal_completion_not_shown_for_single_character;
+          test_case "History search typing ignores completions" `Quick
+            test_history_search_typing_ignores_completions;
           test_case "Backslash enter simple inserts text" `Quick
             test_backslash_completion_enter_simple_inserts_text;
           test_case "Backslash enter effect runs command" `Quick

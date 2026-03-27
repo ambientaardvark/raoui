@@ -42,11 +42,12 @@ let at_line_end model = model.cursor_pos >= line_length model
 let should_auto_pair model =
   match char_at model with
   | None -> true
-  | Some s ->
+  | Some s -> (
       String.length s = 1
-      && (match String.get s 0 with
-         | ')' | ']' | '}' | ' ' | '\t' -> true
-         | _ -> false)
+      &&
+      match String.get s 0 with
+      | ')' | ']' | '}' | ' ' | '\t' -> true
+      | _ -> false)
 
 let at_first_line model = model.cursor_line = 0
 let at_last_line model = model.cursor_line >= List.length model.lines - 1
@@ -317,9 +318,9 @@ let move_down model =
 
 let user_input_char model c =
   match c with
-  | "[" | "{" | "(" ->
+  | "[" | "{" | "(" -> (
       if not (should_auto_pair model) then insert_char model c
-      else (
+      else
         let after1 = insert_char model c in
         match c with
         | "[" -> move_left (insert_char after1 "]")
@@ -730,25 +731,28 @@ let replace_token model token_start text =
   replace_range model token_start model.cursor_pos text
 
 let filter_completions model =
-  match model.completion with
-  | None -> model
-  | Some cs when Completion.is_in_completion_mode cs ->
-      model (* completion mode: set is fixed *)
-  | Some cs -> (
-      let line = current_line model in
-      let line_len = Unicode_string.length line in
-      let token_start = Completion.token_start cs in
-      if token_start > line_len || token_start > model.cursor_pos then
-        { model with completion = None }
-      else
-        let prefix_len = model.cursor_pos - token_start in
-        let prefix =
-          Unicode_string.to_string
-            (Unicode_string.sub line ~start:token_start ~len:prefix_len)
-        in
-        match Completion.filter cs ~prefix with
-        | None -> { model with completion = None }
-        | Some filtered -> { model with completion = Some filtered })
+  match model.mode with
+  | History_search _ -> { model with completion = None }
+  | _ -> (
+      match model.completion with
+      | None -> model
+      | Some cs when Completion.is_in_completion_mode cs ->
+          model (* completion mode: set is fixed *)
+      | Some cs -> (
+          let line = current_line model in
+          let line_len = Unicode_string.length line in
+          let token_start = Completion.token_start cs in
+          if token_start > line_len || token_start > model.cursor_pos then
+            { model with completion = None }
+          else
+            let prefix_len = model.cursor_pos - token_start in
+            let prefix =
+              Unicode_string.to_string
+                (Unicode_string.sub line ~start:token_start ~len:prefix_len)
+            in
+            match Completion.filter cs ~prefix with
+            | None -> { model with completion = None }
+            | Some filtered -> { model with completion = Some filtered }))
 
 let handle_tab model =
   match model.completion with
@@ -794,7 +798,7 @@ let accept_backslash_completion model =
           in
           Completion.filtered_items cs
           |> List.find_opt (fun item ->
-                 String.equal (Completion.label item) typed_text)
+              String.equal (Completion.label item) typed_text)
       in
       let chosen_item =
         match Completion.current_completion cs with
@@ -804,13 +808,14 @@ let accept_backslash_completion model =
       match chosen_item with
       | Some completion_item -> (
           match Completion.kind completion_item with
-          | Completion.Backslash command ->
+          | Completion.Backslash command -> (
               let token_start = Completion.token_start cs in
               let selected_label = Completion.label completion_item in
-              (match command with
+              match command with
               | Backslash_command.Simple { inserted_text; _ } ->
                   let replaced =
-                    replace_range model token_start model.cursor_pos inserted_text
+                    replace_range model token_start model.cursor_pos
+                      inserted_text
                   in
                   Some ({ replaced with completion = None }, [])
               | Backslash_command.Effectful
@@ -820,10 +825,7 @@ let accept_backslash_completion model =
                       [
                         Repl_effect.Run_backslash_effect
                           (Repl_effect.Pick_file
-                             {
-                               token_start;
-                               original_token = selected_label;
-                             });
+                             { token_start; original_token = selected_label });
                       ] ))
           | Completion.Backend -> None)
       | None -> None)
@@ -840,34 +842,38 @@ let make_backslash_completion model (token : Backslash_command.token) =
     filter_completions { model with completion = Some completion }
 
 let completion_followup model =
-  let normal_completion_token_length line =
-    let rec loop idx len =
-      if idx < 0 then len
-      else
-        let cluster = Unicode_string.cluster_at line idx in
-        if is_word_char cluster then loop (idx - 1) (len + 1) else len
-    in
-    loop (model.cursor_pos - 1) 0
-  in
-  let in_completion_mode =
-    match model.completion with
-    | Some cs when Completion.is_in_completion_mode cs -> true
-    | _ -> false
-  in
-  if (not model.awaiting_response) && not in_completion_mode then
-    match List.nth_opt model.lines model.cursor_line with
-    | Some line -> (
-        match Backslash_command.token_in_line line ~cursor_pos:model.cursor_pos with
-        | Some token -> (make_backslash_completion model token, [])
-        | None when normal_completion_token_length line < 2 ->
-            ({ model with completion = None }, [])
-        | None ->
-            let text = Unicode_string.to_string line in
-            [ Repl_effect.RequestCompletions (text, model.cursor_pos) ]
-            |> fun effects -> (model, effects)
-        )
-    | None -> (model, [])
-  else (model, [])
+  match model.mode with
+  | History_search _ -> ({ model with completion = None }, [])
+  | _ ->
+      let normal_completion_token_length line =
+        let rec loop idx len =
+          if idx < 0 then len
+          else
+            let cluster = Unicode_string.cluster_at line idx in
+            if is_word_char cluster then loop (idx - 1) (len + 1) else len
+        in
+        loop (model.cursor_pos - 1) 0
+      in
+      let in_completion_mode =
+        match model.completion with
+        | Some cs when Completion.is_in_completion_mode cs -> true
+        | _ -> false
+      in
+      if (not model.awaiting_response) && not in_completion_mode then
+        match List.nth_opt model.lines model.cursor_line with
+        | Some line -> (
+            match
+              Backslash_command.token_in_line line ~cursor_pos:model.cursor_pos
+            with
+            | Some token -> (make_backslash_completion model token, [])
+            | None when normal_completion_token_length line < 2 ->
+                ({ model with completion = None }, [])
+            | None ->
+                let text = Unicode_string.to_string line in
+                [ Repl_effect.RequestCompletions (text, model.cursor_pos) ]
+                |> fun effects -> (model, effects))
+        | None -> (model, [])
+      else (model, [])
 
 (* Key handlers per mode *)
 
@@ -983,6 +989,7 @@ let apply_key_in_normal_mode key model =
           cursor_col = 0;
           cursor_row = 0;
           cursor_line = 0;
+          completion = None;
         },
         [] )
   | Ctrl 'a' -> (go_to_line_start model, [])
@@ -1121,21 +1128,24 @@ let update msg model =
             |> process_response |> handle_vertical_cursor_movement
           in
           ({ m with repl_output = None }, [])
-      | Ffi_backend.Completions (token, items) ->
-          let in_completion_mode =
-            match model.completion with
-            | Some cs when Completion.is_in_completion_mode cs -> true
-            | _ -> false
-          in
-          if in_completion_mode then (model, [])
-          else
-            let token_start = model.cursor_pos - String.length token in
-            let completion =
-              Completion.create ~token_start
-                (List.map Completion.backend_item items)
-            in
-            let m = { model with completion = Some completion } in
-            (filter_completions m, [])
+      | Ffi_backend.Completions (token, items) -> (
+          match model.mode with
+          | History_search _ -> ({ model with completion = None }, [])
+          | _ ->
+              let in_completion_mode =
+                match model.completion with
+                | Some cs when Completion.is_in_completion_mode cs -> true
+                | _ -> false
+              in
+              if in_completion_mode then (model, [])
+              else
+                let token_start = model.cursor_pos - String.length token in
+                let completion =
+                  Completion.create ~token_start
+                    (List.map Completion.backend_item items)
+                in
+                let m = { model with completion = Some completion } in
+                (filter_completions m, []))
       | Ffi_backend.Restarted _ ->
           let m =
             { model with backend_response = Some response }
