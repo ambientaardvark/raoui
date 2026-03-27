@@ -28,15 +28,7 @@ let configured_level () =
   | Some level -> level |> String.lowercase_ascii |> level_of_string
   | None -> Logs.Info
 
-let rec ensure_dir dir =
-  if dir = "" || dir = "." || dir = "/" then ()
-  else if Sys.file_exists dir then begin
-    if not (Sys.is_directory dir) then
-      invalid_arg (Printf.sprintf "log path parent is not a directory: %s" dir)
-  end else begin
-    ensure_dir (Filename.dirname dir);
-    Unix.mkdir dir 0o700
-  end
+let ensure_dir = Paths.ensure_dir
 
 let default_log_path () =
   match Sys.getenv_opt "RAOUI_LOG_FILE" with

@@ -35,10 +35,18 @@ local({
 # Graphics: use httpgd (thread-safe) instead of Quartz (main-thread only)
 local({
     plot_mode <- getOption("raoui.plot_mode", "auto")
-    use_httpgd <- identical(plot_mode, "httpgd") ||
-        (identical(plot_mode, "auto") && requireNamespace("httpgd", quietly = TRUE))
+    has_httpgd <- requireNamespace("httpgd", quietly = TRUE)
 
-    if (use_httpgd && requireNamespace("httpgd", quietly = TRUE)) {
+    setup_png_device <- function() {
+        plot_dir <- Sys.getenv("RAOUI_PLOTS_DIR", tempdir())
+        if (!dir.exists(plot_dir)) dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+        plot_file <- file.path(plot_dir, "raoui_plot.png")
+        options(device = function(...) {
+            grDevices::png(plot_file, width = 800, height = 600, ...)
+        })
+    }
+
+    if ((identical(plot_mode, "httpgd") || identical(plot_mode, "auto")) && has_httpgd) {
         opened <- FALSE
         options(device = function(...) {
             httpgd::hgd(...)
@@ -47,21 +55,15 @@ local({
                 opened <<- TRUE
             }
         })
+    } else if (identical(plot_mode, "httpgd")) {
+        warning("raoui.plot_mode is 'httpgd' but httpgd is not installed. Falling back to PNG.\n",
+                "  Install it with: install.packages('httpgd')", call. = FALSE)
+        setup_png_device()
     } else if (identical(plot_mode, "auto")) {
         message("Install httpgd for plot support: install.packages('httpgd')")
-        plot_dir <- Sys.getenv("RAOUI_PLOTS_DIR", tempdir())
-        if (!dir.exists(plot_dir)) dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
-        plot_file <- file.path(plot_dir, "raoui_plot.png")
-        options(device = function(...) {
-            grDevices::png(plot_file, width = 800, height = 600, ...)
-        })
+        setup_png_device()
     } else if (identical(plot_mode, "png")) {
-        plot_dir <- Sys.getenv("RAOUI_PLOTS_DIR", tempdir())
-        if (!dir.exists(plot_dir)) dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
-        plot_file <- file.path(plot_dir, "raoui_plot.png")
-        options(device = function(...) {
-            grDevices::png(plot_file, width = 800, height = 600, ...)
-        })
+        setup_png_device()
     }
 })
 
