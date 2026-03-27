@@ -70,18 +70,24 @@ let sigwinch_pipe_rd, sigwinch_pipe_wr =
   Unix.set_nonblock wr;
   rd, wr
 
+let sigwinch_byte = Bytes.of_string "x"
+
 let () =
   Sys.set_signal (Sys.sigwinch) (Sys.Signal_handle (fun _ ->
-    ignore (Unix.write sigwinch_pipe_wr (Bytes.of_string "x") 0 1)
+    try ignore (Unix.write sigwinch_pipe_wr sigwinch_byte 0 1)
+    with Unix.Unix_error _ -> ()
   ))
 
-let await_dim_change () =
+let rec await_dim_change ~current_w ~current_h =
   Eio_unix.await_readable sigwinch_pipe_rd;
   (* Drain all pending bytes *)
   let buf = Bytes.create 16 in
   (try while Unix.read sigwinch_pipe_rd buf 0 16 > 0 do () done
    with Unix.Unix_error (Unix.EAGAIN, _, _) -> ());
-  get_term_dimensions ()
+  let w, h = get_term_dimensions () in
+  if w = current_w && h = current_h then
+    await_dim_change ~current_w ~current_h
+  else (w, h)
 
 let history_path =
   match Sys.getenv_opt "HOME" with
@@ -274,7 +280,9 @@ let run env backend ~orig_termios =
                    ~clock ~stdin));
             (fun () -> Update.Response (Ffi_backend.await_response backend));
             (fun () ->
-              let w, h = await_dim_change () in
+              let w, h =
+                await_dim_change ~current_w:model.term_width ~current_h:model.term_height
+              in
               Update.TermResize (w, h));
           ]
     in
