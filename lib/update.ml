@@ -555,6 +555,7 @@ let clear_model_for_submit ?(awaiting_response = true) model =
   {
     model with
     awaiting_response;
+    completion = None;
     repl_cursor = (output_row + scroll_amount, 1);
     prompt_top_row = new_prompt_top + scroll_amount;
     previous_prompt_top_row = new_prompt_top + scroll_amount;
@@ -591,6 +592,7 @@ let submit_in_readline_mode model =
     {
       model with
       mode = Frontend_types.Normal;
+      completion = None;
       lines = [ Unicode_string.empty ];
       lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
       cursor_row = 0;
@@ -838,6 +840,15 @@ let make_backslash_completion model (token : Backslash_command.token) =
     filter_completions { model with completion = Some completion }
 
 let completion_followup model =
+  let normal_completion_token_length line =
+    let rec loop idx len =
+      if idx < 0 then len
+      else
+        let cluster = Unicode_string.cluster_at line idx in
+        if is_word_char cluster then loop (idx - 1) (len + 1) else len
+    in
+    loop (model.cursor_pos - 1) 0
+  in
   let in_completion_mode =
     match model.completion with
     | Some cs when Completion.is_in_completion_mode cs -> true
@@ -848,6 +859,8 @@ let completion_followup model =
     | Some line -> (
         match Backslash_command.token_in_line line ~cursor_pos:model.cursor_pos with
         | Some token -> (make_backslash_completion model token, [])
+        | None when normal_completion_token_length line < 2 ->
+            ({ model with completion = None }, [])
         | None ->
             let text = Unicode_string.to_string line in
             [ Repl_effect.RequestCompletions (text, model.cursor_pos) ]

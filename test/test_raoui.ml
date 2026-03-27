@@ -335,6 +335,22 @@ let test_submit_basic () =
       Alcotest.(check int) "cursor_col reset" 0 new_model.cursor_col
   | _ -> Alcotest.fail "Expected Submit result"
 
+let test_submit_clears_completion_state () =
+  let width = 20 in
+  let completion =
+    Completion.create ~token_start:0 [ Completion.backend_item "print" ]
+  in
+  let model =
+    with_lines (initial_model width) [ us "print" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:5
+    |> fun model -> { model with completion = Some completion }
+  in
+  match submit model with
+  | Submit (_, new_model) ->
+      Alcotest.(check bool) "completion cleared on submit" true
+        (Option.is_none new_model.completion)
+  | _ -> Alcotest.fail "Expected Submit result"
+
 let test_submit_prompt_position () =
   let width = 10 in
   let model = { (initial_model width) with prompt_top_row = 5 } in
@@ -1455,9 +1471,67 @@ let test_backslash_completion_shows_frontend_commands () =
       | Some cs ->
           Alcotest.(check (list string))
             "shows matching backslash commands"
-            [ "\\pi" ]
+            [ "\\pi"; "\\phi"; "\\psi" ]
             (item_labels (Completion.filtered_items cs))
       | None -> Alcotest.fail "Expected backslash completion")
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_backslash_completion_not_shown_for_bare_backslash () =
+  let base_model =
+    with_lines (initial_model 20) [ us "\\" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:1
+  in
+  match update (Update.Key Tty_listener.Right) base_model with
+  | Continue model ->
+      Alcotest.(check bool) "no completion for bare backslash" true
+        (Option.is_none model.completion)
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_backslash_completion_lists_common_greek_letters () =
+  let base_model =
+    with_lines (initial_model 20) [ us "\\a" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:2
+  in
+  let model =
+    match update (Update.Key Tty_listener.Right) base_model with
+    | Continue model -> model
+    | _ -> Alcotest.fail "Expected Continue"
+  in
+  match model.completion with
+  | Some cs ->
+      Alcotest.(check (list string))
+        "shows common greek completions"
+        [ "\\alpha" ]
+        (item_labels (Completion.filtered_items cs))
+  | None -> Alcotest.fail "Expected backslash completion"
+
+let test_backslash_completion_filters_multiple_greek_matches () =
+  let base_model =
+    with_lines (initial_model 20) [ us "\\p" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:2
+  in
+  let model =
+    match update (Update.Key Tty_listener.Right) base_model with
+    | Continue model -> model
+    | _ -> Alcotest.fail "Expected Continue"
+  in
+  match model.completion with
+  | Some cs ->
+      Alcotest.(check (list string))
+        "shows greek matches sharing prefix"
+        [ "\\pi"; "\\phi"; "\\psi" ]
+        (item_labels (Completion.filtered_items cs))
+  | None -> Alcotest.fail "Expected backslash completion"
+
+let test_normal_completion_not_shown_for_single_character () =
+  let base_model =
+    with_lines (initial_model 20) [ us "p" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:1
+  in
+  match update (Update.Key Tty_listener.Right) base_model with
+  | Continue model ->
+      Alcotest.(check bool) "no completion for one-character normal word" true
+        (Option.is_none model.completion)
   | _ -> Alcotest.fail "Expected Continue"
 
 let test_backslash_completion_enter_simple_inserts_text () =
@@ -1846,6 +1920,8 @@ let () =
       ( "submit",
         [
           test_case "Basic submit" `Quick test_submit_basic;
+          test_case "Submit clears completion state" `Quick
+            test_submit_clears_completion_state;
           test_case "Prompt position after submit" `Quick
             test_submit_prompt_position;
           test_case "Multiline submit" `Quick test_submit_multiline;
@@ -1930,6 +2006,14 @@ let () =
             test_backslash_token_not_inside_word;
           test_case "Backslash completion shows frontend commands" `Quick
             test_backslash_completion_shows_frontend_commands;
+          test_case "Backslash completion not shown for bare backslash" `Quick
+            test_backslash_completion_not_shown_for_bare_backslash;
+          test_case "Backslash completion lists common greek letters" `Quick
+            test_backslash_completion_lists_common_greek_letters;
+          test_case "Backslash completion filters multiple greek matches" `Quick
+            test_backslash_completion_filters_multiple_greek_matches;
+          test_case "Normal completion not shown for single character" `Quick
+            test_normal_completion_not_shown_for_single_character;
           test_case "Backslash enter simple inserts text" `Quick
             test_backslash_completion_enter_simple_inserts_text;
           test_case "Backslash enter effect runs command" `Quick

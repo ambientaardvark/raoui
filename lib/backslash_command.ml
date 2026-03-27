@@ -24,7 +24,18 @@ type token = {
 let default_registry =
   [
     Simple { name = "pi"; inserted_text = "π" };
+    Simple { name = "alpha"; inserted_text = "α" };
+    Simple { name = "beta"; inserted_text = "β" };
+    Simple { name = "gamma"; inserted_text = "γ" };
+    Simple { name = "delta"; inserted_text = "δ" };
+    Simple { name = "epsilon"; inserted_text = "ε" };
+    Simple { name = "theta"; inserted_text = "θ" };
     Simple { name = "lambda"; inserted_text = "λ" };
+    Simple { name = "mu"; inserted_text = "μ" };
+    Simple { name = "sigma"; inserted_text = "σ" };
+    Simple { name = "phi"; inserted_text = "φ" };
+    Simple { name = "psi"; inserted_text = "ψ" };
+    Simple { name = "omega"; inserted_text = "ω" };
     Effectful { name = "file"; action = Pick_file };
   ]
 
@@ -73,7 +84,7 @@ let token_in_line line ~cursor_pos =
           Unicode_string.sub line ~start:backslash_idx ~len:typed_len
           |> Unicode_string.to_string
         in
-        if String.length typed_text = 0 || String.equal typed_text "\\\\"
+        if String.length typed_text <= 1 || String.equal typed_text "\\\\"
         then None
         else
           let command_name_prefix =
