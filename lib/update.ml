@@ -1120,7 +1120,7 @@ let update msg model =
             { model with backend_response = Some response }
             |> process_response |> handle_vertical_cursor_movement
           in
-          (m, [])
+          ({ m with repl_output = None }, [])
       | Ffi_backend.Completions (token, items) ->
           let in_completion_mode =
             match model.completion with
