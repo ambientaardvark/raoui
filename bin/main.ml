@@ -93,6 +93,11 @@ let rec await_dim_change ~current_w ~current_h =
 
 let history = lazy (History.init paths.history_file)
 
+let initial_theme () =
+  match User_options.read_theme_name paths.options_file with
+  | Some name -> Theme.of_name name
+  | None -> Theme.tokyo_night
+
 let make_init () : Frontend_types.model =
   let row, _col = get_cursor_position () in
   let term_width, term_height = get_term_dimensions () in
@@ -108,12 +113,13 @@ let make_init () : Frontend_types.model =
   let clamped = Frontend_types.clamp_prompt_top term_height row in
   let scroll_needed = row - clamped in
   if scroll_needed > 0 then begin
-    print_string (Term.scroll_up ~term_height scroll_needed);
-    flush stdout
+      print_string (Term.scroll_up ~term_height scroll_needed);
+      flush stdout
   end;
   {
     lines;
     lex_cache = Syntax.Cache.create lines;
+    theme = initial_theme ();
     cursor_row = 0;
     cursor_col = 0;
     cursor_line = 0;
@@ -166,7 +172,7 @@ let print_repl_output model =
       let row, col = model.repl_cursor in
       print_string (Term.cursor_to row col);
       print_string Term.clear_to_eos;
-      print_string (Term.render_spans spans);
+      print_string (Term.render_spans model.theme spans);
       flush stdout;
       let new_row, new_col = get_cursor_position () in
       let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in

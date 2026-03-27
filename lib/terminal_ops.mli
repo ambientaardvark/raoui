@@ -45,8 +45,8 @@ type op =
   | Hide_cursor
 
 module type TERMINAL = sig
-  val render : op Queue.t -> string
-  val render_spans : span list -> string
+  val render : Theme.t -> op Queue.t -> string
+  val render_spans : Theme.t -> span list -> string
   val cursor_to : int -> int -> string
   val clear_to_eos : string
   val solid_cursor : string

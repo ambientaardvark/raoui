@@ -31,8 +31,8 @@ type op =
   | Hide_cursor
 
 module type TERMINAL = sig
-  val render : op Queue.t -> string
-  val render_spans : span list -> string
+  val render : Theme.t -> op Queue.t -> string
+  val render_spans : Theme.t -> span list -> string
   val cursor_to : int -> int -> string
   val clear_to_eos : string
   val solid_cursor : string
@@ -43,40 +43,57 @@ module type TERMINAL = sig
 end
 
 
-let style_to_ansi = function
-  | `Raw -> "\x1b[0m"       (* reset before pass-through content *)
-  | `Plain -> "\x1b[0m"     (* reset to default *)
-  | `Accent -> "\x1b[36m"   (* cyan *)
-  | `Error -> "\x1b[31m"    (* red *)
-  | `Keyword -> "\x1b[35m"  (* magenta *)
-  | `Function -> "\x1b[35m"  (* magenta *)
-  | `String -> "\x1b[32m"   (* green *)
-  | `Number -> "\x1b[33m"   (* yellow *)
-  | `Comment -> "\x1b[90m"  (* bright black/gray *)
-  | `Operator -> "\x1b[36m" (* cyan *)
-  | `Constant -> "\x1b[34m" (* blue *)
-  | `Ident -> "\x1b[0m"     (* default *)
-  | `Bracket -> "\x1b[0m"   (* default *)
-  | `Completion -> "\x1b[48;5;236m"  (* dark gray background *)
-  | `Completion_selected -> "\x1b[48;5;240m\x1b[1m"  (* lighter gray bg, bold *)
-  | `Shell_prompt -> "\x1b[31m" (* red *)
+let sgr_codes_of_color ~is_background = function
+  | Theme.Default -> [ if is_background then "49" else "39" ]
+  | Theme.Ansi256 n ->
+      [ if is_background then "48" else "38"; "5"; string_of_int n ]
 
-let render_spans_to_buf buf spans =
+let face_to_ansi face =
+  let codes = ref (sgr_codes_of_color ~is_background:false face.Theme.fg) in
+  (match face.Theme.bg with
+  | Some bg -> codes := !codes @ sgr_codes_of_color ~is_background:true bg
+  | None -> ());
+  if face.Theme.bold then codes := "1" :: !codes;
+  "\x1b[" ^ String.concat ";" !codes ^ "m"
+
+let style_to_face theme = function
+  | `Plain -> theme.Theme.plain
+  | `Accent -> theme.Theme.accent
+  | `Error -> theme.Theme.error
+  | `Keyword -> theme.Theme.keyword
+  | `String -> theme.Theme.string
+  | `Number -> theme.Theme.number
+  | `Comment -> theme.Theme.comment
+  | `Operator -> theme.Theme.operator
+  | `Constant -> theme.Theme.constant
+  | `Ident -> theme.Theme.ident
+  | `Bracket -> theme.Theme.bracket
+  | `Function -> theme.Theme.function_
+  | `Completion -> theme.Theme.completion
+  | `Completion_selected -> theme.Theme.completion_selected
+  | `Shell_prompt -> theme.Theme.shell_prompt
+  | `Raw -> theme.Theme.plain
+
+let style_to_ansi theme = function
+  | `Raw -> "\x1b[0m"
+  | style -> face_to_ansi (style_to_face theme style)
+
+let render_spans_to_buf theme buf spans =
   List.iter (fun (style, text) ->
-    Buffer.add_string buf (style_to_ansi style);
+    Buffer.add_string buf (style_to_ansi theme style);
     Buffer.add_string buf text
   ) spans;
   Buffer.add_string buf "\x1b[0m"  (* reset after *)
 
-let render_spans spans =
+let render_spans theme spans =
   let buf = Buffer.create 256 in
-  render_spans_to_buf buf spans;
+  render_spans_to_buf theme buf spans;
   Buffer.contents buf
 
-let render_op_ansi buf op =
+let render_op_ansi theme buf op =
   let csi = "\x1b[" in
   match op with
-  | Print spans -> render_spans_to_buf buf spans
+  | Print spans -> render_spans_to_buf theme buf spans
   | Print_char c -> Buffer.add_char buf c
   | Newline -> Buffer.add_char buf '\n'
   | Cursor_to (row, col) -> Printf.bprintf buf "%s%d;%dH" csi row col
@@ -91,9 +108,9 @@ let render_op_ansi buf op =
   | Hide_cursor -> Printf.bprintf buf "%s?25l" csi
 
 module Ansi : TERMINAL = struct
-  let render ops =
+  let render theme ops =
     let buf = Buffer.create 256 in
-    Queue.iter (render_op_ansi buf) ops;
+    Queue.iter (render_op_ansi theme buf) ops;
     Buffer.contents buf
 
   let render_spans = render_spans

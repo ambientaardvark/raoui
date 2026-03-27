@@ -314,6 +314,6 @@ let view_ops model =
 
   ops
 
-let view model = Term.render (view_ops model)
+let view model = Term.render model.theme (view_ops model)
 
 end

@@ -32,11 +32,17 @@ The supported contract is to set Raoui options with `options(...)`, for example:
 
 ```r
 options(
+  raoui.theme = "tokyo_night",
   raoui.plot_mode = "auto",
   raoui.plot_open = "auto",
   raoui.plot_keep_files = FALSE
 )
 ```
+
+Built-in themes currently include:
+
+- `default`
+- `tokyo_night`
 
 `options.R` is the primary user-facing configuration surface. It is intended for preferences, not for replacing the bundled startup logic.
 

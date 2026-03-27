@@ -10,6 +10,7 @@ type response_chunk =
   | Passthrough_end
   | Completions of string * string list  (* token * items *)
   | Readline of string  (* prompt *)
+  | Theme of string
 
 type completion = string
 
@@ -135,6 +136,7 @@ let map_kind kind payload =
        | token :: items -> Completions (token, items)
        | [] -> Completions ("", []))
   | 11 (* READLINE *)      -> Readline payload
+  | 12 (* THEME *)         -> Theme payload
   | _ -> Internal_error (Printf.sprintf "Unknown message kind: %d" kind)
 
 let await_response t =
@@ -161,7 +163,8 @@ let await_response t =
     match pop () with
     | None -> t.sleep 0.01; loop ()
     | Some (kind, _flags, payload) ->
-      if t.suppressing && kind <> 5 && kind <> 8 && kind <> 9 && kind <> 10 then begin
+      if t.suppressing && kind <> 5 && kind <> 8 && kind <> 9 && kind <> 10
+         && kind <> 11 && kind <> 12 then begin
         (match kind with
          | 3 -> Logs.err (fun m -> m "suppressed background R error: %s" (log_snippet payload))
          | 4 -> Logs.err (fun m -> m "suppressed background internal error: %s" (log_snippet payload))
@@ -186,6 +189,7 @@ let await_response t =
            | 8 -> Logs.info (fun m -> m "entering passthrough mode")
            | 9 -> Logs.info (fun m -> m "leaving passthrough mode")
            | 11 -> Logs.info (fun m -> m "readline requested: %s" (log_snippet payload))
+           | 12 -> Logs.info (fun m -> m "theme selected: %s" (log_snippet payload))
            | _ -> ());
           map_kind kind payload
       end

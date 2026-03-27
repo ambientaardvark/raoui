@@ -298,6 +298,12 @@ static SEXP raoui_exit_passthrough(void) {
     return *R_NilValue_ptr;
 }
 
+static SEXP raoui_set_theme(SEXP theme) {
+    const char *name = R_CHAR_fn(Rf_asChar(theme));
+    rb_push(&g_rb, RB_MSG_THEME, 0, name, (uint32_t)strlen(name));
+    return *R_NilValue_ptr;
+}
+
 void rffi_signal_passthrough(void) {
     atomic_store(&passthrough_gate, 1);
 }
@@ -447,6 +453,8 @@ static int init_r(const char *r_home) {
          (void *)raoui_enter_passthrough, 0},
         {"raoui_exit_passthrough",
          (void *)raoui_exit_passthrough, 0},
+        {"raoui_set_theme",
+         (void *)raoui_set_theme, 1},
         {NULL, NULL, 0}
     };
     R_registerRoutines_fn(dll, NULL, callMethods, NULL, NULL);

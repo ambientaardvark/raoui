@@ -49,6 +49,7 @@ let initial_model width =
   {
     lines;
     lex_cache = Syntax.Cache.create lines;
+    theme = Theme.tokyo_night;
     cursor_row = 0;
     cursor_col = 0;
     cursor_line = 0;
@@ -104,6 +105,60 @@ let style_to_string = function
   | `Completion -> "Completion"
   | `Completion_selected -> "Completion_selected"
   | `Shell_prompt -> "Shell_prompt"
+
+let string_contains s needle =
+  let s_len = String.length s in
+  let needle_len = String.length needle in
+  let rec loop i =
+    if i + needle_len > s_len then false
+    else if String.sub s i needle_len = needle then true
+    else loop (i + 1)
+  in
+  loop 0
+
+let test_default_theme_ansi_uses_standard_reset_codes () =
+  let rendered =
+    Terminal_ops.Ansi.render_spans Theme.default [ (`Plain, "x") ]
+  in
+  Alcotest.(check bool)
+    "uses standard default fg code"
+    true (string_contains rendered "[39m");
+  Alcotest.(check bool)
+    "does not emit invalid default token"
+    false (string_contains rendered "default")
+
+let with_temp_file contents f =
+  let path = Filename.temp_file "raoui-options" ".R" in
+  Fun.protect
+    (fun () ->
+      Out_channel.with_open_text path (fun oc -> output_string oc contents);
+      f path)
+    ~finally:(fun () ->
+      if Sys.file_exists path then Sys.remove path)
+
+let test_user_options_reads_theme_name () =
+  with_temp_file
+    "options(raoui.theme = \"default\", raoui.plot_mode = \"auto\")\n"
+    (fun path ->
+      Alcotest.(check (option string))
+        "reads direct quoted theme" (Some "default")
+        (User_options.read_theme_name path))
+
+let test_user_options_reads_multiline_theme_name () =
+  with_temp_file
+    "options(\n  raoui.plot_mode = \"auto\",\n  raoui.theme = \"tokyo_night\"\n)\n"
+    (fun path ->
+      Alcotest.(check (option string))
+        "reads multiline theme" (Some "tokyo_night")
+        (User_options.read_theme_name path))
+
+let test_user_options_ignores_non_literal_theme () =
+  with_temp_file
+    "options(raoui.theme = theme_name)\n"
+    (fun path ->
+      Alcotest.(check (option string))
+        "ignores computed value" None
+        (User_options.read_theme_name path))
 
 let pp_span fmt (style, text) =
   Format.fprintf fmt "(%s,%S)" (style_to_string style) text
@@ -462,6 +517,43 @@ let test_process_response_internal_error () =
   Alcotest.(check bool)
     "awaiting_response false after Internal_error" false
     new_model.awaiting_response
+
+let test_process_response_theme_updates_model () =
+  let width = 10 in
+  let model =
+    {
+      (initial_model width) with
+      theme = Theme.default;
+      backend_response = Some (Ffi_backend.Theme "tokyo_night");
+      awaiting_response = true;
+    }
+  in
+
+  let new_model = Update.process_response model in
+
+  Alcotest.(check string)
+    "theme name" "tokyo_night" new_model.theme.Theme.name;
+  Alcotest.(check (option string))
+    "no repl output" (Some "")
+    (spans_to_text new_model.repl_output);
+  Alcotest.(check bool)
+    "awaiting_response false after Theme" false
+    new_model.awaiting_response
+
+let test_process_response_unknown_theme_falls_back () =
+  let width = 10 in
+  let model =
+    {
+      (initial_model width) with
+      theme = Theme.tokyo_night;
+      backend_response = Some (Ffi_backend.Theme "bogus");
+    }
+  in
+
+  let new_model = Update.process_response model in
+
+  Alcotest.(check string)
+    "theme fallback" "default" new_model.theme.Theme.name
 
 let test_scroll_when_cursor_below_screen () =
   let width = 10 in
@@ -1942,8 +2034,26 @@ let () =
           test_case "R_error response" `Quick test_process_response_r_error;
           test_case "Internal_error response" `Quick
             test_process_response_internal_error;
+          test_case "Theme response" `Quick
+            test_process_response_theme_updates_model;
+          test_case "Unknown theme falls back" `Quick
+            test_process_response_unknown_theme_falls_back;
           test_case "R_error followed by Done" `Quick
             test_r_error_followed_by_done;
+        ] );
+      ( "terminal_ops",
+        [
+          test_case "Default theme ANSI codes" `Quick
+            test_default_theme_ansi_uses_standard_reset_codes;
+        ] );
+      ( "user_options",
+        [
+          test_case "Reads theme name" `Quick
+            test_user_options_reads_theme_name;
+          test_case "Reads multiline theme name" `Quick
+            test_user_options_reads_multiline_theme_name;
+          test_case "Ignores non-literal theme" `Quick
+            test_user_options_ignores_non_literal_theme;
         ] );
       ( "scrolling",
         [

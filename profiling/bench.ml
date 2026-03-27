@@ -25,6 +25,7 @@ let make_model () =
     Frontend_types.
     lines;
     lex_cache = Syntax.Cache.create lines;
+    theme = Theme.tokyo_night;
     cursor_row = cursor_line;  (* simplified: assume no wrapping *)
     cursor_col = cursor_col;
     cursor_line;

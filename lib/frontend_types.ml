@@ -11,6 +11,7 @@ let clamp_prompt_top term_height row = max 2 (min row (default_prompt_top term_h
 type model = {
   lines : Unicode_string.t list;
   lex_cache : Syntax.Cache.t;
+  theme : Theme.t;
   (* Terminal coordinates - deprecated, will be removed *)
   cursor_row : int;
   cursor_col : int;
