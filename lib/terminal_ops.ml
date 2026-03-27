@@ -52,7 +52,7 @@ let face_to_ansi face =
   let codes = ref (sgr_codes_of_color ~is_background:false face.Theme.fg) in
   (match face.Theme.bg with
   | Some bg -> codes := !codes @ sgr_codes_of_color ~is_background:true bg
-  | None -> ());
+  | None -> codes := !codes @ [ "49" ]);
   if face.Theme.bold then codes := "1" :: !codes;
   "\x1b[" ^ String.concat ";" !codes ^ "m"
 

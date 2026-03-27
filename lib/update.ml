@@ -1115,8 +1115,12 @@ let update msg model =
       | Ffi_backend.Shutdown -> (model, [ Repl_effect.Quit ])
       | Ffi_backend.Passthrough -> (model, [ Repl_effect.EnterPassthrough ])
       | Ffi_backend.Passthrough_end -> (model, [])
-      | Ffi_backend.Theme name ->
-          ({ model with theme = Theme.of_name name }, [])
+      | Ffi_backend.Theme _ ->
+          let m =
+            { model with backend_response = Some response }
+            |> process_response |> handle_vertical_cursor_movement
+          in
+          (m, [])
       | Ffi_backend.Completions (token, items) ->
           let in_completion_mode =
             match model.completion with

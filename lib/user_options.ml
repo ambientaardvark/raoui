@@ -31,6 +31,17 @@ let read_quoted_string s i =
       in
       loop (i + 1)
 
+let is_in_comment contents i =
+  let rec scan j =
+    if j < 0 then false
+    else
+      match contents.[j] with
+      | '\n' -> false
+      | '#' -> true
+      | _ -> scan (j - 1)
+  in
+  scan (i - 1)
+
 let read_theme_name path =
   if not (Sys.file_exists path) then None
   else
@@ -40,7 +51,10 @@ let read_theme_name path =
     let needle_len = String.length needle in
     let rec find_from i =
       if i + needle_len > len then None
-      else if String.sub contents i needle_len = needle then
+      else if
+        String.sub contents i needle_len = needle
+        && not (is_in_comment contents i)
+      then
         let j = skip_spaces contents (i + needle_len) in
         if j < len && contents.[j] = '=' then
           let k = skip_spaces contents (j + 1) in

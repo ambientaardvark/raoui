@@ -122,7 +122,7 @@ let test_default_theme_ansi_uses_standard_reset_codes () =
   in
   Alcotest.(check bool)
     "uses standard default fg code"
-    true (string_contains rendered "[39m");
+    true (string_contains rendered "[39;49m");
   Alcotest.(check bool)
     "does not emit invalid default token"
     false (string_contains rendered "default")
