@@ -88,8 +88,7 @@ let token_in_line line ~cursor_pos =
         then None
         else
           let command_name_prefix =
-            if String.length typed_text <= 1 then ""
-            else String.sub typed_text 1 (String.length typed_text - 1)
+            String.sub typed_text 1 (String.length typed_text - 1)
           in
           Some
             {
