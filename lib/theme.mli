@@ -1,6 +1,28 @@
+type standard_color =
+  | Black
+  | Red
+  | Green
+  | Yellow
+  | Blue
+  | Magenta
+  | Cyan
+  | White
+  | Bright_black
+  | Bright_red
+  | Bright_green
+  | Bright_yellow
+  | Bright_blue
+  | Bright_magenta
+  | Bright_cyan
+  | Bright_white
+
 type color =
   | Default
-  | Ansi256 of int
+  | Standard of standard_color
+  | Rgb of int * int * int
+  | Greyscale of int
+
+val to_ansi256 : color -> int option
 
 type face = {
   fg : color;

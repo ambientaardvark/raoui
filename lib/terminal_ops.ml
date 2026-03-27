@@ -43,10 +43,10 @@ module type TERMINAL = sig
 end
 
 
-let sgr_codes_of_color ~is_background = function
-  | Theme.Default -> [ if is_background then "49" else "39" ]
-  | Theme.Ansi256 n ->
-      [ if is_background then "48" else "38"; "5"; string_of_int n ]
+let sgr_codes_of_color ~is_background color =
+  match Theme.to_ansi256 color with
+  | None -> [ if is_background then "49" else "39" ]
+  | Some n -> [ (if is_background then "48" else "38"); "5"; string_of_int n ]
 
 let face_to_ansi face =
   let codes = ref (sgr_codes_of_color ~is_background:false face.Theme.fg) in
