@@ -49,27 +49,12 @@ let awaiting_first_output_chunk model =
   let out_row, out_col = model.repl_cursor in
   model.awaiting_response && out_col = 1 && model.prompt_top_row = out_row + 1
 
-let is_word_char s =
-  if String.length s > 1 then true
-  else
-    match String.get s 0 with
-    | ' ' | '\t' | '/' | ',' | '=' | '-' | '+' | '[' | ']' | '{' | '}'
-    | '(' | ')' | '|' | '\\' | '?' | '<' | '>' | '`' | '~' | '!' | '@'
-    | '#' | '$' | '%' | '^' | '&' | '*' | ';' | ':' | '\'' | '"' ->
-        false
-    | _ -> true
-
 let should_show_completions model =
-  if model.cursor_pos < 2 || model.mode <> Frontend_types.Normal then false
-  else
-    match List.nth_opt model.lines model.cursor_line with
-    | None -> false
-    | Some line ->
-        if Unicode_string.length line < model.cursor_pos then false
-        else
-          let prev1 = Unicode_string.cluster_at line (model.cursor_pos - 1) in
-          let prev2 = Unicode_string.cluster_at line (model.cursor_pos - 2) in
-          is_word_char prev1 && is_word_char prev2
+  model.mode = Frontend_types.Normal
+  &&
+  match model.completion with
+  | None -> false
+  | Some cs -> Completion.filtered_items cs <> []
 
 let push_span acc style text =
   if text = "" then acc
@@ -189,7 +174,7 @@ let view_completions model ops =
                 add (Terminal_ops.Cursor_to (row, col_offset));
                 add Terminal_ops.Clear_to_eol;
                 add
-                  (print_completion_line item
+                  (print_completion_line (Completion.label item)
                      ~selected:(selected = Some idx)
                      ~max_width);
                 loop (row + 1) (idx + 1) rest

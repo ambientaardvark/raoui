@@ -180,6 +180,61 @@ let print_repl_output model =
         prompt_top_row = max model.prompt_top_row next_prompt_row;
       }
 
+let quote_r_string s =
+  let buf = Buffer.create (String.length s + 2) in
+  Buffer.add_char buf '"';
+  String.iter
+    (function
+      | '\\' -> Buffer.add_string buf "\\\\"
+      | '"' -> Buffer.add_string buf "\\\""
+      | '\n' -> Buffer.add_string buf "\\n"
+      | '\r' -> Buffer.add_string buf "\\r"
+      | '\t' -> Buffer.add_string buf "\\t"
+      | c -> Buffer.add_char buf c)
+    s;
+  Buffer.add_char buf '"';
+  Buffer.contents buf
+
+let run_command_capture command =
+  let ic = Unix.open_process_in command in
+  let output = Buffer.create 256 in
+  (try
+     while true do
+       Buffer.add_string output (input_line ic);
+       Buffer.add_char output '\n'
+     done
+   with End_of_file -> ());
+  let status = Unix.close_process_in ic in
+  match status with
+  | Unix.WEXITED 0 ->
+      let result = String.trim (Buffer.contents output) in
+      if result = "" then None else Some result
+  | Unix.WEXITED _ | Unix.WSIGNALED _ | Unix.WSTOPPED _ -> None
+
+let with_normal_terminal ~orig_termios f =
+  restore_mode orig_termios;
+  disable_bracketed_paste ();
+  Fun.protect f ~finally:(fun () ->
+      ignore (set_raw_mode ());
+      enable_bracketed_paste ())
+
+let choose_file ~orig_termios =
+  let command = "osascript -e 'POSIX path of (choose file)'" in
+  if Sys.command "command -v osascript >/dev/null 2>&1" <> 0 then None
+  else with_normal_terminal ~orig_termios (fun () -> run_command_capture command)
+
+let run_backslash_effect ~orig_termios = function
+  | Repl_effect.Pick_file { token_start; original_token } ->
+      let inserted_text =
+        choose_file ~orig_termios |> Option.map quote_r_string
+      in
+      Update.Backslash_effect_result
+        {
+          token_start;
+          original_token;
+          inserted_text;
+        }
+
 let execute_one backend = function
   | Repl_effect.Submit text ->
       Ffi_backend.submit backend text
@@ -191,6 +246,7 @@ let execute_one backend = function
       Ffi_backend.submit_readline_input text
   | Repl_effect.BackgroundSubmit text ->
       Ffi_backend.background_submit backend text
+  | Repl_effect.Run_backslash_effect _ -> ()
   | Repl_effect.EnterPassthrough -> ()
   | Repl_effect.Quit -> ()
 
@@ -292,6 +348,11 @@ let run env backend ~orig_termios =
     | [Repl_effect.Cancel] ->
         execute_effects backend effects;
         loop (make_init ())
+    | [Repl_effect.Run_backslash_effect cmd] ->
+        let result_msg = run_backslash_effect ~orig_termios cmd in
+        let effect_model, effect_effects = Update.update result_msg new_model in
+        execute_effects backend effect_effects;
+        loop (print_repl_output effect_model)
     | [Repl_effect.EnterPassthrough] ->
         execute_effects backend effects;
         enter_passthrough new_model backend orig_termios loop

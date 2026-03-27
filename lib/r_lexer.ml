@@ -101,6 +101,25 @@ let ident =
     | '.', ident_start, Star ident_continue
     | "..." )]
 
+let uchar_of_lexeme s =
+  Uutf.String.fold_utf_8
+    (fun acc _ -> function
+      | `Uchar u -> (match acc with Some _ -> acc | None -> Some u)
+      | `Malformed _ -> acc)
+    None s
+
+let is_unicode_ident_start s =
+  match uchar_of_lexeme s with
+  | Some u -> Uucp.Id.is_id_start u
+  | None -> false
+
+let is_unicode_ident_continue s =
+  String.equal s "."
+  ||
+  match uchar_of_lexeme s with
+  | Some u -> Uucp.Id.is_id_continue u
+  | None -> false
+
 let multi_char_operators =
   [%sedlex.regexp?
     ( ">=" | "<=" | "<-" | "->" | "<<-" | "->>" | ":::" | "::" | "|>" | "=="
@@ -229,7 +248,23 @@ let read_normal buf =
       | Some kw -> (KEYWORD kw, Normal)
       | None -> (IDENT s, Normal))
   | eof -> (EOF, Normal)
-  | any -> (UNKNOWN (Utf8.lexeme buf), Normal)
+  | any ->
+      let s = Utf8.lexeme buf in
+      if is_unicode_ident_start s then
+        let rec read_unicode_ident acc =
+          match%sedlex buf with
+          | any ->
+              let next = Utf8.lexeme buf in
+              if is_unicode_ident_continue next then
+                read_unicode_ident (next :: acc)
+              else (
+                rollback buf;
+                (IDENT (acc |> List.rev |> String.concat ""), Normal))
+          | eof -> (IDENT (acc |> List.rev |> String.concat ""), Normal)
+          | _ -> failwith "unreachable"
+        in
+        read_unicode_ident [ s ]
+      else (UNKNOWN s, Normal)
   | _ -> failwith "no match"
 
 let token mode buf =

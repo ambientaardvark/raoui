@@ -8,6 +8,7 @@ type test_result =
   | Submit of string * model
   | Exit
   | Cancel
+  | Trigger_backslash_effect of Repl_effect.backslash_effect * model
 
 let classify (m, effects) =
   match effects with
@@ -17,6 +18,13 @@ let classify (m, effects) =
   | [Repl_effect.Cancel] -> Cancel
   | [Repl_effect.RequestCompletions _] -> Continue m
   | [Repl_effect.BackgroundSubmit _] -> Continue m
+  | [cmd] -> (
+      match cmd with
+      | Repl_effect.Run_backslash_effect cmd ->
+          Trigger_backslash_effect (cmd, m)
+      | _ ->
+          failwith
+            (Printf.sprintf "unexpected effect variant in singleton list"))
   | _ -> failwith (Printf.sprintf "unexpected effects: %d" (List.length effects))
 
 let update msg model = classify (Update.update msg model)
@@ -177,8 +185,13 @@ let cycle_completion_many cs n =
   in
   loop cs n
 
-let make_completion_items n =
+let make_completion_labels n =
   List.init n (fun i -> Printf.sprintf "item%d" i)
+
+let make_completion_items n =
+  List.map Completion.backend_item (make_completion_labels n)
+
+let item_labels items = List.map Completion.label items
 
 let test_wrap_crash () =
   let width = 10 in
@@ -1230,14 +1243,17 @@ let test_completion_visible_items_without_selection () =
   Alcotest.(check (list string))
     "shows first four items before cycling"
     [ "item0"; "item1"; "item2"; "item3" ]
-    (Completion.visible_items cs)
+    (item_labels (Completion.visible_items cs))
 
 let test_completion_visible_items_short_list () =
-  let cs = Completion.create ~token_start:0 [ "item0"; "item1"; "item2" ] in
+  let cs =
+    Completion.create ~token_start:0
+      (List.map Completion.backend_item [ "item0"; "item1"; "item2" ])
+  in
   Alcotest.(check (list string))
     "shows all items when fewer than four"
     [ "item0"; "item1"; "item2" ]
-    (Completion.visible_items cs)
+    (item_labels (Completion.visible_items cs))
 
 let test_completion_visible_window_stays_near_top () =
   let cs =
@@ -1249,7 +1265,7 @@ let test_completion_visible_window_stays_near_top () =
   Alcotest.(check (list string))
     "selected index 2 still shows first page"
     [ "item0"; "item1"; "item2"; "item3" ]
-    (Completion.visible_items cs);
+    (item_labels (Completion.visible_items cs));
   Alcotest.(check (option int))
     "selected row is index 2 in window"
     (Some 2) (Completion.selected_index_in_window cs)
@@ -1264,7 +1280,7 @@ let test_completion_visible_window_scrolls () =
   Alcotest.(check (list string))
     "window scrolls forward"
     [ "item1"; "item2"; "item3"; "item4" ]
-    (Completion.visible_items cs);
+    (item_labels (Completion.visible_items cs));
   Alcotest.(check (option int))
     "selected stays on third visible row when possible"
     (Some 2) (Completion.selected_index_in_window cs)
@@ -1279,7 +1295,7 @@ let test_completion_visible_window_clamps_to_end () =
   Alcotest.(check (list string))
     "shows final window"
     [ "item6"; "item7"; "item8"; "item9" ]
-    (Completion.visible_items cs);
+    (item_labels (Completion.visible_items cs));
   Alcotest.(check (option int))
     "final selection can sit on bottom row"
     (Some 3) (Completion.selected_index_in_window cs)
@@ -1294,7 +1310,7 @@ let test_completion_visible_window_wraps_to_top () =
   Alcotest.(check (list string))
     "shows first page again after wrapping"
     [ "item0"; "item1"; "item2"; "item3" ]
-    (Completion.visible_items cs);
+    (item_labels (Completion.visible_items cs));
   Alcotest.(check (option int))
     "wrapped selection returns to first row"
     (Some 0) (Completion.selected_index_in_window cs)
@@ -1320,7 +1336,7 @@ let test_view_completion_rows_scroll_with_tab () =
   let model =
     match
       update
-        (Update.Response (Ffi_backend.Completions ("it", make_completion_items 10)))
+        (Update.Response (Ffi_backend.Completions ("it", make_completion_labels 10)))
         base_model
     with
     | Continue model -> model
@@ -1347,6 +1363,223 @@ let test_view_completion_rows_scroll_with_tab () =
     "selected row is the third visible row"
     [ false; false; true; false ]
     (List.map completion_row_selected rows)
+
+let test_backslash_exact_match_is_visually_selected () =
+  let base_model =
+    with_lines (initial_model 20) [ us "\\pi" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:3
+  in
+  let model =
+    match update (Update.Key Tty_listener.Right) base_model with
+    | Continue model -> model
+    | _ -> Alcotest.fail "Expected Continue"
+  in
+  let rows = completion_rows model in
+  Alcotest.(check (list string))
+    "shows matching row"
+    [ "\\pi" ]
+    (List.map completion_row_text rows);
+  Alcotest.(check (list bool))
+    "exact backslash match is selected"
+    [ true ]
+    (List.map completion_row_selected rows)
+
+let test_backend_exact_match_is_visually_selected () =
+  let base_model =
+    with_lines (initial_model 20) [ us "item3" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:5
+  in
+  let model =
+    match
+      update
+        (Update.Response (Ffi_backend.Completions ("item3", make_completion_labels 10)))
+        base_model
+    with
+    | Continue model -> model
+    | _ -> Alcotest.fail "Expected Continue"
+  in
+  let rows = completion_rows model in
+  Alcotest.(check (list string))
+    "exact backend match narrows to exact row"
+    [ "item3" ]
+    (List.map completion_row_text rows);
+  Alcotest.(check (list bool))
+    "exact backend match is selected"
+    [ true ]
+    (List.map completion_row_selected rows)
+
+let test_backslash_token_at_start_of_line () =
+  let model =
+    with_lines (initial_model 20) [ us "\\p" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:2
+  in
+  match Backslash_command.token_in_line (List.hd model.lines) ~cursor_pos:model.cursor_pos with
+  | Some (token : Backslash_command.token) ->
+      Alcotest.(check int) "token start" 0 token.token_start;
+      Alcotest.(check string) "typed text" "\\p" token.typed_text;
+      Alcotest.(check string) "prefix" "p" token.command_name_prefix
+  | None -> Alcotest.fail "Expected backslash token"
+
+let test_backslash_token_after_punctuation () =
+  let model =
+    with_lines (initial_model 20) [ us "foo(\\fi" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:7
+  in
+  match Backslash_command.token_in_line (List.hd model.lines) ~cursor_pos:model.cursor_pos with
+  | Some (token : Backslash_command.token) ->
+      Alcotest.(check int) "token start" 4 token.token_start;
+      Alcotest.(check string) "typed text" "\\fi" token.typed_text
+  | None -> Alcotest.fail "Expected backslash token"
+
+let test_backslash_token_not_inside_word () =
+  let model =
+    with_lines (initial_model 20) [ us "abc\\fi" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:6
+  in
+  Alcotest.(check (option string))
+    "no token inside word"
+    None
+    (Option.map
+       (fun (token : Backslash_command.token) -> token.typed_text)
+       (Backslash_command.token_in_line (List.hd model.lines)
+          ~cursor_pos:model.cursor_pos))
+
+let test_backslash_completion_shows_frontend_commands () =
+  let base_model =
+    with_lines (initial_model 20) [ us "\\p" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:2
+  in
+  match update (Update.Key Tty_listener.Right) base_model with
+  | Continue model -> (
+      match model.completion with
+      | Some cs ->
+          Alcotest.(check (list string))
+            "shows matching backslash commands"
+            [ "\\pi" ]
+            (item_labels (Completion.filtered_items cs))
+      | None -> Alcotest.fail "Expected backslash completion")
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_backslash_completion_enter_simple_inserts_text () =
+  let base_model =
+    with_lines (initial_model 20) [ us "\\p" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:2
+  in
+  let model =
+    match update (Update.Key Tty_listener.Right) base_model with
+    | Continue model -> model
+    | _ -> Alcotest.fail "Expected Continue"
+  in
+  let model =
+    match update (Update.Key Tty_listener.Tab) model with
+    | Continue model -> model
+    | _ -> Alcotest.fail "Expected Continue"
+  in
+  match update (Update.Key Tty_listener.Enter) model with
+  | Continue new_model ->
+      Alcotest.(check string) "simple command inserts unicode" "π"
+        (first_line_str new_model);
+      Alcotest.(check (option int)) "completion cleared" None
+        (Option.bind new_model.completion Completion.selected_index)
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_backslash_completion_enter_effect_runs_command () =
+  let base_model =
+    with_lines (initial_model 20) [ us "\\fi" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:3
+  in
+  let model =
+    match update (Update.Key Tty_listener.Right) base_model with
+    | Continue model -> model
+    | _ -> Alcotest.fail "Expected Continue"
+  in
+  let model =
+    match update (Update.Key Tty_listener.Tab) model with
+    | Continue model -> model
+    | _ -> Alcotest.fail "Expected Continue"
+  in
+  match update (Update.Key Tty_listener.Enter) model with
+  | Trigger_backslash_effect
+      (Repl_effect.Pick_file { token_start; original_token }, new_model) ->
+      Alcotest.(check int) "token start" 0 token_start;
+      Alcotest.(check string) "selected command" "\\file" original_token;
+      Alcotest.(check string) "buffer unchanged while effect runs" "\\file"
+        (first_line_str new_model)
+  | _ -> Alcotest.fail "Expected backslash effect"
+
+let test_backslash_completion_enter_exact_simple_match () =
+  let base_model =
+    with_lines (initial_model 20) [ us "\\pi" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:3
+  in
+  let model =
+    match update (Update.Key Tty_listener.Right) base_model with
+    | Continue model -> model
+    | _ -> Alcotest.fail "Expected Continue"
+  in
+  match update (Update.Key Tty_listener.Enter) model with
+  | Continue new_model ->
+      Alcotest.(check string) "exact simple command inserts unicode" "π"
+        (first_line_str new_model)
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_backslash_completion_enter_exact_effect_match () =
+  let base_model =
+    with_lines (initial_model 20) [ us "\\file" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:5
+  in
+  let model =
+    match update (Update.Key Tty_listener.Right) base_model with
+    | Continue model -> model
+    | _ -> Alcotest.fail "Expected Continue"
+  in
+  match update (Update.Key Tty_listener.Enter) model with
+  | Trigger_backslash_effect
+      (Repl_effect.Pick_file { token_start; original_token }, new_model) ->
+      Alcotest.(check int) "token start" 0 token_start;
+      Alcotest.(check string) "exact command selected" "\\file" original_token;
+      Alcotest.(check string) "buffer unchanged while effect runs" "\\file"
+        (first_line_str new_model)
+  | _ -> Alcotest.fail "Expected backslash effect"
+
+let test_backslash_effect_result_inserts_quoted_path () =
+  let model =
+    with_lines (initial_model 20) [ us "\\file" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:5
+  in
+  match
+    update
+      (Update.Backslash_effect_result
+         {
+           token_start = 0;
+           original_token = "\\file";
+           inserted_text = Some "\"/tmp/data.csv\"";
+         })
+      model
+  with
+  | Continue new_model ->
+      Alcotest.(check string) "path inserted" "\"/tmp/data.csv\""
+        (first_line_str new_model)
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_backslash_effect_cancel_keeps_token () =
+  let model =
+    with_lines (initial_model 20) [ us "\\file" ]
+    |> fun model -> with_cursor_internal model ~line:0 ~pos:5
+  in
+  match
+    update
+      (Update.Backslash_effect_result
+         {
+           token_start = 0;
+           original_token = "\\file";
+           inserted_text = None;
+         })
+      model
+  with
+  | Continue new_model ->
+      Alcotest.(check string) "token kept" "\\file" (first_line_str new_model)
+  | _ -> Alcotest.fail "Expected Continue"
 
 (* Prompt placement tests *)
 
@@ -1685,6 +1918,30 @@ let () =
             test_view_completion_rows_capped_at_4;
           test_case "View scrolls completion rows with tab" `Quick
             test_view_completion_rows_scroll_with_tab;
+          test_case "Backslash exact match is visually selected" `Quick
+            test_backslash_exact_match_is_visually_selected;
+          test_case "Backend exact match is visually selected" `Quick
+            test_backend_exact_match_is_visually_selected;
+          test_case "Backslash token at start" `Quick
+            test_backslash_token_at_start_of_line;
+          test_case "Backslash token after punctuation" `Quick
+            test_backslash_token_after_punctuation;
+          test_case "Backslash token not inside word" `Quick
+            test_backslash_token_not_inside_word;
+          test_case "Backslash completion shows frontend commands" `Quick
+            test_backslash_completion_shows_frontend_commands;
+          test_case "Backslash enter simple inserts text" `Quick
+            test_backslash_completion_enter_simple_inserts_text;
+          test_case "Backslash enter effect runs command" `Quick
+            test_backslash_completion_enter_effect_runs_command;
+          test_case "Backslash enter exact simple match" `Quick
+            test_backslash_completion_enter_exact_simple_match;
+          test_case "Backslash enter exact effect match" `Quick
+            test_backslash_completion_enter_exact_effect_match;
+          test_case "Backslash effect result inserts quoted path" `Quick
+            test_backslash_effect_result_inserts_quoted_path;
+          test_case "Backslash effect cancel keeps token" `Quick
+            test_backslash_effect_cancel_keeps_token;
         ] );
       ( "prompt_placement",
         [

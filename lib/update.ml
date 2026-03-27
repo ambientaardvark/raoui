@@ -3,6 +3,11 @@ open Frontend_types
 type msg =
   | Key of Tty_listener.key
   | Response of Ffi_backend.response_chunk
+  | Backslash_effect_result of {
+      token_start : int;
+      original_token : string;
+      inserted_text : string option;
+    }
   | TermResize of int * int
 
 let lexer_update start_line end_line model =
@@ -690,10 +695,17 @@ let handle_resize new_width new_height model =
 let is_empty_input model =
   match model.lines with [ line ] -> Unicode_string.is_empty line | _ -> false
 
-let replace_token model token_start text =
+let unicode_length text =
+  match Unicode_string.of_string text with
+  | Ok u -> Unicode_string.length u
+  | Error _ -> 0
+
+let replace_range model start_pos end_pos text =
   let line = current_line model in
-  let before = Unicode_string.sub line ~start:0 ~len:token_start in
-  let after_start = model.cursor_pos in
+  let start_pos = max 0 start_pos in
+  let end_pos = max start_pos end_pos in
+  let before = Unicode_string.sub line ~start:0 ~len:start_pos in
+  let after_start = min end_pos (Unicode_string.length line) in
   let after_len = Unicode_string.length line - after_start in
   let after = Unicode_string.sub line ~start:after_start ~len:after_len in
   let text_us =
@@ -703,7 +715,7 @@ let replace_token model token_start text =
   in
   let new_line = Unicode_string.concat [ before; text_us; after ] in
   let new_lines = update_line model.lines model.cursor_line new_line in
-  let new_cursor_pos = token_start + Unicode_string.length text_us in
+  let new_cursor_pos = start_pos + Unicode_string.length text_us in
   let model = { model with lines = new_lines; cursor_pos = new_cursor_pos } in
   let model = lexer_update model.cursor_line model.cursor_line model in
   let width = effective_width model in
@@ -711,6 +723,9 @@ let replace_token model token_start text =
     internal_to_terminal width model.lines (model.cursor_line, new_cursor_pos)
   in
   { model with cursor_row = new_row; cursor_col = new_col }
+
+let replace_token model token_start text =
+  replace_range model token_start model.cursor_pos text
 
 let filter_completions model =
   match model.completion with
@@ -754,10 +769,92 @@ let handle_tab model =
         let cs_cycled = Completion.cycle_next cs_with_original in
         match Completion.current_completion cs_cycled with
         | None -> model
-        | Some completion_text ->
+        | Some completion_item ->
             let token_start = Completion.token_start cs_cycled in
-            let inserted = replace_token model token_start completion_text in
+            let inserted =
+              replace_token model token_start (Completion.label completion_item)
+            in
             { inserted with completion = Some cs_cycled })
+
+let accept_backslash_completion model =
+  match model.completion with
+  | None -> None
+  | Some cs -> (
+      let exact_match_item () =
+        let line = current_line model in
+        let token_start = Completion.token_start cs in
+        if token_start > model.cursor_pos then None
+        else
+          let typed_len = model.cursor_pos - token_start in
+          let typed_text =
+            Unicode_string.sub line ~start:token_start ~len:typed_len
+            |> Unicode_string.to_string
+          in
+          Completion.filtered_items cs
+          |> List.find_opt (fun item ->
+                 String.equal (Completion.label item) typed_text)
+      in
+      let chosen_item =
+        match Completion.current_completion cs with
+        | Some item -> Some item
+        | None -> exact_match_item ()
+      in
+      match chosen_item with
+      | Some completion_item -> (
+          match Completion.kind completion_item with
+          | Completion.Backslash command ->
+              let token_start = Completion.token_start cs in
+              let selected_label = Completion.label completion_item in
+              (match command with
+              | Backslash_command.Simple { inserted_text; _ } ->
+                  let replaced =
+                    replace_range model token_start model.cursor_pos inserted_text
+                  in
+                  Some ({ replaced with completion = None }, [])
+              | Backslash_command.Effectful
+                  { action = Backslash_command.Pick_file; _ } ->
+                  Some
+                    ( { model with completion = None },
+                      [
+                        Repl_effect.Run_backslash_effect
+                          (Repl_effect.Pick_file
+                             {
+                               token_start;
+                               original_token = selected_label;
+                             });
+                      ] ))
+          | Completion.Backend -> None)
+      | None -> None)
+
+let make_backslash_completion model (token : Backslash_command.token) =
+  let items =
+    Backslash_command.matching_commands Backslash_command.default_registry
+      ~prefix:token.command_name_prefix
+    |> List.map Completion.backslash_item
+  in
+  if items = [] then { model with completion = None }
+  else
+    let completion = Completion.create ~token_start:token.token_start items in
+    filter_completions { model with completion = Some completion }
+
+let completion_followup model =
+  let in_completion_mode =
+    match model.completion with
+    | Some cs when Completion.is_in_completion_mode cs -> true
+    | _ -> false
+  in
+  if (not model.awaiting_response) && not in_completion_mode then
+    match List.nth_opt model.lines model.cursor_line with
+    | Some line -> (
+        match Backslash_command.token_in_line line ~cursor_pos:model.cursor_pos with
+        | Some token -> (make_backslash_completion model token, [])
+        | None ->
+            let text = Unicode_string.to_string line in
+            [ Repl_effect.RequestCompletions (text, model.cursor_pos) ]
+            |> fun effects -> (model, effects)
+        )
+    | None -> (model, [])
+  else (model, [])
 
 (* Key handlers per mode *)
 
@@ -843,7 +940,7 @@ let apply_key_in_normal_mode key model =
   let open Tty_listener in
   let model =
     match key with
-    | Tab | Escape -> model
+    | Tab | Escape | Enter -> model
     | _ -> (
         match model.completion with
         | Some cs when Completion.is_in_completion_mode cs ->
@@ -856,7 +953,10 @@ let apply_key_in_normal_mode key model =
   | Ctrl 'd' ->
       if is_empty_input model then (model, [ Repl_effect.Quit ])
       else (delete_char_after_cursor model, [])
-  | Enter -> submit model
+  | Enter -> (
+      match accept_backslash_completion model with
+      | Some result -> result
+      | None -> submit model)
   | Ctrl 'u' -> (delete_before_cursor model, [])
   | Ctrl '\r' -> (insert_newline model, [])
   | Ctrl 'p' -> (shift_history model ~amount:1, [])
@@ -983,26 +1083,12 @@ let process_response model =
         mode;
       }
 
-let completion_effects model =
-  let in_completion_mode =
-    match model.completion with
-    | Some cs when Completion.is_in_completion_mode cs -> true
-    | _ -> false
-  in
-  if (not model.awaiting_response) && not in_completion_mode then
-    match List.nth_opt model.lines model.cursor_line with
-    | Some line ->
-        let text = Unicode_string.to_string line in
-        [ Repl_effect.RequestCompletions (text, model.cursor_pos) ]
-    | None -> []
-  else []
-
 let update msg model =
   let model = { model with scroll_amount = 0 } in
   match msg with
   | Key key -> (
       let m, effects = handle_key_input key model in
-      match effects with [] -> (m, completion_effects m) | _ -> (m, effects))
+      match effects with [] -> completion_followup m | _ -> (m, effects))
   | Response response -> (
       match response with
       | Ffi_backend.Shutdown -> (model, [ Repl_effect.Quit ])
@@ -1017,7 +1103,10 @@ let update msg model =
           if in_completion_mode then (model, [])
           else
             let token_start = model.cursor_pos - String.length token in
-            let completion = Completion.create ~token_start items in
+            let completion =
+              Completion.create ~token_start
+                (List.map Completion.backend_item items)
+            in
             let m = { model with completion = Some completion } in
             (filter_completions m, [])
       | Ffi_backend.Restarted _ ->
@@ -1036,6 +1125,17 @@ let update msg model =
             |> process_response |> handle_vertical_cursor_movement
           in
           (m, []))
+  | Backslash_effect_result { token_start; original_token; inserted_text } ->
+      let original_len = unicode_length original_token in
+      let token_end = token_start + original_len in
+      let m =
+        match inserted_text with
+        | None -> { model with completion = None }
+        | Some text ->
+            let replaced = replace_range model token_start token_end text in
+            { replaced with completion = None }
+      in
+      (m, [])
   | TermResize (width, height) ->
       let m =
         handle_resize width height model |> handle_vertical_cursor_movement

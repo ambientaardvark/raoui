@@ -151,6 +151,10 @@ let test_ident_with_underscore () =
 
 let test_dot_ident () = check_single_token "dot ident" ".Internal" ".Internal"
 let test_ellipsis () = check_single_token "ellipsis" "..." "..."
+let test_unicode_ident_pi () = check_single_token "unicode ident pi" "π" "π"
+
+let test_unicode_ident_with_ascii_continue () =
+  check_single_token "unicode ident continue" "π_value" "π_value"
 
 (* Backtick identifier tests *)
 let test_backtick_ident () =
@@ -359,6 +363,9 @@ let () =
           test_case "with underscore" `Quick test_ident_with_underscore;
           test_case "dot prefix" `Quick test_dot_ident;
           test_case "ellipsis" `Quick test_ellipsis;
+          test_case "unicode pi" `Quick test_unicode_ident_pi;
+          test_case "unicode continue" `Quick
+            test_unicode_ident_with_ascii_continue;
           test_case "function" `Quick test_func;
         ] );
       ( "backtick_idents",
