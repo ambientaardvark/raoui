@@ -64,12 +64,24 @@ let get_term_dimensions () =
   in
   (width, height)
 
-let rec await_dim_change prev_width prev_height =
-  let w, h = get_term_dimensions () in
-  if w = prev_width && h = prev_height then (
-    Eio.Fiber.yield ();
-    await_dim_change w h)
-  else (w, h)
+let sigwinch_pipe_rd, sigwinch_pipe_wr =
+  let rd, wr = Unix.pipe ~cloexec:true () in
+  Unix.set_nonblock rd;
+  Unix.set_nonblock wr;
+  rd, wr
+
+let () =
+  Sys.set_signal (Sys.sigwinch) (Sys.Signal_handle (fun _ ->
+    ignore (Unix.write sigwinch_pipe_wr (Bytes.of_string "x") 0 1)
+  ))
+
+let await_dim_change () =
+  Eio_unix.await_readable sigwinch_pipe_rd;
+  (* Drain all pending bytes *)
+  let buf = Bytes.create 16 in
+  (try while Unix.read sigwinch_pipe_rd buf 0 16 > 0 do () done
+   with Unix.Unix_error (Unix.EAGAIN, _, _) -> ());
+  get_term_dimensions ()
 
 let history_path =
   match Sys.getenv_opt "HOME" with
@@ -262,7 +274,7 @@ let run env backend ~orig_termios =
                    ~clock ~stdin));
             (fun () -> Update.Response (Ffi_backend.await_response backend));
             (fun () ->
-              let w, h = await_dim_change model.term_width model.term_height in
+              let w, h = await_dim_change () in
               Update.TermResize (w, h));
           ]
     in
