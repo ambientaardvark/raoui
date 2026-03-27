@@ -158,9 +158,8 @@ let await_response t =
       Stdout (Buffer.contents buf)
   in
   let rec loop () =
-    t.sleep 0.01;
     match pop () with
-    | None -> loop ()
+    | None -> t.sleep 0.01; loop ()
     | Some (kind, _flags, payload) ->
       if t.suppressing && kind <> 5 && kind <> 8 && kind <> 9 && kind <> 10 then begin
         (match kind with
