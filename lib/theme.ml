@@ -46,11 +46,7 @@ let to_ansi256 = function
   | Rgb (r, g, b) -> Some (16 + (36 * r) + (6 * g) + b)
   | Greyscale n -> Some (232 + n)
 
-type face = {
-  fg : color;
-  bg : color option;
-  bold : bool;
-}
+type face = { fg : color; bg : color option; bold : bool }
 
 type t = {
   name : string;
@@ -121,13 +117,13 @@ let gruvbox =
     error = face (Rgb (5, 1, 1));
     keyword = face (Rgb (5, 1, 1));
     string = face (Rgb (4, 4, 1));
-    number = face (Rgb (4, 3, 3));
+    number = face (Standard Magenta);
     comment = face (Greyscale 12);
-    operator = face (Rgb (5, 3, 0));
+    operator = face Default;
     constant = face (Rgb (4, 3, 3));
     ident = face (Rgb (5, 4, 3));
     bracket = face (Rgb (3, 3, 3));
-    function_ = face (Rgb (5, 4, 1));
+    function_ = face (Rgb (5, 3, 2));
     completion = face ~bg:(Greyscale 5) (Rgb (5, 4, 3));
     completion_selected = face ~bg:(Rgb (4, 3, 1)) ~bold:true (Greyscale 3);
     shell_prompt = face (Rgb (4, 4, 1));

@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Raoui Theme Editor</title>
+<style>
+  :root {
+    --color-background-primary: #1a1a2e;
+    --color-background-secondary: #16213e;
+    --color-background-info: #0f3460;
+    --color-background-success: #1a3a2a;
+    --color-text-primary: #e0e0e0;
+    --color-text-secondary: #a0a0b0;
+    --color-text-tertiary: #707080;
+    --color-text-info: #7ec8e3;
+    --color-text-success: #6ecf8e;
+    --color-border-secondary: #333355;
+    --color-border-tertiary: #2a2a44;
+    --color-border-info: #4a80b0;
+    --font-mono: "SF Mono", "Cascadia Code", "Fira Code", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f0f23;
+    color: var(--color-text-primary);
+    padding: 24px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 20px; color: var(--color-text-secondary); }
+</style>
+</head>
+<body>
+<h1>Raoui Theme Editor</h1>
+<div id="root"></div>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useMemo, useCallback } = React;
+
+const FACE_KEYS = [
+  ["plain", "Plain"],
+  ["accent", "Accent"],
+  ["error", "Error"],
+  ["keyword", "Keyword"],
+  ["string_", "String"],
+  ["number", "Number"],
+  ["comment", "Comment"],
+  ["operator", "Operator"],
+  ["constant", "Constant"],
+  ["ident", "Ident"],
+  ["bracket", "Bracket"],
+  ["function_", "Function"],
+  ["completion", "Completion"],
+  ["completion_selected", "Completion sel."],
+  ["shell_prompt", "Shell prompt"],
+];
+
+const STANDARD_COLORS = {
+  Black: [0, 0, 0],
+  Red: [205, 49, 49],
+  Green: [13, 188, 121],
+  Yellow: [229, 229, 16],
+  Blue: [36, 114, 200],
+  Magenta: [188, 63, 188],
+  Cyan: [17, 178, 209],
+  White: [204, 204, 204],
+  Bright_black: [118, 118, 118],
+  Bright_red: [241, 76, 76],
+  Bright_green: [35, 209, 139],
+  Bright_yellow: [245, 245, 67],
+  Bright_blue: [59, 142, 234],
+  Bright_magenta: [214, 112, 214],
+  Bright_cyan: [41, 184, 219],
+  Bright_white: [229, 229, 229],
+};
+
+function ansi256ToHex(code) {
+  if (code < 16) {
+    const names = Object.keys(STANDARD_COLORS);
+    const [r, g, b] = STANDARD_COLORS[names[code]];
+    return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+  }
+  if (code >= 232) {
+    const v = 8 + (code - 232) * 10;
+    return `#${v.toString(16).padStart(2, "0")}${v.toString(16).padStart(2, "0")}${v.toString(16).padStart(2, "0")}`;
+  }
+  const idx = code - 16;
+  const b = idx % 6;
+  const g = Math.floor(idx / 6) % 6;
+  const r = Math.floor(idx / 36);
+  const toV = (c) => (c === 0 ? 0 : 55 + c * 40);
+  return `#${toV(r).toString(16).padStart(2, "0")}${toV(g).toString(16).padStart(2, "0")}${toV(b).toString(16).padStart(2, "0")}`;
+}
+
+function colorToAnsi256(color) {
+  if (color.type === "Default") return null;
+  if (color.type === "Standard") {
+    const names = Object.keys(STANDARD_COLORS);
+    return names.indexOf(color.value);
+  }
+  if (color.type === "Rgb") {
+    const [r, g, b] = color.value;
+    return 16 + 36 * r + 6 * g + b;
+  }
+  if (color.type === "Greyscale") return 232 + color.value;
+  return null;
+}
+
+function colorToHex(color) {
+  const code = colorToAnsi256(color);
+  if (code === null) return null;
+  return ansi256ToHex(code);
+}
+
+function hexToRgb(hex) {
+  const h = hex.startsWith("#") ? hex.slice(1) : hex;
+  return [parseInt(h.substring(0, 2), 16), parseInt(h.substring(2, 4), 16), parseInt(h.substring(4, 6), 16)];
+}
+
+function hexToAnsi256Color(hex) {
+  const [r, g, b] = hexToRgb(hex);
+  const rr = r === 0 ? 0 : Math.round((r - 55) / 40);
+  const gg = g === 0 ? 0 : Math.round((g - 55) / 40);
+  const bb = b === 0 ? 0 : Math.round((b - 55) / 40);
+  const rc = Math.max(0, Math.min(5, rr));
+  const gc = Math.max(0, Math.min(5, gg));
+  const bc = Math.max(0, Math.min(5, bb));
+  return { type: "Rgb", value: [rc, gc, bc] };
+}
+
+function colorToOcaml(color) {
+  if (color.type === "Default") return "Default";
+  if (color.type === "Standard") return `(Standard ${color.value})`;
+  if (color.type === "Rgb") return `(Rgb (${color.value[0]}, ${color.value[1]}, ${color.value[2]}))`;
+  if (color.type === "Greyscale") return `(Greyscale ${color.value})`;
+  return "Default";
+}
+
+function faceToOcaml(face) {
+  const fg = colorToOcaml(face.fg);
+  let args = [];
+  if (face.bg) args.push(`~bg:${colorToOcaml(face.bg)}`);
+  if (face.bold) args.push("~bold:true");
+  args.push(fg);
+  return `face ${args.join(" ")}`;
+}
+
+function themeToOcaml(name, theme) {
+  const lines = [`let ${name} =`, "  {"];
+  lines.push(`    name = "${name}";`);
+  for (const [key] of FACE_KEYS) {
+    const ocamlKey = key === "string_" ? "string" : key;
+    lines.push(`    ${ocamlKey} = ${faceToOcaml(theme[key])};`);
+  }
+  lines.push("  }");
+  return lines.join("\n");
+}
+
+const PRESETS = {
+  tokyo_night: {
+    plain: { fg: { type: "Greyscale", value: 20 }, bg: null, bold: false },
+    accent: { fg: { type: "Rgb", value: [2, 4, 5] }, bg: null, bold: false },
+    error: { fg: { type: "Rgb", value: [5, 2, 2] }, bg: null, bold: false },
+    keyword: { fg: { type: "Rgb", value: [3, 2, 5] }, bg: null, bold: false },
+    string_: { fg: { type: "Rgb", value: [3, 4, 2] }, bg: null, bold: false },
+    number: { fg: { type: "Rgb", value: [5, 4, 1] }, bg: null, bold: false },
+    comment: { fg: { type: "Rgb", value: [2, 2, 3] }, bg: null, bold: false },
+    operator: { fg: { type: "Rgb", value: [2, 4, 5] }, bg: null, bold: false },
+    constant: { fg: { type: "Rgb", value: [2, 3, 5] }, bg: null, bold: false },
+    ident: { fg: { type: "Greyscale", value: 20 }, bg: null, bold: false },
+    bracket: { fg: { type: "Rgb", value: [4, 3, 5] }, bg: null, bold: false },
+    function_: { fg: { type: "Rgb", value: [1, 4, 5] }, bg: null, bold: false },
+    completion: { fg: { type: "Greyscale", value: 20 }, bg: { type: "Greyscale", value: 6 }, bold: false },
+    completion_selected: { fg: { type: "Rgb", value: [5, 5, 5] }, bg: { type: "Rgb", value: [1, 1, 2] }, bold: true },
+    shell_prompt: { fg: { type: "Rgb", value: [5, 1, 2] }, bg: null, bold: false },
+  },
+  gruvbox: {
+    plain: { fg: { type: "Rgb", value: [5, 4, 3] }, bg: null, bold: false },
+    accent: { fg: { type: "Rgb", value: [4, 3, 1] }, bg: null, bold: false },
+    error: { fg: { type: "Rgb", value: [5, 1, 1] }, bg: null, bold: false },
+    keyword: { fg: { type: "Rgb", value: [5, 1, 1] }, bg: null, bold: false },
+    string_: { fg: { type: "Rgb", value: [4, 4, 1] }, bg: null, bold: false },
+    number: { fg: { type: "Standard", value: "Magenta" }, bg: null, bold: false },
+    comment: { fg: { type: "Greyscale", value: 12 }, bg: null, bold: false },
+    operator: { fg: { type: "Default" }, bg: null, bold: false },
+    constant: { fg: { type: "Rgb", value: [4, 3, 3] }, bg: null, bold: false },
+    ident: { fg: { type: "Rgb", value: [5, 4, 3] }, bg: null, bold: false },
+    bracket: { fg: { type: "Rgb", value: [3, 3, 3] }, bg: null, bold: false },
+    function_: { fg: { type: "Rgb", value: [5, 3, 2] }, bg: null, bold: false },
+    completion: { fg: { type: "Rgb", value: [5, 4, 3] }, bg: { type: "Greyscale", value: 5 }, bold: false },
+    completion_selected: { fg: { type: "Greyscale", value: 3 }, bg: { type: "Rgb", value: [4, 3, 1] }, bold: true },
+    shell_prompt: { fg: { type: "Rgb", value: [4, 4, 1] }, bg: null, bold: false },
+  },
+  catppuccin: {
+    plain: { fg: { type: "Rgb", value: [4, 4, 5] }, bg: null, bold: false },
+    accent: { fg: { type: "Rgb", value: [3, 4, 5] }, bg: null, bold: false },
+    error: { fg: { type: "Rgb", value: [5, 3, 3] }, bg: null, bold: false },
+    keyword: { fg: { type: "Rgb", value: [4, 3, 5] }, bg: null, bold: false },
+    string_: { fg: { type: "Rgb", value: [3, 4, 3] }, bg: null, bold: false },
+    number: { fg: { type: "Rgb", value: [5, 4, 3] }, bg: null, bold: false },
+    comment: { fg: { type: "Greyscale", value: 11 }, bg: null, bold: false },
+    operator: { fg: { type: "Rgb", value: [2, 4, 4] }, bg: null, bold: false },
+    constant: { fg: { type: "Rgb", value: [5, 4, 3] }, bg: null, bold: false },
+    ident: { fg: { type: "Rgb", value: [4, 4, 5] }, bg: null, bold: false },
+    bracket: { fg: { type: "Greyscale", value: 15 }, bg: null, bold: false },
+    function_: { fg: { type: "Rgb", value: [3, 4, 5] }, bg: null, bold: false },
+    completion: { fg: { type: "Rgb", value: [4, 4, 5] }, bg: { type: "Greyscale", value: 5 }, bold: false },
+    completion_selected: { fg: { type: "Rgb", value: [4, 4, 5] }, bg: { type: "Greyscale", value: 9 }, bold: true },
+    shell_prompt: { fg: { type: "Rgb", value: [3, 4, 3] }, bg: null, bold: false },
+  },
+  dracula: {
+    plain: { fg: { type: "Greyscale", value: 23 }, bg: null, bold: false },
+    accent: { fg: { type: "Rgb", value: [4, 3, 5] }, bg: null, bold: false },
+    error: { fg: { type: "Rgb", value: [5, 2, 2] }, bg: null, bold: false },
+    keyword: { fg: { type: "Rgb", value: [5, 2, 4] }, bg: null, bold: false },
+    string_: { fg: { type: "Rgb", value: [5, 5, 3] }, bg: null, bold: false },
+    number: { fg: { type: "Rgb", value: [4, 3, 5] }, bg: null, bold: false },
+    comment: { fg: { type: "Rgb", value: [2, 2, 3] }, bg: null, bold: false },
+    operator: { fg: { type: "Rgb", value: [5, 2, 4] }, bg: null, bold: false },
+    constant: { fg: { type: "Rgb", value: [4, 3, 5] }, bg: null, bold: false },
+    ident: { fg: { type: "Greyscale", value: 23 }, bg: null, bold: false },
+    bracket: { fg: { type: "Greyscale", value: 23 }, bg: null, bold: false },
+    function_: { fg: { type: "Rgb", value: [2, 5, 2] }, bg: null, bold: false },
+    completion: { fg: { type: "Greyscale", value: 23 }, bg: { type: "Greyscale", value: 7 }, bold: false },
+    completion_selected: { fg: { type: "Greyscale", value: 23 }, bg: { type: "Rgb", value: [2, 2, 3] }, bold: true },
+    shell_prompt: { fg: { type: "Rgb", value: [2, 5, 2] }, bg: null, bold: false },
+  },
+  nord: {
+    plain: { fg: { type: "Greyscale", value: 21 }, bg: null, bold: false },
+    accent: { fg: { type: "Rgb", value: [3, 4, 4] }, bg: null, bold: false },
+    error: { fg: { type: "Rgb", value: [4, 2, 2] }, bg: null, bold: false },
+    keyword: { fg: { type: "Rgb", value: [3, 3, 4] }, bg: null, bold: false },
+    string_: { fg: { type: "Rgb", value: [3, 4, 3] }, bg: null, bold: false },
+    number: { fg: { type: "Rgb", value: [3, 2, 3] }, bg: null, bold: false },
+    comment: { fg: { type: "Rgb", value: [2, 2, 3] }, bg: null, bold: false },
+    operator: { fg: { type: "Rgb", value: [3, 3, 4] }, bg: null, bold: false },
+    constant: { fg: { type: "Rgb", value: [4, 3, 2] }, bg: null, bold: false },
+    ident: { fg: { type: "Greyscale", value: 21 }, bg: null, bold: false },
+    bracket: { fg: { type: "Greyscale", value: 21 }, bg: null, bold: false },
+    function_: { fg: { type: "Rgb", value: [3, 4, 4] }, bg: null, bold: false },
+    completion: { fg: { type: "Greyscale", value: 21 }, bg: { type: "Greyscale", value: 6 }, bold: false },
+    completion_selected: { fg: { type: "Greyscale", value: 22 }, bg: { type: "Greyscale", value: 8 }, bold: true },
+    shell_prompt: { fg: { type: "Rgb", value: [3, 4, 3] }, bg: null, bold: false },
+  },
+  solarized: {
+    plain: { fg: { type: "Greyscale", value: 13 }, bg: null, bold: false },
+    accent: { fg: { type: "Rgb", value: [1, 3, 4] }, bg: null, bold: false },
+    error: { fg: { type: "Rgb", value: [4, 1, 1] }, bg: null, bold: false },
+    keyword: { fg: { type: "Rgb", value: [3, 3, 0] }, bg: null, bold: false },
+    string_: { fg: { type: "Rgb", value: [1, 3, 3] }, bg: null, bold: false },
+    number: { fg: { type: "Rgb", value: [4, 1, 3] }, bg: null, bold: false },
+    comment: { fg: { type: "Rgb", value: [2, 2, 2] }, bg: null, bold: false },
+    operator: { fg: { type: "Rgb", value: [3, 2, 0] }, bg: null, bold: false },
+    constant: { fg: { type: "Rgb", value: [4, 1, 0] }, bg: null, bold: false },
+    ident: { fg: { type: "Greyscale", value: 13 }, bg: null, bold: false },
+    bracket: { fg: { type: "Greyscale", value: 11 }, bg: null, bold: false },
+    function_: { fg: { type: "Rgb", value: [1, 3, 4] }, bg: null, bold: false },
+    completion: { fg: { type: "Greyscale", value: 13 }, bg: { type: "Rgb", value: [0, 1, 1] }, bold: false },
+    completion_selected: { fg: { type: "Greyscale", value: 23 }, bg: { type: "Rgb", value: [2, 2, 2] }, bold: true },
+    shell_prompt: { fg: { type: "Rgb", value: [3, 3, 0] }, bg: null, bold: false },
+  },
+  default: {
+    plain: { fg: { type: "Default" }, bg: null, bold: false },
+    accent: { fg: { type: "Standard", value: "Cyan" }, bg: null, bold: false },
+    error: { fg: { type: "Standard", value: "Red" }, bg: null, bold: false },
+    keyword: { fg: { type: "Standard", value: "Magenta" }, bg: null, bold: false },
+    string_: { fg: { type: "Standard", value: "Green" }, bg: null, bold: false },
+    number: { fg: { type: "Standard", value: "Yellow" }, bg: null, bold: false },
+    comment: { fg: { type: "Standard", value: "Bright_black" }, bg: null, bold: false },
+    operator: { fg: { type: "Standard", value: "Cyan" }, bg: null, bold: false },
+    constant: { fg: { type: "Standard", value: "Blue" }, bg: null, bold: false },
+    ident: { fg: { type: "Default" }, bg: null, bold: false },
+    bracket: { fg: { type: "Default" }, bg: null, bold: false },
+    function_: { fg: { type: "Standard", value: "Magenta" }, bg: null, bold: false },
+    completion: { fg: { type: "Default" }, bg: { type: "Greyscale", value: 4 }, bold: false },
+    completion_selected: { fg: { type: "Default" }, bg: { type: "Greyscale", value: 8 }, bold: true },
+    shell_prompt: { fg: { type: "Standard", value: "Red" }, bg: null, bold: false },
+  },
+};
+
+const TOKENS = [
+  { text: "let", face: "keyword" }, { text: " ", face: "plain" },
+  { text: "rec", face: "keyword" }, { text: " ", face: "plain" },
+  { text: "fibonacci", face: "function_" }, { text: " ", face: "plain" },
+  { text: "n", face: "ident" }, { text: " = ", face: "operator" },
+  { text: "\n", face: "plain" },
+  { text: "  ", face: "plain" },
+  { text: "match", face: "keyword" }, { text: " ", face: "plain" },
+  { text: "n", face: "ident" }, { text: " ", face: "plain" },
+  { text: "with", face: "keyword" },
+  { text: "\n", face: "plain" },
+  { text: "  | ", face: "operator" },
+  { text: "0", face: "number" }, { text: " -> ", face: "operator" },
+  { text: "0", face: "number" },
+  { text: "\n", face: "plain" },
+  { text: "  | ", face: "operator" },
+  { text: "1", face: "number" }, { text: " -> ", face: "operator" },
+  { text: "1", face: "number" },
+  { text: "\n", face: "plain" },
+  { text: "  | ", face: "operator" },
+  { text: "n", face: "ident" }, { text: " -> ", face: "operator" },
+  { text: "fibonacci", face: "function_" }, { text: " ", face: "plain" },
+  { text: "(", face: "bracket" }, { text: "n", face: "ident" },
+  { text: " - ", face: "operator" }, { text: "1", face: "number" },
+  { text: ")", face: "bracket" }, { text: " + ", face: "operator" },
+  { text: "fibonacci", face: "function_" }, { text: " ", face: "plain" },
+  { text: "(", face: "bracket" }, { text: "n", face: "ident" },
+  { text: " - ", face: "operator" }, { text: "2", face: "number" },
+  { text: ")", face: "bracket" },
+  { text: "\n\n", face: "plain" },
+  { text: "(* Calculate the 10th Fibonacci number *)", face: "comment" },
+  { text: "\n", face: "plain" },
+  { text: "let", face: "keyword" }, { text: " ", face: "plain" },
+  { text: "result", face: "ident" }, { text: " = ", face: "operator" },
+  { text: "fibonacci", face: "function_" }, { text: " ", face: "plain" },
+  { text: "10", face: "number" },
+  { text: "\n", face: "plain" },
+  { text: "let", face: "keyword" }, { text: " ", face: "plain" },
+  { text: "()", face: "constant" }, { text: " = ", face: "operator" },
+  { text: "Printf", face: "constant" }, { text: ".", face: "operator" },
+  { text: "printf", face: "function_" }, { text: " ", face: "plain" },
+  { text: "\"fib(10) = %d\\n\"", face: "string_" }, { text: " ", face: "plain" },
+  { text: "result", face: "ident" },
+];
+
+function ColorTypePicker({ color, onChange }) {
+  return (
+    <select
+      value={color.type}
+      onChange={(e) => {
+        const t = e.target.value;
+        if (t === "Default") onChange({ type: "Default" });
+        else if (t === "Standard") onChange({ type: "Standard", value: "Red" });
+        else if (t === "Rgb") onChange({ type: "Rgb", value: [3, 3, 3] });
+        else if (t === "Greyscale") onChange({ type: "Greyscale", value: 12 });
+      }}
+      style={{ fontSize: 12, padding: "2px 4px", width: 90, background: "var(--color-background-primary)", color: "var(--color-text-primary)", border: "0.5px solid var(--color-border-secondary)", borderRadius: 4 }}
+    >
+      <option value="Default">Default</option>
+      <option value="Standard">Standard</option>
+      <option value="Rgb">Rgb</option>
+      <option value="Greyscale">Greyscale</option>
+    </select>
+  );
+}
+
+function StandardPicker({ value, onChange }) {
+  const names = Object.keys(STANDARD_COLORS);
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)}
+      style={{ fontSize: 12, padding: "2px 4px", background: "var(--color-background-primary)", color: "var(--color-text-primary)", border: "0.5px solid var(--color-border-secondary)", borderRadius: 4 }}
+    >
+      {names.map((n) => <option key={n} value={n}>{n}</option>)}
+    </select>
+  );
+}
+
+function RgbChannelPicker({ value, onChange }) {
+  return (
+    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+      {[0, 1, 2].map((i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <span style={{ fontSize: 10, color: "var(--color-text-tertiary)", width: 10 }}>{["R", "G", "B"][i]}</span>
+          <input type="range" min="0" max="5" step="1" value={value[i]}
+            onChange={(e) => {
+              const nv = [...value];
+              nv[i] = parseInt(e.target.value);
+              onChange(nv);
+            }}
+            style={{ width: 50, height: 14 }}
+          />
+          <span style={{ fontSize: 11, width: 10, color: "var(--color-text-secondary)" }}>{value[i]}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function GreyscalePicker({ value, onChange }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <input type="range" min="0" max="23" step="1" value={value}
+        onChange={(e) => onChange(parseInt(e.target.value))}
+        style={{ width: 120, height: 14 }}
+      />
+      <span style={{ fontSize: 11, color: "var(--color-text-secondary)", minWidth: 16 }}>{value}</span>
+    </div>
+  );
+}
+
+function ColorEditor({ color, onChange, label }) {
+  const hex = colorToHex(color);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", width: 18, flexShrink: 0 }}>{label}</span>
+      {hex && (
+        <div style={{
+          width: 18, height: 18, borderRadius: 4, flexShrink: 0,
+          background: hex, border: "0.5px solid var(--color-border-secondary)",
+          position: "relative", overflow: "hidden",
+        }}>
+          <input type="color" value={hex}
+            onChange={(e) => onChange(hexToAnsi256Color(e.target.value))}
+            style={{ position: "absolute", inset: -4, width: "calc(100% + 8px)", height: "calc(100% + 8px)", opacity: 0, cursor: "pointer" }}
+          />
+        </div>
+      )}
+      <ColorTypePicker color={color} onChange={onChange} />
+      {color.type === "Standard" && <StandardPicker value={color.value} onChange={(v) => onChange({ type: "Standard", value: v })} />}
+      {color.type === "Rgb" && <RgbChannelPicker value={color.value} onChange={(v) => onChange({ type: "Rgb", value: v })} />}
+      {color.type === "Greyscale" && <GreyscalePicker value={color.value} onChange={(v) => onChange({ type: "Greyscale", value: v })} />}
+    </div>
+  );
+}
+
+function FaceEditor({ face, faceKey, label, onChange }) {
+  const fgHex = colorToHex(face.fg) || "#d0d0d0";
+  const bgHex = face.bg ? colorToHex(face.bg) : null;
+
+  return (
+    <div style={{
+      padding: "8px 12px", borderRadius: 8,
+      border: "0.5px solid var(--color-border-tertiary)",
+      background: "var(--color-background-primary)",
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+        <span style={{
+          fontSize: 13, fontWeight: 500,
+          color: fgHex, background: bgHex || "transparent",
+          padding: bgHex ? "1px 6px" : 0, borderRadius: 3,
+          fontWeight: face.bold ? 700 : 500,
+        }}>{label}</span>
+        <label style={{ fontSize: 11, color: "var(--color-text-tertiary)", display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+          <input type="checkbox" checked={face.bold}
+            onChange={(e) => onChange(faceKey, { ...face, bold: e.target.checked })}
+            style={{ width: 12, height: 12 }}
+          />
+          bold
+        </label>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <ColorEditor label="fg" color={face.fg} onChange={(c) => onChange(faceKey, { ...face, fg: c })} />
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <label style={{ fontSize: 11, color: "var(--color-text-tertiary)", display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+            <input type="checkbox" checked={face.bg !== null}
+              onChange={(e) => onChange(faceKey, { ...face, bg: e.target.checked ? { type: "Greyscale", value: 4 } : null })}
+              style={{ width: 12, height: 12 }}
+            />
+            bg
+          </label>
+          {face.bg && <ColorEditor label="" color={face.bg} onChange={(c) => onChange(faceKey, { ...face, bg: c })} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CodePreview({ theme }) {
+  const termBg = colorToHex(theme.plain.fg) ? "#1a1b26" : "#1e1e1e";
+  const promptHex = colorToHex(theme.shell_prompt.fg) || "#cc0000";
+  const accentHex = colorToHex(theme.accent.fg) || "#56b6c2";
+
+  return (
+    <div style={{
+      background: termBg, borderRadius: 10, overflow: "hidden",
+      border: "0.5px solid rgba(255,255,255,0.08)",
+      fontFamily: "var(--font-mono)", fontSize: 13, lineHeight: 1.6,
+    }}>
+      <div style={{ padding: "6px 12px", background: "rgba(255,255,255,0.04)", display: "flex", gap: 6, alignItems: "center" }}>
+        <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#ff5f57" }} />
+        <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#febc2e" }} />
+        <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#28c840" }} />
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginLeft: 8 }}>theme_preview.ml</span>
+      </div>
+      <div style={{ padding: "12px 16px" }}>
+        <div style={{ marginBottom: 8 }}>
+          <span style={{ color: promptHex }}>$ </span>
+          <span style={{ color: accentHex }}>ocaml theme_preview.ml</span>
+        </div>
+        <div style={{ whiteSpace: "pre", overflowX: "auto" }}>
+          {TOKENS.map((tok, i) => {
+            const face = theme[tok.face] || theme.plain;
+            const fg = colorToHex(face.fg) || colorToHex(theme.plain.fg) || "#d4d4d4";
+            const bg = face.bg ? colorToHex(face.bg) : undefined;
+            return (
+              <span key={i} style={{
+                color: fg,
+                background: bg,
+                fontWeight: face.bold ? 700 : 400,
+              }}>{tok.text}</span>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: 16, borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 8 }}>
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", marginRight: 8 }}>completion:</span>
+          {["fibonacci", "filter_map", "fold_left"].map((w, i) => {
+            const f = i === 1 ? theme.completion_selected : theme.completion;
+            const fg = colorToHex(f.fg) || colorToHex(theme.plain.fg) || "#d4d4d4";
+            const bg = f.bg ? colorToHex(f.bg) : "rgba(255,255,255,0.05)";
+            return (
+              <span key={w} style={{
+                color: fg, background: bg,
+                padding: "2px 8px", marginRight: 2,
+                fontWeight: f.bold ? 700 : 400,
+                borderRadius: 3, fontSize: 12,
+              }}>{w}</span>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ThemeEditor() {
+  const [themeName, setThemeName] = useState("tokyo_night");
+  const [theme, setTheme] = useState(JSON.parse(JSON.stringify(PRESETS.tokyo_night)));
+  const [exportName, setExportName] = useState("my_theme");
+  const [copied, setCopied] = useState(false);
+
+  const handlePreset = useCallback((name) => {
+    setThemeName(name);
+    setTheme(JSON.parse(JSON.stringify(PRESETS[name])));
+  }, []);
+
+  const handleFaceChange = useCallback((key, face) => {
+    setTheme((prev) => ({ ...prev, [key]: face }));
+  }, []);
+
+  const ocamlOutput = useMemo(() => themeToOcaml(exportName, theme), [exportName, theme]);
+
+  return (
+    <div style={{ padding: "1rem 0" }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20, alignItems: "center" }}>
+        <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>Preset:</span>
+        {Object.keys(PRESETS).map((name) => (
+          <button key={name} onClick={() => handlePreset(name)}
+            style={{
+              fontSize: 12, padding: "4px 12px", borderRadius: 6, cursor: "pointer",
+              border: name === themeName ? "1.5px solid var(--color-border-info)" : "0.5px solid var(--color-border-tertiary)",
+              background: name === themeName ? "var(--color-background-info)" : "var(--color-background-primary)",
+              color: name === themeName ? "var(--color-text-info)" : "var(--color-text-primary)",
+              fontWeight: name === themeName ? 500 : 400,
+            }}
+          >{name}</button>
+        ))}
+      </div>
+
+      <CodePreview theme={theme} />
+
+      <div style={{
+        marginTop: 24,
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
+        gap: 8,
+      }}>
+        {FACE_KEYS.map(([key, label]) => (
+          <FaceEditor key={key} faceKey={key} label={label} face={theme[key]} onChange={handleFaceChange} />
+        ))}
+      </div>
+
+      <div style={{ marginTop: 24 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+          <label style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>OCaml binding name:</label>
+          <input type="text" value={exportName}
+            onChange={(e) => setExportName(e.target.value.replace(/[^a-z0-9_]/g, ""))}
+            style={{
+              fontSize: 13, padding: "4px 8px", borderRadius: 6, width: 160,
+              fontFamily: "var(--font-mono)",
+              background: "var(--color-background-primary)", color: "var(--color-text-primary)",
+              border: "0.5px solid var(--color-border-secondary)",
+            }}
+          />
+          <button onClick={() => { navigator.clipboard.writeText(ocamlOutput); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+            style={{
+              fontSize: 12, padding: "4px 14px", borderRadius: 6, cursor: "pointer",
+              border: "0.5px solid var(--color-border-secondary)",
+              background: copied ? "var(--color-background-success)" : "var(--color-background-primary)",
+              color: copied ? "var(--color-text-success)" : "var(--color-text-primary)",
+            }}
+          >{copied ? "Copied" : "Copy OCaml"}</button>
+        </div>
+        <pre style={{
+          fontSize: 12, lineHeight: 1.5, padding: 16, borderRadius: 8, overflowX: "auto",
+          background: "var(--color-background-secondary)", color: "var(--color-text-primary)",
+          border: "0.5px solid var(--color-border-tertiary)",
+          fontFamily: "var(--font-mono)",
+        }}>{ocamlOutput}</pre>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<ThemeEditor />);
+</script>
+</body>
+</html>
