@@ -1,5 +1,12 @@
 type t
 
+type image = {
+  path : string;
+  mime_type : string option;
+  width_px : int option;
+  height_px : int option;
+}
+
 type response_chunk =
   | Stdout of string
   | Result of string
@@ -8,6 +15,7 @@ type response_chunk =
   | Done
   | Shutdown
   | Restarted of string
+  | Image of image
   | Passthrough
   | Passthrough_end
   | Completions of string * string list  (* token * items *)

@@ -29,10 +29,11 @@ let classify (m, effects) =
 let update msg model = classify (Update.update msg model)
 let submit model = classify (Update.submit model)
 
-(* Helper to extract text from spans for testing *)
-let spans_to_text = function
+(* Helper to extract text output for testing *)
+let output_to_text = function
   | None -> None
-  | Some spans -> Some (String.concat "" (List.map snd spans))
+  | Some (Output_text spans) -> Some (String.concat "" (List.map snd spans))
+  | Some (Output_image _) -> None
 
 (* Helper to convert string to Unicode_string, failing on error *)
 let us s =
@@ -432,7 +433,7 @@ let test_process_response_done () =
 
   Alcotest.(check (option string))
     "repl_output" (Some "")
-    (spans_to_text new_model.repl_output);
+    (output_to_text new_model.repl_output);
   Alcotest.(check bool) "awaiting_response" false new_model.awaiting_response;
   Alcotest.(check bool)
     "backend_response cleared" true
@@ -452,7 +453,7 @@ let test_process_response_stdout () =
 
   Alcotest.(check (option string))
     "repl_output" (Some "hello\n")
-    (spans_to_text new_model.repl_output);
+    (output_to_text new_model.repl_output);
   Alcotest.(check bool)
     "awaiting_response stays true" true new_model.awaiting_response
 
@@ -470,7 +471,7 @@ let test_process_response_result () =
 
   Alcotest.(check (option string))
     "repl_output" (Some "[1] 42")
-    (spans_to_text new_model.repl_output);
+    (output_to_text new_model.repl_output);
   Alcotest.(check bool)
     "awaiting_response stays true" true new_model.awaiting_response
 
@@ -489,7 +490,7 @@ let test_process_response_r_error () =
 
   Alcotest.(check (option string))
     "repl_output" (Some "Error: object 'x' not found")
-    (spans_to_text new_model.repl_output);
+    (output_to_text new_model.repl_output);
   (* KEY: R_error is NOT terminal - we keep awaiting_response=true until Done *)
   Alcotest.(check bool)
     "awaiting_response stays true after R_error" true
@@ -509,10 +510,39 @@ let test_process_response_internal_error () =
 
   Alcotest.(check (option string))
     "repl_output" (Some "Internal error: kernel crashed")
-    (spans_to_text new_model.repl_output);
+    (output_to_text new_model.repl_output);
   (* Internal_error IS terminal *)
   Alcotest.(check bool)
     "awaiting_response false after Internal_error" false
+    new_model.awaiting_response
+
+let test_process_response_image () =
+  let width = 10 in
+  let image =
+    {
+      Ffi_backend.path = "/tmp/plot.png";
+      mime_type = Some "image/png";
+      width_px = Some 800;
+      height_px = Some 600;
+    }
+  in
+  let model =
+    {
+      (initial_model width) with
+      backend_response = Some (Ffi_backend.Image image);
+      awaiting_response = true;
+    }
+  in
+
+  let new_model = Update.process_response model in
+
+  (match new_model.repl_output with
+  | Some (Output_image out) ->
+      Alcotest.(check string) "path" image.path out.path;
+      Alcotest.(check (option string)) "mime" image.mime_type out.mime_type
+  | _ -> Alcotest.fail "expected image output");
+  Alcotest.(check bool)
+    "awaiting_response stays true after Image" true
     new_model.awaiting_response
 
 let test_scroll_when_cursor_below_screen () =
@@ -2064,6 +2094,7 @@ let () =
           test_case "R_error response" `Quick test_process_response_r_error;
           test_case "Internal_error response" `Quick
             test_process_response_internal_error;
+          test_case "Image response" `Quick test_process_response_image;
           test_case "R_error followed by Done" `Quick
             test_r_error_followed_by_done;
         ] );

@@ -4,6 +4,10 @@ let pending_prompt = "  "
 
 type mode = Normal | Readline of string | Shell | History_search of Unicode_string.t
 
+type repl_output =
+  | Output_text of Terminal_ops.span list
+  | Output_image of Ffi_backend.image
+
 let min_prompt_height = 5
 let default_prompt_top term_height = max 2 (term_height - min_prompt_height + 1)
 let clamp_prompt_top term_height row = max 2 (min row (default_prompt_top term_height))
@@ -27,7 +31,7 @@ type model = {
   persistent_col : int;
   awaiting_response : bool;
   backend_response : Ffi_backend.response_chunk option;
-  repl_output : Terminal_ops.span list option;
+  repl_output : repl_output option;
   repl_cursor : int * int;
   scroll_amount : int;
   history : History.t;

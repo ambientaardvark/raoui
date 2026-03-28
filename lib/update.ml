@@ -1063,22 +1063,24 @@ let process_response model =
   | Some response ->
       let repl_output =
         match response with
-        | Ffi_backend.Stdout s -> [ (`Raw, s) ]
-        | Ffi_backend.Result s -> [ (`Raw, s) ]
-        | Ffi_backend.R_error s -> [ (`Error, s) ]
-        | Ffi_backend.Internal_error s -> [ (`Error, "Internal error: " ^ s) ]
-        | Ffi_backend.Restarted s -> [ (`Error, s) ]
-        | Ffi_backend.Done -> []
-        | Ffi_backend.Shutdown -> []
+        | Ffi_backend.Stdout s -> Output_text [ (`Raw, s) ]
+        | Ffi_backend.Result s -> Output_text [ (`Raw, s) ]
+        | Ffi_backend.R_error s -> Output_text [ (`Error, s) ]
+        | Ffi_backend.Internal_error s ->
+            Output_text [ (`Error, "Internal error: " ^ s) ]
+        | Ffi_backend.Restarted s -> Output_text [ (`Error, s) ]
+        | Ffi_backend.Image image -> Output_image image
+        | Ffi_backend.Done -> Output_text []
+        | Ffi_backend.Shutdown -> Output_text []
         | Ffi_backend.Passthrough | Ffi_backend.Passthrough_end
         | Ffi_backend.Completions _ | Ffi_backend.Readline _ ->
-            []
+            Output_text []
       in
       let awaiting_response =
         match response with
         (* Keep waiting for more output until we get a terminal response *)
         | Ffi_backend.Stdout _ | Ffi_backend.Result _ | Ffi_backend.R_error _
-        | Ffi_backend.Readline _ ->
+        | Ffi_backend.Readline _ | Ffi_backend.Image _ ->
             model.awaiting_response
         (* Terminal responses *)
         | Ffi_backend.Done | Ffi_backend.Shutdown | Ffi_backend.Internal_error _

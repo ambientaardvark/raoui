@@ -143,6 +143,27 @@ let make_init () : Frontend_types.model =
     mode = Frontend_types.Normal;
   }
 
+let image_output_spans (image : Ffi_backend.image) =
+  let basename = Filename.basename image.path in
+  let dims =
+    match (image.width_px, image.height_px) with
+    | Some w, Some h -> Printf.sprintf " (%dx%d)" w h
+    | _ -> ""
+  in
+  let mime =
+    match image.mime_type with
+    | Some mime -> Printf.sprintf " %s" mime
+    | None -> ""
+  in
+  [
+    (`Accent, "[image] ");
+    (`Plain, basename);
+    (`Comment, dims ^ mime ^ "\n");
+    (`Comment, "path: ");
+    (`Plain, image.path);
+    (`Comment, "\nopen externally for full review");
+  ]
+
 (* NOTE: This clears from repl_cursor to end of screen before printing output,
    which erases any prompt the user typed while waiting. View then repaints.
    This may not work correctly with output that uses cursor movement (e.g.
@@ -150,7 +171,7 @@ let make_init () : Frontend_types.model =
 let print_repl_output model =
   match model.repl_output with
   | None -> model
-  | Some [] ->
+  | Some (Output_text []) ->
       (* Done - reserve the bottom prompt zone. *)
       let new_row, new_col = get_cursor_position () in
       let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
@@ -168,11 +189,25 @@ let print_repl_output model =
         prompt_top_row = clamped;
         prompt_box_height = Frontend_types.min_prompt_height;
       }
-  | Some spans ->
+  | Some (Output_text spans) ->
       let row, col = model.repl_cursor in
       print_string (Term.cursor_to row col);
       print_string Term.clear_to_eos;
       print_string (Term.render_spans model.theme spans);
+      flush stdout;
+      let new_row, new_col = get_cursor_position () in
+      let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
+      {
+        model with
+        repl_output = None;
+        repl_cursor = (new_row, new_col);
+        prompt_top_row = max model.prompt_top_row next_prompt_row;
+      }
+  | Some (Output_image image) ->
+      let row, col = model.repl_cursor in
+      print_string (Term.cursor_to row col);
+      print_string Term.clear_to_eos;
+      print_string (Term.render_spans model.theme (image_output_spans image));
       flush stdout;
       let new_row, new_col = get_cursor_position () in
       let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in

@@ -1,3 +1,10 @@
+type image = {
+  path : string;
+  mime_type : string option;
+  width_px : int option;
+  height_px : int option;
+}
+
 type response_chunk =
   | Stdout of string
   | Result of string
@@ -6,6 +13,7 @@ type response_chunk =
   | Done
   | Shutdown
   | Restarted of string
+  | Image of image
   | Passthrough
   | Passthrough_end
   | Completions of string * string list  (* token * items *)
@@ -118,6 +126,41 @@ let background_submit t code =
     Queue.push (`Background code) t.pending
   end
 
+let int_opt_of_string s =
+  match int_of_string_opt s with
+  | Some n -> Some n
+  | None -> None
+
+let parse_image_payload payload =
+  let from_pairs lines =
+    let add_pair acc line =
+      match String.split_on_char '=' line with
+      | [ key; value ] -> (String.trim key, String.trim value) :: acc
+      | _ -> acc
+    in
+    List.fold_left add_pair [] lines
+  in
+  let assoc_opt key pairs =
+    List.assoc_opt key pairs
+  in
+  let lines = String.split_on_char '\n' payload |> List.filter (fun s -> s <> "") in
+  match lines with
+  | [] -> None
+  | [ path ] ->
+      Some { path; mime_type = None; width_px = None; height_px = None }
+  | _ ->
+      let pairs = from_pairs lines in
+      let path = assoc_opt "path" pairs in
+      Option.map
+        (fun path ->
+          {
+            path;
+            mime_type = assoc_opt "mime" pairs;
+            width_px = Option.bind (assoc_opt "width" pairs) int_opt_of_string;
+            height_px = Option.bind (assoc_opt "height" pairs) int_opt_of_string;
+          })
+        path
+
 let map_kind kind payload =
   match kind with
   | 0 (* STDOUT *)         -> Stdout payload
@@ -126,6 +169,10 @@ let map_kind kind payload =
   | 3 (* R_ERROR *)        -> R_error payload
   | 4 (* INTERNAL_ERROR *) -> Internal_error payload
   | 5 (* DONE *)           -> Done
+  | 6 (* IMAGE *)          -> (
+      match parse_image_payload payload with
+      | Some image -> Image image
+      | None -> Internal_error "Invalid image payload")
   | 8 (* PASSTHROUGH *)    -> Passthrough
   | 9 (* PASSTHROUGH_END *)-> Passthrough_end
   | 10 (* COMPLETIONS *)   ->
