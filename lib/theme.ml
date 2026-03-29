@@ -116,17 +116,17 @@ let gruvbox =
     accent = face (Rgb (4, 3, 1));
     error = face (Rgb (5, 1, 1));
     keyword = face (Rgb (5, 1, 1));
-    string = face (Rgb (4, 4, 1));
+    string = face (Rgb (3, 3, 0));
     number = face (Standard Magenta);
     comment = face (Greyscale 12);
     operator = face Default;
     constant = face (Rgb (4, 3, 3));
-    ident = face (Rgb (5, 4, 3));
+    ident = face Default;
     bracket = face (Rgb (3, 3, 3));
-    function_ = face (Rgb (5, 3, 2));
+    function_ = face (Rgb (5, 2, 1));
     completion = face ~bg:(Greyscale 5) (Rgb (5, 4, 3));
     completion_selected = face ~bg:(Rgb (4, 3, 1)) ~bold:true (Greyscale 3);
-    shell_prompt = face (Rgb (4, 4, 1));
+    shell_prompt = face (Rgb (5, 0, 0));
   }
 
 let catppuccin =
