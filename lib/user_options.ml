@@ -1,13 +1,5 @@
-type plot_mode =
-  | Auto
-  | Png
-  | Httpgd
-  | Ide
-  | Off
-
-type plot_renderer =
-  | Gr_devices
-  | Ragg
+type plot_mode = Auto | Png | Httpgd | Ide | Off
+type plot_renderer = Gr_devices | Ragg
 
 type t = {
   theme_name : string option;
@@ -17,13 +9,14 @@ type t = {
   inline_image_max_height_rows : int;
 }
 
-let default = {
-  theme_name = None;
-  plot_mode = Auto;
-  plot_renderer = Gr_devices;
-  inline_image_max_width_cols = 100;
-  inline_image_max_height_rows = 18;
-}
+let default =
+  {
+    theme_name = None;
+    plot_mode = Auto;
+    plot_renderer = Gr_devices;
+    inline_image_max_width_cols = 150;
+    inline_image_max_height_rows = 30;
+  }
 
 let parse_plot_mode = function
   | "auto" -> Some Auto
@@ -38,11 +31,8 @@ let parse_plot_renderer = function
   | "ragg" -> Some Ragg
   | _ -> None
 
-let read_string toml key =
-  Otoml.find_opt toml Otoml.get_string [ key ]
-
-let read_int toml key =
-  Otoml.find_opt toml Otoml.get_integer [ key ]
+let read_string toml key = Otoml.find_opt toml Otoml.get_string [ key ]
+let read_int toml key = Otoml.find_opt toml Otoml.get_integer [ key ]
 
 let read_positive_int ~path toml key ~default_value =
   match read_int toml key with
@@ -77,8 +67,8 @@ let read path =
             | Some renderer -> renderer
             | None ->
                 Logs.warn (fun m ->
-                    m "unknown plot_renderer %S in %s; using gr_devices"
-                      value path);
+                    m "unknown plot_renderer %S in %s; using gr_devices" value
+                      path);
                 default.plot_renderer)
         | None -> default.plot_renderer
       in
