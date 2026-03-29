@@ -52,7 +52,8 @@ let should_remove_plot_session ~now ~pid ~started_at =
 
 let rec remove_tree path =
   if Sys.file_exists path then
-    if Sys.is_directory path then begin
+    let stat = Unix.lstat path in
+    if stat.Unix.st_kind = Unix.S_DIR then begin
       Sys.readdir path
       |> Array.iter (fun entry -> remove_tree (Filename.concat path entry));
       Unix.rmdir path
