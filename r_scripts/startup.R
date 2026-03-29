@@ -186,11 +186,10 @@ local({
         stdout = TRUE,
         stderr = TRUE
       ),
-      warning = function(w) w,
       error = function(e) e
     )
     status <- attr(result, "status")
-    if (inherits(result, "warning") || inherits(result, "error")) {
+    if (inherits(result, "error")) {
       plot_log("resvg invocation failed: ", conditionMessage(result))
       return(FALSE)
     }

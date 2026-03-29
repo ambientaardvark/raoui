@@ -255,7 +255,7 @@ let print_repl_output model =
       (match output, rendered_image with
        | Output_image image, Some _
          when image.preview_path <> image.source_path ->
-           (try Sys.remove image.preview_path with _ -> ())
+           (try Sys.remove image.preview_path with Sys_error _ -> ())
        | _ -> ());
       let new_row, new_col = get_cursor_position () in
       let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
@@ -445,7 +445,7 @@ let run env backend ~orig_termios =
         execute_effects backend effects;
         loop (make_init ())
     | [Repl_effect.Run_backslash_effect cmd] ->
-          let result_msg = run_backslash_effect ~orig_termios cmd in
+        let result_msg = run_backslash_effect ~orig_termios cmd in
         let effect_model, effect_effects = Update.update result_msg new_model in
         execute_effects backend effect_effects;
         loop (print_repl_output effect_model)

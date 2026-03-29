@@ -332,7 +332,7 @@ static SEXP raoui_emit_image(SEXP source_path, SEXP preview_path, SEXP width, SE
         return *R_NilValue_ptr;
     }
     if ((size_t)written >= sizeof(payload)) {
-        written = (int)sizeof(payload) - 1;
+        return *R_NilValue_ptr;
     }
     rb_push(&g_rb, RB_MSG_IMAGE, 0, payload, (uint32_t)written);
     return *R_NilValue_ptr;
