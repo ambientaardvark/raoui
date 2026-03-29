@@ -228,8 +228,8 @@ local({
         ensure_plot_task_callback()
         options(device = function(...) {
             path <- next_live_plot_path()
-            width <- 480L
-            height <- 360L
+            width <- 800L
+            height <- 600L
             opener(path, width, height, ...)
             grDevices::dev.control(displaylist = "enable")
             register_plot_device(path, width, height, opener)

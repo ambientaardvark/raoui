@@ -83,8 +83,7 @@ let render_kitty ~config ~term_width ~image =
           min rows config.User_options.inline_image_max_height_rows
         in
         let encoded = read_file image.path |> base64_encode in
-        let raw_chunk_size = 3072 in
-        let encoded_chunk_size = ((raw_chunk_size + 2) / 3) * 4 in
+        let encoded_chunk_size = 4096 in
         let total_len = String.length encoded in
         let buf = Buffer.create (total_len + 256) in
         let rec add_chunks offset first =
@@ -107,7 +106,7 @@ let render_kitty ~config ~term_width ~image =
         add_chunks 0 true;
         Buffer.add_string buf "\r\n";
         Some { output = Buffer.contents buf; rows }
-      with _ -> None)
+      with Sys_error _ -> None)
   | _ -> None
 
 let render ~terminal_capabilities ~config ~term_width ~image =
