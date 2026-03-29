@@ -6,6 +6,7 @@ type t = {
   history_file : string;
   log_file : string;
   plots_dir : string;
+  plot_session_dir : string;
 }
 
 let app_name = "raoui"
@@ -29,6 +30,8 @@ let resolve () =
   let config_dir = xdg_dir ~env:"XDG_CONFIG_HOME" ~fallback_suffix:".config/raoui" in
   let state_dir = xdg_dir ~env:"XDG_STATE_HOME" ~fallback_suffix:".local/state/raoui" in
   let cache_dir = xdg_dir ~env:"XDG_CACHE_HOME" ~fallback_suffix:".cache/raoui" in
+  let plots_dir = Filename.concat cache_dir "plots" in
+  let plot_session_dir = Filename.concat plots_dir (string_of_int (Unix.getpid ())) in
   {
     config_dir;
     state_dir;
@@ -36,7 +39,8 @@ let resolve () =
     options_file = Filename.concat config_dir "config.toml";
     history_file = Filename.concat state_dir "history";
     log_file = Filename.concat state_dir "raoui.log";
-    plots_dir = Filename.concat cache_dir "plots";
+    plots_dir;
+    plot_session_dir;
   }
 
 let rec ensure_dir dir =
@@ -53,7 +57,8 @@ let ensure_runtime_dirs t =
   ensure_dir t.config_dir;
   ensure_dir t.state_dir;
   ensure_dir t.cache_dir;
-  ensure_dir t.plots_dir
+  ensure_dir t.plots_dir;
+  ensure_dir t.plot_session_dir
 
 let export_one name value = Unix.putenv name value
 
@@ -64,4 +69,4 @@ let export_env t =
   export_one "RAOUI_OPTIONS_FILE" t.options_file;
   export_one "RAOUI_HISTORY_FILE" t.history_file;
   export_one "RAOUI_LOG_FILE" t.log_file;
-  export_one "RAOUI_PLOTS_DIR" t.plots_dir
+  export_one "RAOUI_PLOTS_DIR" t.plot_session_dir

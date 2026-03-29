@@ -6,6 +6,7 @@ type t = {
   history_file : string;
   log_file : string;
   plots_dir : string;
+  plot_session_dir : string;
 }
 
 val resolve : unit -> t

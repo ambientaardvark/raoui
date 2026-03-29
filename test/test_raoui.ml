@@ -141,17 +141,113 @@ let test_user_options_reads_theme_name () =
         "reads theme from toml" (Some "default")
         (User_options.read_theme_name path))
 
-let test_user_options_reads_theme_name_among_other_keys () =
-  with_temp_file "other = 42\ntheme = \"tokyo_night\"\n" (fun path ->
+let test_user_options_reads_plot_settings () =
+  with_temp_file
+    "theme = \"tokyo_night\"\nplot_mode = \"png\"\nplot_renderer = \"ragg\"\n"
+    (fun path ->
+      let config = User_options.read path in
       Alcotest.(check (option string))
-        "reads theme among other keys" (Some "tokyo_night")
-        (User_options.read_theme_name path))
+        "reads theme" (Some "tokyo_night") config.theme_name;
+      Alcotest.(check bool)
+        "reads plot_mode" true (config.plot_mode = User_options.Png);
+      Alcotest.(check bool)
+        "reads plot_renderer" true
+        (config.plot_renderer = User_options.Ragg))
 
-let test_user_options_returns_none_when_missing () =
+let test_user_options_returns_defaults_when_missing () =
   with_temp_file "other = 42\n" (fun path ->
+      let config = User_options.read path in
       Alcotest.(check (option string))
-        "returns none when no theme key" None
-        (User_options.read_theme_name path))
+        "returns none when no theme key" None config.theme_name;
+      Alcotest.(check bool)
+        "default plot mode" true (config.plot_mode = User_options.Auto);
+      Alcotest.(check bool)
+        "default plot renderer" true
+        (config.plot_renderer = User_options.Gr_devices))
+
+let test_terminal_capabilities_detect_kitty () =
+  let getenv = function
+    | "KITTY_WINDOW_ID" -> Some "10"
+    | _ -> None
+  in
+  let caps = Terminal_capabilities.detect ~getenv () in
+  Alcotest.(check bool)
+    "detects kitty" true
+    (caps.image_protocol = Terminal_capabilities.Kitty)
+
+let test_terminal_capabilities_detect_iterm () =
+  let getenv = function
+    | "TERM_PROGRAM" -> Some "iTerm.app"
+    | _ -> None
+  in
+  let caps = Terminal_capabilities.detect ~getenv () in
+  Alcotest.(check bool)
+    "detects iterm" true
+    (caps.image_protocol = Terminal_capabilities.ITerm)
+
+let test_terminal_capabilities_detect_ghostty_term_program () =
+  let getenv = function
+    | "TERM_PROGRAM" -> Some "ghostty"
+    | _ -> None
+  in
+  let caps = Terminal_capabilities.detect ~getenv () in
+  Alcotest.(check bool)
+    "detects ghostty via TERM_PROGRAM" true
+    (caps.image_protocol = Terminal_capabilities.Kitty)
+
+let test_terminal_capabilities_detect_ghostty_term () =
+  let getenv = function
+    | "TERM" -> Some "xterm-ghostty"
+    | _ -> None
+  in
+  let caps = Terminal_capabilities.detect ~getenv () in
+  Alcotest.(check bool)
+    "detects ghostty via TERM" true
+    (caps.image_protocol = Terminal_capabilities.Kitty)
+
+let test_plot_policy_auto_in_ide () =
+  let caps = { Terminal_capabilities.image_protocol = Terminal_capabilities.No_image } in
+  let mode =
+    Plot_policy.resolve ~running_in_ide:true ~terminal_caps:caps
+      ~plot_mode:User_options.Auto
+  in
+  Alcotest.(check bool) "auto in ide" true (mode = Plot_policy.Use_ide)
+
+let test_plot_policy_auto_with_inline_support () =
+  let caps = { Terminal_capabilities.image_protocol = Terminal_capabilities.Kitty } in
+  let mode =
+    Plot_policy.resolve ~running_in_ide:false ~terminal_caps:caps
+      ~plot_mode:User_options.Auto
+  in
+  Alcotest.(check bool) "auto with inline" true
+    (mode = Plot_policy.Use_raoui_png)
+
+let test_plot_policy_auto_without_inline_support () =
+  let caps = { Terminal_capabilities.image_protocol = Terminal_capabilities.No_image } in
+  let mode =
+    Plot_policy.resolve ~running_in_ide:false ~terminal_caps:caps
+      ~plot_mode:User_options.Auto
+  in
+  Alcotest.(check bool) "auto without inline" true
+    (mode = Plot_policy.Use_httpgd)
+
+let test_plot_policy_explicit_png () =
+  let caps = { Terminal_capabilities.image_protocol = Terminal_capabilities.No_image } in
+  let mode =
+    Plot_policy.resolve ~running_in_ide:false ~terminal_caps:caps
+      ~plot_mode:User_options.Png
+  in
+  Alcotest.(check bool) "explicit png" true
+    (mode = Plot_policy.Use_raoui_png)
+
+let test_plot_policy_explicit_httpgd () =
+  let caps = { Terminal_capabilities.image_protocol = Terminal_capabilities.Kitty } in
+  let mode =
+    Plot_policy.resolve ~running_in_ide:false ~terminal_caps:caps
+      ~plot_mode:User_options.Httpgd
+  in
+  Alcotest.(check bool) "explicit httpgd" true
+    (mode = Plot_policy.Use_httpgd)
 
 let pp_span fmt (style, text) =
   Format.fprintf fmt "(%s,%S)" (style_to_string style) text
@@ -2106,10 +2202,31 @@ let () =
       ( "user_options",
         [
           test_case "Reads theme name" `Quick test_user_options_reads_theme_name;
-          test_case "Reads theme among other keys" `Quick
-            test_user_options_reads_theme_name_among_other_keys;
-          test_case "Returns none when missing" `Quick
-            test_user_options_returns_none_when_missing;
+          test_case "Reads plot settings" `Quick
+            test_user_options_reads_plot_settings;
+          test_case "Returns defaults when missing" `Quick
+            test_user_options_returns_defaults_when_missing;
+        ] );
+      ( "terminal_capabilities",
+        [
+          test_case "Detects kitty" `Quick
+            test_terminal_capabilities_detect_kitty;
+          test_case "Detects iterm" `Quick
+            test_terminal_capabilities_detect_iterm;
+          test_case "Detects ghostty TERM_PROGRAM" `Quick
+            test_terminal_capabilities_detect_ghostty_term_program;
+          test_case "Detects ghostty TERM" `Quick
+            test_terminal_capabilities_detect_ghostty_term;
+        ] );
+      ( "plot_policy",
+        [
+          test_case "Auto in ide" `Quick test_plot_policy_auto_in_ide;
+          test_case "Auto with inline support" `Quick
+            test_plot_policy_auto_with_inline_support;
+          test_case "Auto without inline support" `Quick
+            test_plot_policy_auto_without_inline_support;
+          test_case "Explicit png" `Quick test_plot_policy_explicit_png;
+          test_case "Explicit httpgd" `Quick test_plot_policy_explicit_httpgd;
         ] );
       ( "scrolling",
         [

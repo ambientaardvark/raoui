@@ -155,6 +155,7 @@ static void (*Rf_PrintValue)(SEXP) = NULL;
 
 /* Symbol/call building */
 static SEXP (*Rf_install)(const char *) = NULL;
+static SEXP (*Rf_lang1)(SEXP) = NULL;
 static SEXP (*Rf_lang2)(SEXP, SEXP) = NULL;
 static int  (*Rf_asLogical)(SEXP) = NULL;
 
@@ -205,6 +206,7 @@ static int  (*R_registerRoutines_fn)(void *, const void *,
 
 /* Cached R symbol for withVisible */
 static SEXP withVisible_sym = NULL;
+static SEXP raoui_after_top_level_sym = NULL;
 
 /* ---- Toplevel execution wrappers ---- */
 
@@ -240,6 +242,14 @@ typedef struct {
 static void safe_eval(void *data) {
     eval_data_t *d = (eval_data_t *)data;
     d->result = R_tryEval(d->expr, d->env, d->error);
+}
+
+static void run_after_top_level_hook(void) {
+    int hook_error = 0;
+    SEXP hook_call = Rf_protect(Rf_lang1(raoui_after_top_level_sym));
+    eval_data_t hook_eval = { hook_call, *R_GlobalEnv_ptr, &hook_error, NULL };
+    (void)toplevel_exec(safe_eval, &hook_eval);
+    Rf_unprotect(1);
 }
 
 /* ---- Callbacks ---- */
@@ -295,6 +305,28 @@ static SEXP raoui_enter_passthrough(void) {
 
 static SEXP raoui_exit_passthrough(void) {
     rb_push(&g_rb, RB_MSG_PASSTHROUGH_END, 0, NULL, 0);
+    return *R_NilValue_ptr;
+}
+
+static SEXP raoui_emit_image(SEXP path, SEXP width, SEXP height, SEXP mime) {
+    const char *path_str = R_CHAR_fn(Rf_asChar(path));
+    const char *width_str = R_CHAR_fn(Rf_asChar(width));
+    const char *height_str = R_CHAR_fn(Rf_asChar(height));
+    const char *mime_str = R_CHAR_fn(Rf_asChar(mime));
+    if (!path_str || path_str[0] == '\0') {
+        return *R_NilValue_ptr;
+    }
+    char payload[4096];
+    int written = snprintf(payload, sizeof(payload),
+        "path=%s\nmime=%s\nwidth=%s\nheight=%s\n",
+        path_str, mime_str, width_str, height_str);
+    if (written < 0) {
+        return *R_NilValue_ptr;
+    }
+    if ((size_t)written >= sizeof(payload)) {
+        written = (int)sizeof(payload) - 1;
+    }
+    rb_push(&g_rb, RB_MSG_IMAGE, 0, payload, (uint32_t)written);
     return *R_NilValue_ptr;
 }
 
@@ -355,6 +387,7 @@ static int load_symbols(void) {
 
     /* Symbol/call building */
     LOAD_SYM(Rf_install, "Rf_install");
+    LOAD_SYM(Rf_lang1, "Rf_lang1");
     LOAD_SYM(Rf_lang2, "Rf_lang2");
     LOAD_SYM(Rf_asLogical, "Rf_asLogical");
 
@@ -439,6 +472,7 @@ static int init_r(const char *r_home) {
     setup_Rmainloop();
 
     withVisible_sym = Rf_install("withVisible");
+    raoui_after_top_level_sym = Rf_install("raoui_after_top_level");
 
     /* Register .Call-able passthrough functions */
     void *dll = R_getEmbeddingDllInfo_fn();
@@ -447,6 +481,8 @@ static int init_r(const char *r_home) {
          (void *)raoui_enter_passthrough, 0},
         {"raoui_exit_passthrough",
          (void *)raoui_exit_passthrough, 0},
+        {"raoui_emit_image",
+         (void *)raoui_emit_image, 4},
         {NULL, NULL, 0}
     };
     R_registerRoutines_fn(dll, NULL, callMethods, NULL, NULL);
@@ -514,6 +550,8 @@ static int eval_code(const char *code) {
             Rf_PrintValue(value);
             Rf_unprotect(1);
         }
+
+        run_after_top_level_hook();
 
         Rf_unprotect(2);
     }

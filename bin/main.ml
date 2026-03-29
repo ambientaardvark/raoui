@@ -92,9 +92,11 @@ let rec await_dim_change ~current_w ~current_h =
   else (w, h)
 
 let history = lazy (History.init paths.history_file)
+let user_options = User_options.read paths.options_file
+let terminal_capabilities = Terminal_capabilities.detect ()
 
 let initial_theme () =
-  match User_options.read_theme_name paths.options_file with
+  match user_options.theme_name with
   | Some name -> Theme.of_name name
   | None -> Theme.tokyo_night
 
@@ -107,9 +109,23 @@ let make_init () : Frontend_types.model =
     | Some "vscode" -> true
     | _ -> false
   in
+  let plot_startup_mode =
+    Plot_policy.resolve ~running_in_ide
+      ~terminal_caps:terminal_capabilities
+      ~plot_mode:user_options.plot_mode
+  in
   Logs.info (fun m ->
-      m "initial terminal state: row=%d width=%d height=%d ide=%b"
-        row term_width term_height running_in_ide);
+      m "initial terminal state: row=%d width=%d height=%d ide=%b image_protocol=%s plot_startup=%s"
+        row term_width term_height running_in_ide
+        (match terminal_capabilities.image_protocol with
+         | Terminal_capabilities.Kitty -> "kitty"
+         | Terminal_capabilities.ITerm -> "iterm"
+         | Terminal_capabilities.No_image -> "none")
+        (match plot_startup_mode with
+         | Plot_policy.Use_ide -> "ide"
+         | Plot_policy.Use_httpgd -> "httpgd"
+         | Plot_policy.Use_raoui_png -> "png"
+         | Plot_policy.Use_none -> "off"));
   let clamped = Frontend_types.clamp_prompt_top term_height row in
   let scroll_needed = row - clamped in
   if scroll_needed > 0 then begin
@@ -326,6 +342,11 @@ let run env backend ~orig_termios =
 
   let init_model = make_init () in
   let init_width = init_model.term_width in
+  let startup_mode =
+    Plot_policy.resolve ~running_in_ide:init_model.running_in_ide
+      ~terminal_caps:terminal_capabilities
+      ~plot_mode:user_options.plot_mode
+  in
   let startup_file =
     let dir = Filename.dirname Sys.executable_name in
     let bundled = Filename.concat dir "startup.R" in
@@ -341,6 +362,12 @@ let run env backend ~orig_termios =
 
   Ffi_backend.background_submit backend
     (Printf.sprintf "source('%s');options(width=%d)" startup_file init_width);
+  (match Plot_policy.startup_command startup_mode
+           ~renderer:user_options.plot_renderer with
+   | Some command ->
+       Logs.info (fun m -> m "plot startup command: %s" command);
+       Ffi_backend.background_submit backend command
+   | None -> ());
 
   let model_after_cached =
     List.fold_left
