@@ -480,6 +480,7 @@ let () =
         print_endline "";
         restore_mode orig;
         if Lazy.is_val history then History.close (Lazy.force history);
+        Paths.cleanup_stale_plot_sessions paths;
         Ffi_backend.deinit backend)
   with exn ->
     App_log.log_exception ~context:"fatal toplevel exception" exn;

@@ -317,6 +317,34 @@ let test_plot_policy_explicit_httpgd () =
   Alcotest.(check bool) "explicit httpgd" true
     (mode = Plot_policy.Use_httpgd)
 
+let test_paths_plot_session_dir_name_roundtrip () =
+  let name = Paths.plot_session_dir_name ~pid:1234 ~started_at:1_700_000_000. in
+  match Paths.parse_plot_session_dir_name name with
+  | Some (pid, started_at) ->
+      Alcotest.(check int) "pid parsed" 1234 pid;
+      Alcotest.(check bool)
+        "started_at parsed" true
+        (abs_float (started_at -. 1_700_000_000.) < 0.5)
+  | None -> Alcotest.fail "expected parseable plot session dir name"
+
+let test_paths_should_not_remove_live_pid () =
+  let now = Unix.gettimeofday () in
+  let started_at = now -. (72. *. 60. *. 60.) in
+  Alcotest.(check bool)
+    "live pid is preserved even when old" false
+    (Paths.should_remove_plot_session ~now ~pid:(Unix.getpid ()) ~started_at)
+
+let test_paths_should_remove_dead_old_pid () =
+  match Unix.fork () with
+  | 0 -> exit 0
+  | child_pid ->
+      ignore (Unix.waitpid [] child_pid);
+      let now = Unix.gettimeofday () in
+      let started_at = now -. (72. *. 60. *. 60.) in
+      Alcotest.(check bool)
+        "dead stale pid is removed" true
+        (Paths.should_remove_plot_session ~now ~pid:child_pid ~started_at)
+
 let pp_span fmt (style, text) =
   Format.fprintf fmt "(%s,%S)" (style_to_string style) text
 
@@ -2354,6 +2382,15 @@ let () =
             test_plot_policy_auto_without_inline_support;
           test_case "Explicit png" `Quick test_plot_policy_explicit_png;
           test_case "Explicit httpgd" `Quick test_plot_policy_explicit_httpgd;
+        ] );
+      ( "paths",
+        [
+          test_case "Plot session dir name roundtrip" `Quick
+            test_paths_plot_session_dir_name_roundtrip;
+          test_case "Live pid is preserved" `Quick
+            test_paths_should_not_remove_live_pid;
+          test_case "Dead old pid is removed" `Quick
+            test_paths_should_remove_dead_old_pid;
         ] );
       ( "scrolling",
         [

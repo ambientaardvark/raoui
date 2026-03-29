@@ -25,6 +25,10 @@ With default fallbacks, that becomes:
 - `~/.local/state/raoui/raoui.log`
 - `~/.cache/raoui/plots/`
 
+Plot cache entries live in per-session directories under `plots/`, named with
+the Raoui process pid and startup time. On normal shutdown, Raoui removes plot
+session directories older than 48 hours when their pid is no longer active.
+
 ## Config File
 
 Raoui reads `config.toml` on startup. Unknown or invalid values fall back to
