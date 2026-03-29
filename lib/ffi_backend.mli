@@ -34,3 +34,6 @@ val cancel : t -> unit
 val request_completions : t -> string -> cursor_pos:int -> unit
 val restart : t -> unit
 val deinit : t -> unit
+
+(** Exposed for testing. *)
+val parse_image_payload : string -> image option

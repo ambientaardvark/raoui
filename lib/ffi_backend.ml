@@ -126,22 +126,17 @@ let background_submit t code =
     Queue.push (`Background code) t.pending
   end
 
-let int_opt_of_string s =
-  match int_of_string_opt s with
-  | Some n -> Some n
-  | None -> None
-
 let parse_image_payload payload =
-  let from_pairs lines =
-    let add_pair acc line =
-      match String.split_on_char '=' line with
-      | [ key; value ] -> (String.trim key, String.trim value) :: acc
-      | _ -> acc
-    in
-    List.fold_left add_pair [] lines
+  let split_first_eq line =
+    match String.index_opt line '=' with
+    | None -> None
+    | Some i ->
+        let key = String.trim (String.sub line 0 i) in
+        let value = String.trim (String.sub line (i + 1) (String.length line - i - 1)) in
+        Some (key, value)
   in
-  let assoc_opt key pairs =
-    List.assoc_opt key pairs
+  let from_pairs lines =
+    List.filter_map split_first_eq lines
   in
   let lines = String.split_on_char '\n' payload |> List.filter (fun s -> s <> "") in
   match lines with
@@ -150,16 +145,15 @@ let parse_image_payload payload =
       Some { path; mime_type = None; width_px = None; height_px = None }
   | _ ->
       let pairs = from_pairs lines in
-      let path = assoc_opt "path" pairs in
       Option.map
         (fun path ->
           {
             path;
-            mime_type = assoc_opt "mime" pairs;
-            width_px = Option.bind (assoc_opt "width" pairs) int_opt_of_string;
-            height_px = Option.bind (assoc_opt "height" pairs) int_opt_of_string;
+            mime_type = List.assoc_opt "mime" pairs;
+            width_px = Option.bind (List.assoc_opt "width" pairs) int_of_string_opt;
+            height_px = Option.bind (List.assoc_opt "height" pairs) int_of_string_opt;
           })
-        path
+        (List.assoc_opt "path" pairs)
 
 let map_kind kind payload =
   match kind with

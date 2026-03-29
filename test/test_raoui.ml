@@ -707,6 +707,44 @@ let test_process_response_image () =
     "awaiting_response stays true after Image" true
     new_model.awaiting_response
 
+let test_parse_image_empty () =
+  Alcotest.(check bool) "empty payload" true
+    (Ffi_backend.parse_image_payload "" = None)
+
+let test_parse_image_path_only () =
+  let result = Ffi_backend.parse_image_payload "/tmp/plot.png" in
+  match result with
+  | Some img ->
+      Alcotest.(check string) "path" "/tmp/plot.png" img.path;
+      Alcotest.(check (option string)) "no mime" None img.mime_type;
+      Alcotest.(check (option int)) "no width" None img.width_px;
+      Alcotest.(check (option int)) "no height" None img.height_px
+  | None -> Alcotest.fail "expected Some image"
+
+let test_parse_image_full_payload () =
+  let payload = "path = /tmp/plot.png\nmime = image/png\nwidth = 800\nheight = 600" in
+  let result = Ffi_backend.parse_image_payload payload in
+  match result with
+  | Some img ->
+      Alcotest.(check string) "path" "/tmp/plot.png" img.path;
+      Alcotest.(check (option string)) "mime" (Some "image/png") img.mime_type;
+      Alcotest.(check (option int)) "width" (Some 800) img.width_px;
+      Alcotest.(check (option int)) "height" (Some 600) img.height_px
+  | None -> Alcotest.fail "expected Some image"
+
+let test_parse_image_missing_path () =
+  let payload = "mime = image/png\nwidth = 800" in
+  Alcotest.(check bool) "no path key" true
+    (Ffi_backend.parse_image_payload payload = None)
+
+let test_parse_image_value_with_equals () =
+  let payload = "path = /tmp/a=b.png\nmime = image/png" in
+  let result = Ffi_backend.parse_image_payload payload in
+  match result with
+  | Some img ->
+      Alcotest.(check string) "path with =" "/tmp/a=b.png" img.path
+  | None -> Alcotest.fail "expected Some image"
+
 let test_scroll_when_cursor_below_screen () =
   let width = 10 in
   (* term_height = 10, but prompt starts at row 15 (below screen) *)
@@ -2257,6 +2295,11 @@ let () =
           test_case "Internal_error response" `Quick
             test_process_response_internal_error;
           test_case "Image response" `Quick test_process_response_image;
+          test_case "Parse image: empty" `Quick test_parse_image_empty;
+          test_case "Parse image: path only" `Quick test_parse_image_path_only;
+          test_case "Parse image: full payload" `Quick test_parse_image_full_payload;
+          test_case "Parse image: missing path" `Quick test_parse_image_missing_path;
+          test_case "Parse image: value with =" `Quick test_parse_image_value_with_equals;
           test_case "R_error followed by Done" `Quick
             test_r_error_followed_by_done;
         ] );
