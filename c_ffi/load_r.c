@@ -207,6 +207,8 @@ static int  (*R_registerRoutines_fn)(void *, const void *,
 /* Cached R symbol for withVisible */
 static SEXP withVisible_sym = NULL;
 static SEXP raoui_after_top_level_sym = NULL;
+static SEXP (*Rf_findVar)(SEXP, SEXP) = NULL;
+static SEXP *R_UnboundValue_ptr = NULL;
 
 /* ---- Toplevel execution wrappers ---- */
 
@@ -245,6 +247,10 @@ static void safe_eval(void *data) {
 }
 
 static void run_after_top_level_hook(void) {
+    /* Only call after the startup script has defined the function */
+    SEXP fn = Rf_findVar(raoui_after_top_level_sym, *R_GlobalEnv_ptr);
+    if (fn == *R_UnboundValue_ptr) return;
+
     int hook_error = 0;
     SEXP hook_call = Rf_protect(Rf_lang1(raoui_after_top_level_sym));
     eval_data_t hook_eval = { hook_call, *R_GlobalEnv_ptr, &hook_error, NULL };
@@ -395,12 +401,14 @@ static int load_symbols(void) {
     LOAD_SYM(Rf_asChar, "Rf_asChar");
     LOAD_SYM(R_CHAR_fn, "R_CHAR");
 
-    /* Variable binding */
+    /* Variable binding / lookup */
     LOAD_SYM(Rf_defineVar, "Rf_defineVar");
+    LOAD_SYM(Rf_findVar, "Rf_findVar");
 
     /* Global variables */
     LOAD_SYM(R_GlobalEnv_ptr, "R_GlobalEnv");
     LOAD_SYM(R_NilValue_ptr, "R_NilValue");
+    LOAD_SYM(R_UnboundValue_ptr, "R_UnboundValue");
     LOAD_SYM(R_SignalHandlers_ptr, "R_SignalHandlers");
     LOAD_SYM(R_interrupts_pending_ptr, "R_interrupts_pending");
 

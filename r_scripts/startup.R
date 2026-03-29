@@ -119,12 +119,12 @@ local({
         recorded <- tryCatch(recordPlot(), error = function(e) NULL)
         if (is.null(recorded)) {
             plot_log("recordPlot returned NULL")
-            return(invisible(FALSE))
+            return(invisible(NULL))
         }
         snapshot <- serialize(recorded, NULL)
         if (!is.null(meta$last_snapshot) && identical(meta$last_snapshot, snapshot)) {
             plot_log("snapshot unchanged for live_path=", meta$path)
-            return(invisible(FALSE))
+            return(invisible(NULL))
         }
         path <- next_plot_path()
         plot_log("snapshot changed, rendering artifact path=", path)
@@ -142,7 +142,7 @@ local({
         )
         if (!file.exists(path)) {
             plot_log("artifact missing after replay path=", path)
-            return(invisible(FALSE))
+            return(invisible(NULL))
         }
         meta$last_snapshot <- snapshot
         notify_plot_ready(path, meta$width, meta$height)
@@ -158,7 +158,7 @@ local({
         meta <- raoui_plot_registry[[key]]
         plot_log("checking plot update for dev=", key)
         updated <- snapshot_plot(meta)
-        if (!identical(updated, FALSE)) {
+        if (!is.null(updated)) {
             meta <- updated
             raoui_plot_registry[[key]] <- meta
             return(invisible(TRUE))
@@ -175,6 +175,7 @@ local({
         emitted
     }
 
+    # Wraps dev.off in .GlobalEnv; grDevices::dev.off() bypasses this wrapper.
     ensure_dev_off_wrapper <- function() {
         if (raoui_dev_off_wrapped) {
             return(invisible(NULL))

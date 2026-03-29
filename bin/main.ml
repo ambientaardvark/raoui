@@ -109,23 +109,13 @@ let make_init () : Frontend_types.model =
     | Some "vscode" -> true
     | _ -> false
   in
-  let plot_startup_mode =
-    Plot_policy.resolve ~running_in_ide
-      ~terminal_caps:terminal_capabilities
-      ~plot_mode:user_options.plot_mode
-  in
   Logs.info (fun m ->
-      m "initial terminal state: row=%d width=%d height=%d ide=%b image_protocol=%s plot_startup=%s"
+      m "initial terminal state: row=%d width=%d height=%d ide=%b image_protocol=%s"
         row term_width term_height running_in_ide
         (match terminal_capabilities.image_protocol with
          | Terminal_capabilities.Kitty -> "kitty"
          | Terminal_capabilities.ITerm -> "iterm"
-         | Terminal_capabilities.No_image -> "none")
-        (match plot_startup_mode with
-         | Plot_policy.Use_ide -> "ide"
-         | Plot_policy.Use_httpgd -> "httpgd"
-         | Plot_policy.Use_raoui_png -> "png"
-         | Plot_policy.Use_none -> "off"));
+         | Terminal_capabilities.No_image -> "none"));
   let clamped = Frontend_types.clamp_prompt_top term_height row in
   let scroll_needed = row - clamped in
   if scroll_needed > 0 then begin

@@ -97,9 +97,10 @@ let read path =
         inline_image_max_width_cols;
         inline_image_max_height_rows;
       }
-    with exn ->
+    with Otoml.Parse_error (pos, msg) ->
       Logs.warn (fun m ->
-          m "failed to parse %s: %s" path (Printexc.to_string exn));
+          m "failed to parse %s: %s" path
+            (Otoml.Parser.format_parse_error pos msg));
       default
 
 let read_theme_name path = (read path).theme_name
