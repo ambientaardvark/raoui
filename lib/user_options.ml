@@ -13,12 +13,16 @@ type t = {
   theme_name : string option;
   plot_mode : plot_mode;
   plot_renderer : plot_renderer;
+  inline_image_max_width_cols : int;
+  inline_image_max_height_rows : int;
 }
 
 let default = {
   theme_name = None;
   plot_mode = Auto;
   plot_renderer = Gr_devices;
+  inline_image_max_width_cols = 100;
+  inline_image_max_height_rows = 18;
 }
 
 let parse_plot_mode = function
@@ -36,6 +40,18 @@ let parse_plot_renderer = function
 
 let read_string toml key =
   Otoml.find_opt toml Otoml.get_string [ key ]
+
+let read_int toml key =
+  Otoml.find_opt toml Otoml.get_integer [ key ]
+
+let read_positive_int ~path toml key ~default_value =
+  match read_int toml key with
+  | Some value when value > 0 -> value
+  | Some value ->
+      Logs.warn (fun m ->
+          m "invalid %s=%d in %s; using %d" key value path default_value);
+      default_value
+  | None -> default_value
 
 let read path =
   if not (Sys.file_exists path) then default
@@ -66,7 +82,21 @@ let read path =
                 default.plot_renderer)
         | None -> default.plot_renderer
       in
-      { theme_name; plot_mode; plot_renderer }
+      let inline_image_max_width_cols =
+        read_positive_int ~path toml "inline_image_max_width_cols"
+          ~default_value:default.inline_image_max_width_cols
+      in
+      let inline_image_max_height_rows =
+        read_positive_int ~path toml "inline_image_max_height_rows"
+          ~default_value:default.inline_image_max_height_rows
+      in
+      {
+        theme_name;
+        plot_mode;
+        plot_renderer;
+        inline_image_max_width_cols;
+        inline_image_max_height_rows;
+      }
     with exn ->
       Logs.warn (fun m ->
           m "failed to parse %s: %s" path (Printexc.to_string exn));

@@ -135,6 +135,14 @@ let with_temp_file contents f =
       f path)
     ~finally:(fun () -> if Sys.file_exists path then Sys.remove path)
 
+let with_temp_binary_file contents f =
+  let path = Filename.temp_file "raoui-binary" ".bin" in
+  Fun.protect
+    (fun () ->
+      Out_channel.with_open_bin path (fun oc -> output_string oc contents);
+      f path)
+    ~finally:(fun () -> if Sys.file_exists path then Sys.remove path)
+
 let test_user_options_reads_theme_name () =
   with_temp_file "theme = \"default\"\n" (fun path ->
       Alcotest.(check (option string))
@@ -143,7 +151,7 @@ let test_user_options_reads_theme_name () =
 
 let test_user_options_reads_plot_settings () =
   with_temp_file
-    "theme = \"tokyo_night\"\nplot_mode = \"png\"\nplot_renderer = \"ragg\"\n"
+    "theme = \"tokyo_night\"\nplot_mode = \"png\"\nplot_renderer = \"ragg\"\ninline_image_max_width_cols = 72\ninline_image_max_height_rows = 14\n"
     (fun path ->
       let config = User_options.read path in
       Alcotest.(check (option string))
@@ -152,7 +160,11 @@ let test_user_options_reads_plot_settings () =
         "reads plot_mode" true (config.plot_mode = User_options.Png);
       Alcotest.(check bool)
         "reads plot_renderer" true
-        (config.plot_renderer = User_options.Ragg))
+        (config.plot_renderer = User_options.Ragg);
+      Alcotest.(check int)
+        "reads image width cap" 72 config.inline_image_max_width_cols;
+      Alcotest.(check int)
+        "reads image height cap" 14 config.inline_image_max_height_rows)
 
 let test_user_options_returns_defaults_when_missing () =
   with_temp_file "other = 42\n" (fun path ->
@@ -163,7 +175,61 @@ let test_user_options_returns_defaults_when_missing () =
         "default plot mode" true (config.plot_mode = User_options.Auto);
       Alcotest.(check bool)
         "default plot renderer" true
-        (config.plot_renderer = User_options.Gr_devices))
+        (config.plot_renderer = User_options.Gr_devices);
+      Alcotest.(check int)
+        "default image width cap" 100 config.inline_image_max_width_cols;
+      Alcotest.(check int)
+        "default image height cap" 18 config.inline_image_max_height_rows)
+
+let test_terminal_image_renders_kitty_escape () =
+  with_temp_binary_file "PNG" (fun path ->
+      let image : Ffi_backend.image =
+        {
+          path;
+          mime_type = Some "image/png";
+          width_px = Some 800;
+          height_px = Some 600;
+        }
+      in
+      match
+        Terminal_image.render
+          ~terminal_capabilities:
+            { Terminal_capabilities.image_protocol = Terminal_capabilities.Kitty }
+          ~config:User_options.default
+          ~term_width:120 ~image
+      with
+      | None -> Alcotest.fail "expected kitty renderer output"
+      | Some rendered ->
+          Alcotest.(check bool)
+            "starts with kitty image escape" true
+            (string_contains rendered.output "\x1b_Ga=T,f=100,t=d,c=");
+          Alcotest.(check bool)
+            "ends with newline" true
+            (String.get rendered.output (String.length rendered.output - 1) = '\n');
+          Alcotest.(check bool) "reports positive rows" true (rendered.rows > 0))
+
+let test_terminal_image_falls_back_without_protocol () =
+  with_temp_binary_file "PNG" (fun path ->
+      let image : Ffi_backend.image =
+        {
+          path;
+          mime_type = Some "image/png";
+          width_px = Some 800;
+          height_px = Some 600;
+        }
+      in
+      let rendered =
+        Terminal_image.render
+          ~terminal_capabilities:
+            {
+              Terminal_capabilities.image_protocol =
+                Terminal_capabilities.No_image;
+            }
+          ~config:User_options.default
+          ~term_width:120 ~image
+      in
+      Alcotest.(check bool) "unsupported protocol falls back" true
+        (rendered = None))
 
 let test_terminal_capabilities_detect_kitty () =
   let getenv = function
@@ -2217,6 +2283,13 @@ let () =
             test_terminal_capabilities_detect_ghostty_term_program;
           test_case "Detects ghostty TERM" `Quick
             test_terminal_capabilities_detect_ghostty_term;
+        ] );
+      ( "terminal_image",
+        [
+          test_case "Renders kitty escape" `Quick
+            test_terminal_image_renders_kitty_escape;
+          test_case "Falls back without protocol" `Quick
+            test_terminal_image_falls_back_without_protocol;
         ] );
       ( "plot_policy",
         [

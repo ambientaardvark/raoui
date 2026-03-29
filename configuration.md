@@ -4,7 +4,8 @@ Raoui keeps configuration, state, and cache in separate directories.
 
 ## Paths
 
-Raoui uses XDG-style locations when the corresponding environment variables are set, and otherwise falls back to paths under `HOME`.
+Raoui uses XDG-style locations when the corresponding environment variables are
+set, and otherwise falls back to paths under `HOME`.
 
 - Config directory: `$XDG_CONFIG_HOME/raoui` or `~/.config/raoui`
 - State directory: `$XDG_STATE_HOME/raoui` or `~/.local/state/raoui`
@@ -12,42 +13,58 @@ Raoui uses XDG-style locations when the corresponding environment variables are 
 
 Default files and subdirectories:
 
-- User options: `options.R`
+- User config: `config.toml`
 - History: `history`
 - Log file: `raoui.log`
 - Plot artifacts: `plots/`
 
 With default fallbacks, that becomes:
 
-- `~/.config/raoui/options.R`
+- `~/.config/raoui/config.toml`
 - `~/.local/state/raoui/history`
 - `~/.local/state/raoui/raoui.log`
 - `~/.cache/raoui/plots/`
 
-## User Options
+## Config File
 
-If `options.R` exists, Raoui sources it during startup before applying runtime policy such as graphics device selection.
+Raoui reads `config.toml` on startup. Unknown or invalid values fall back to
+built-in defaults.
 
-The supported contract is to set Raoui options with `options(...)`, for example:
+Example:
 
-```r
-options(
-  raoui.theme = "tokyo_night",
-  raoui.plot_mode = "auto",
-  raoui.plot_open = "auto",
-  raoui.plot_keep_files = FALSE
-)
+```toml
+theme = "tokyo_night"
+plot_mode = "auto"
+plot_renderer = "gr_devices"
+inline_image_max_width_cols = 100
+inline_image_max_height_rows = 18
 ```
 
-Built-in themes currently include:
+Supported keys:
 
-- `default`
-- `tokyo_night`
+- `theme`: `default` or `tokyo_night`
+- `plot_mode`: `auto`, `png`, `httpgd`, `ide`, or `off`
+- `plot_renderer`: `gr_devices` or `ragg`
+- `inline_image_max_width_cols`: positive integer column cap for inline images
+- `inline_image_max_height_rows`: positive integer row cap for inline images
 
-`options.R` is the primary user-facing configuration surface. It is intended for preferences, not for replacing the bundled startup logic.
+`plot_mode = "auto"` currently means:
 
-## Precedence
+- IDE session: prefer IDE/httpgd behavior
+- Kitty/Ghostty terminal: prefer Raoui PNG transport with inline image output
+- Other terminals: prefer `httpgd`, falling back to PNG transport when needed
 
-Raoui currently resolves filesystem locations from XDG environment variables and built-in defaults, then exports the resolved paths into the R session through environment variables such as `RAOUI_OPTIONS_FILE`, `RAOUI_HISTORY_FILE`, `RAOUI_LOG_FILE`, and `RAOUI_PLOTS_DIR`.
+## Runtime Paths
 
-Runtime preferences are expected to come from user `options.R` plus built-in defaults. CLI overrides may be added later, but they are not part of the current interface.
+Raoui exports the resolved runtime paths into the R session:
+
+- `RAOUI_CONFIG_DIR`
+- `RAOUI_STATE_DIR`
+- `RAOUI_CACHE_DIR`
+- `RAOUI_OPTIONS_FILE`
+- `RAOUI_HISTORY_FILE`
+- `RAOUI_LOG_FILE`
+- `RAOUI_PLOTS_DIR`
+
+These are implementation details for the bundled startup helpers, not the
+primary user configuration interface.

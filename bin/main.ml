@@ -221,11 +221,26 @@ let print_repl_output model =
       }
   | Some (Output_image image) ->
       let row, col = model.repl_cursor in
-      print_string (Term.cursor_to row col);
-      print_string Term.clear_to_eos;
-      print_string (Term.render_spans model.theme (image_output_spans image));
+      let rendered_image =
+        Terminal_image.render ~terminal_capabilities ~config:user_options
+          ~term_width:model.term_width ~image
+      in
+      let output =
+        match rendered_image with
+        | Some rendered ->
+            let prefix = if col = 1 then "\n" else "\n\n" in
+            prefix ^ rendered.Terminal_image.output ^ "\n"
+        | None ->
+            Term.render_spans model.theme (image_output_spans image)
+      in
+      let print_output = Term.cursor_to row col ^ Term.clear_to_eos ^ output in
+      print_string print_output;
       flush stdout;
-      let new_row, new_col = get_cursor_position () in
+      let new_row, new_col =
+        match rendered_image with
+        | Some _ -> get_cursor_position ()
+        | None -> get_cursor_position ()
+      in
       let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
       {
         model with
