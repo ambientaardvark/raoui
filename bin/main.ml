@@ -195,30 +195,21 @@ let print_repl_output model =
         prompt_top_row = clamped;
         prompt_box_height = Frontend_types.min_prompt_height;
       }
-  | Some (Output_text spans) ->
-      let row, col = model.repl_cursor in
-      print_string (Term.cursor_to row col);
-      print_string Term.clear_to_eos;
-      print_string (Term.render_spans model.theme spans);
-      flush stdout;
-      let new_row, new_col = get_cursor_position () in
-      let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
-      {
-        model with
-        repl_output = None;
-        repl_cursor = (new_row, new_col);
-        prompt_top_row = max model.prompt_top_row next_prompt_row;
-      }
-  | Some (Output_image image) ->
+  | Some (Output_text _ | Output_image _ as output) ->
       let row, col = model.repl_cursor in
       let spans =
-        match Terminal_image.render ~terminal_capabilities ~config:user_options
-                ~term_width:model.term_width ~image with
-        | Some rendered ->
-            let prefix = if col = 1 then "\n" else "\n\n" in
-            [ (`Raw, prefix ^ rendered.Terminal_image.output ^ "\n") ]
-        | None ->
-            image_output_spans image
+        match output with
+        | Output_text spans -> spans
+        | Output_image image -> (
+            match Terminal_image.render ~terminal_capabilities ~config:user_options
+                    ~term_width:model.term_width ~image with
+            | Some rendered ->
+                let prefix = if col = 1 then "\n" else "\n\n" in
+                (* Raw adds SGR resets around the content, which is harmless for
+                   kitty APC sequences but would clobber SGR from other renderers. *)
+                [ (`Raw, prefix ^ rendered.Terminal_image.output ^ "\n") ]
+            | None ->
+                image_output_spans image)
       in
       print_string (Term.cursor_to row col);
       print_string Term.clear_to_eos;
