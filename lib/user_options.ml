@@ -97,11 +97,15 @@ let read path =
         inline_image_max_width_cols;
         inline_image_max_height_rows;
       }
-    with Otoml.Parse_error (pos, msg) ->
-      Logs.warn (fun m ->
-          m "failed to parse %s: %s" path
-            (Otoml.Parser.format_parse_error pos msg));
-      default
+    with
+    | Otoml.Parse_error (pos, msg) ->
+        Logs.warn (fun m ->
+            m "failed to parse %s: %s" path
+              (Otoml.Parser.format_parse_error pos msg));
+        default
+    | Otoml.Duplicate_key msg ->
+        Logs.warn (fun m -> m "duplicate key in %s: %s" path msg);
+        default
 
 let read_theme_name path = (read path).theme_name
 

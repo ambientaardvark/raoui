@@ -10,6 +10,8 @@ val resolve :
   plot_mode:User_options.plot_mode ->
   startup_mode
 
+val string_of_startup_mode : startup_mode -> string
+
 val startup_command :
   startup_mode ->
   renderer:User_options.plot_renderer ->

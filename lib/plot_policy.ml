@@ -17,6 +17,12 @@ let resolve ~running_in_ide ~terminal_caps ~plot_mode =
       else
         Use_httpgd
 
+let string_of_startup_mode = function
+  | Use_ide -> "ide"
+  | Use_httpgd -> "httpgd"
+  | Use_raoui_png -> "png"
+  | Use_none -> "off"
+
 let startup_command startup_mode ~renderer =
   let renderer = User_options.string_of_plot_renderer renderer in
   match startup_mode with

@@ -337,6 +337,8 @@ let run env backend ~orig_termios =
       ~terminal_caps:terminal_capabilities
       ~plot_mode:user_options.plot_mode
   in
+  Logs.info (fun m ->
+      m "plot startup mode: %s" (Plot_policy.string_of_startup_mode startup_mode));
   let startup_file =
     let dir = Filename.dirname Sys.executable_name in
     let bundled = Filename.concat dir "startup.R" in
