@@ -314,18 +314,20 @@ static SEXP raoui_exit_passthrough(void) {
     return *R_NilValue_ptr;
 }
 
-static SEXP raoui_emit_image(SEXP path, SEXP width, SEXP height, SEXP mime) {
-    const char *path_str = R_CHAR_fn(Rf_asChar(path));
+static SEXP raoui_emit_image(SEXP source_path, SEXP preview_path, SEXP width, SEXP height, SEXP mime) {
+    const char *source_path_str = R_CHAR_fn(Rf_asChar(source_path));
+    const char *preview_path_str = R_CHAR_fn(Rf_asChar(preview_path));
     const char *width_str = R_CHAR_fn(Rf_asChar(width));
     const char *height_str = R_CHAR_fn(Rf_asChar(height));
     const char *mime_str = R_CHAR_fn(Rf_asChar(mime));
-    if (!path_str || path_str[0] == '\0') {
+    if (!source_path_str || source_path_str[0] == '\0' ||
+        !preview_path_str || preview_path_str[0] == '\0') {
         return *R_NilValue_ptr;
     }
-    char payload[4096];
+    char payload[8192];
     int written = snprintf(payload, sizeof(payload),
-        "path=%s\nmime=%s\nwidth=%s\nheight=%s\n",
-        path_str, mime_str, width_str, height_str);
+        "source_path=%s\npreview_path=%s\nmime=%s\nwidth=%s\nheight=%s\n",
+        source_path_str, preview_path_str, mime_str, width_str, height_str);
     if (written < 0) {
         return *R_NilValue_ptr;
     }
@@ -490,7 +492,7 @@ static int init_r(const char *r_home) {
         {"raoui_exit_passthrough",
          (void *)raoui_exit_passthrough, 0},
         {"raoui_emit_image",
-         (void *)raoui_emit_image, 4},
+         (void *)raoui_emit_image, 5},
         {NULL, NULL, 0}
     };
     R_registerRoutines_fn(dll, NULL, callMethods, NULL, NULL);

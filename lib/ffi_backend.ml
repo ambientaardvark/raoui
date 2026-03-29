@@ -1,5 +1,6 @@
 type image = {
-  path : string;
+  source_path : string;
+  preview_path : string;
   mime_type : string option;
   width_px : int option;
   height_px : int option;
@@ -142,18 +143,37 @@ let parse_image_payload payload =
   match lines with
   | [] -> None
   | [ path ] ->
-      Some { path; mime_type = None; width_px = None; height_px = None }
+      Some
+        {
+          source_path = path;
+          preview_path = path;
+          mime_type = None;
+          width_px = None;
+          height_px = None;
+        }
   | _ ->
       let pairs = from_pairs lines in
-      Option.map
-        (fun path ->
+      let source_path =
+        match List.assoc_opt "source_path" pairs with
+        | Some path -> Some path
+        | None -> List.assoc_opt "path" pairs
+      in
+      let preview_path =
+        match List.assoc_opt "preview_path" pairs with
+        | Some path -> Some path
+        | None -> List.assoc_opt "path" pairs
+      in
+      Option.bind source_path (fun source_path ->
+        Option.map
+          (fun preview_path ->
           {
-            path;
+            source_path;
+            preview_path;
             mime_type = List.assoc_opt "mime" pairs;
             width_px = Option.bind (List.assoc_opt "width" pairs) int_of_string_opt;
             height_px = Option.bind (List.assoc_opt "height" pairs) int_of_string_opt;
           })
-        (List.assoc_opt "path" pairs)
+          preview_path)
 
 let map_kind kind payload =
   match kind with

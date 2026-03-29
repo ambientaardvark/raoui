@@ -82,7 +82,7 @@ let render_kitty ~config ~term_width ~image =
         let rows =
           min rows config.User_options.inline_image_max_height_rows
         in
-        let encoded = read_file image.path |> base64_encode in
+        let encoded = read_file image.preview_path |> base64_encode in
         let encoded_chunk_size = 4096 in
         let total_len = String.length encoded in
         let buf = Buffer.create (total_len + 256) in

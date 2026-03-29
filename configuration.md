@@ -36,8 +36,8 @@ Example:
 theme = "tokyo_night"
 plot_mode = "auto"
 plot_renderer = "gr_devices"
-inline_image_max_width_cols = 100
-inline_image_max_height_rows = 18
+inline_image_max_width_cols = 150
+inline_image_max_height_rows = 30
 ```
 
 Supported keys:
@@ -46,13 +46,22 @@ Supported keys:
 - `plot_mode`: `auto`, `png`, `httpgd`, `ide`, or `off`
 - `plot_renderer`: `gr_devices` or `ragg`
 - `inline_image_max_width_cols`: positive integer column cap for inline images
+  Default: `150`
 - `inline_image_max_height_rows`: positive integer row cap for inline images
+  Default: `30`
 
 `plot_mode = "auto"` currently means:
 
 - IDE session: prefer IDE/httpgd behavior
-- Kitty/Ghostty terminal: prefer Raoui PNG transport with inline image output
-- Other terminals: prefer `httpgd`, falling back to PNG transport when needed
+- Kitty/Ghostty terminal: prefer Raoui's SVG-first transport with inline image
+  output
+- Other terminals: prefer `httpgd`, falling back to Raoui's SVG/PNG transport
+  when needed
+
+When the SVG transport is available, Raoui uses a transient SVG internally and
+keeps a durable high-resolution PNG artifact for external opening. Inline
+terminal rendering uses a smaller preview PNG and prints a clickable `open
+plot` banner pointing at the durable PNG.
 
 ## Runtime Paths
 

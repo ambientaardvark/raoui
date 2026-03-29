@@ -177,15 +177,16 @@ let test_user_options_returns_defaults_when_missing () =
         "default plot renderer" true
         (config.plot_renderer = User_options.Gr_devices);
       Alcotest.(check int)
-        "default image width cap" 100 config.inline_image_max_width_cols;
+        "default image width cap" 150 config.inline_image_max_width_cols;
       Alcotest.(check int)
-        "default image height cap" 18 config.inline_image_max_height_rows)
+        "default image height cap" 30 config.inline_image_max_height_rows)
 
 let test_terminal_image_renders_kitty_escape () =
   with_temp_binary_file "PNG" (fun path ->
       let image : Ffi_backend.image =
         {
-          path;
+          source_path = path;
+          preview_path = path;
           mime_type = Some "image/png";
           width_px = Some 800;
           height_px = Some 600;
@@ -212,7 +213,8 @@ let test_terminal_image_falls_back_without_protocol () =
   with_temp_binary_file "PNG" (fun path ->
       let image : Ffi_backend.image =
         {
-          path;
+          source_path = path;
+          preview_path = path;
           mime_type = Some "image/png";
           width_px = Some 800;
           height_px = Some 600;
@@ -682,7 +684,8 @@ let test_process_response_image () =
   let width = 10 in
   let image =
     {
-      Ffi_backend.path = "/tmp/plot.png";
+      Ffi_backend.source_path = "/tmp/plot.svg";
+      preview_path = "/tmp/plot.png";
       mime_type = Some "image/png";
       width_px = Some 800;
       height_px = Some 600;
@@ -700,7 +703,8 @@ let test_process_response_image () =
 
   (match new_model.repl_output with
   | Some (Output_image out) ->
-      Alcotest.(check string) "path" image.path out.path;
+      Alcotest.(check string) "source path" image.source_path out.source_path;
+      Alcotest.(check string) "preview path" image.preview_path out.preview_path;
       Alcotest.(check (option string)) "mime" image.mime_type out.mime_type
   | _ -> Alcotest.fail "expected image output");
   Alcotest.(check bool)
@@ -715,18 +719,22 @@ let test_parse_image_path_only () =
   let result = Ffi_backend.parse_image_payload "/tmp/plot.png" in
   match result with
   | Some img ->
-      Alcotest.(check string) "path" "/tmp/plot.png" img.path;
+      Alcotest.(check string) "source path" "/tmp/plot.png" img.source_path;
+      Alcotest.(check string) "preview path" "/tmp/plot.png" img.preview_path;
       Alcotest.(check (option string)) "no mime" None img.mime_type;
       Alcotest.(check (option int)) "no width" None img.width_px;
       Alcotest.(check (option int)) "no height" None img.height_px
   | None -> Alcotest.fail "expected Some image"
 
 let test_parse_image_full_payload () =
-  let payload = "path = /tmp/plot.png\nmime = image/png\nwidth = 800\nheight = 600" in
+  let payload =
+    "source_path = /tmp/plot.svg\npreview_path = /tmp/plot.png\nmime = image/png\nwidth = 800\nheight = 600"
+  in
   let result = Ffi_backend.parse_image_payload payload in
   match result with
   | Some img ->
-      Alcotest.(check string) "path" "/tmp/plot.png" img.path;
+      Alcotest.(check string) "source path" "/tmp/plot.svg" img.source_path;
+      Alcotest.(check string) "preview path" "/tmp/plot.png" img.preview_path;
       Alcotest.(check (option string)) "mime" (Some "image/png") img.mime_type;
       Alcotest.(check (option int)) "width" (Some 800) img.width_px;
       Alcotest.(check (option int)) "height" (Some 600) img.height_px
@@ -738,11 +746,14 @@ let test_parse_image_missing_path () =
     (Ffi_backend.parse_image_payload payload = None)
 
 let test_parse_image_value_with_equals () =
-  let payload = "path = /tmp/a=b.png\nmime = image/png" in
+  let payload =
+    "source_path = /tmp/a=b.svg\npreview_path = /tmp/a=b.png\nmime = image/png"
+  in
   let result = Ffi_backend.parse_image_payload payload in
   match result with
   | Some img ->
-      Alcotest.(check string) "path with =" "/tmp/a=b.png" img.path
+      Alcotest.(check string) "source path with =" "/tmp/a=b.svg" img.source_path;
+      Alcotest.(check string) "preview path with =" "/tmp/a=b.png" img.preview_path
   | None -> Alcotest.fail "expected Some image"
 
 let test_scroll_when_cursor_below_screen () =

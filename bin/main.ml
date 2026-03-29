@@ -149,8 +149,40 @@ let make_init () : Frontend_types.model =
     mode = Frontend_types.Normal;
   }
 
+let supports_file_hyperlinks =
+  match terminal_capabilities.image_protocol with
+  | Terminal_capabilities.Kitty | Terminal_capabilities.ITerm -> true
+  | Terminal_capabilities.No_image -> false
+
+let percent_encode_path path =
+  let is_unreserved = function
+    | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9'
+    | '-' | '_' | '.' | '~' | '/' -> true
+    | _ -> false
+  in
+  let buf = Buffer.create (String.length path + 16) in
+  String.iter
+    (fun c ->
+      if is_unreserved c then Buffer.add_char buf c
+      else Buffer.add_string buf (Printf.sprintf "%%%02X" (Char.code c)))
+    path;
+  Buffer.contents buf
+
+let file_url path = "file://" ^ percent_encode_path path
+
+let plot_banner_spans path =
+  if supports_file_hyperlinks then
+    [
+      ( `Raw,
+        Printf.sprintf
+          "\x1b]8;;%s\x1b\\[click to open plot]\x1b]8;;\x1b\\\n"
+          (file_url path) );
+    ]
+  else
+    [ (`Accent, "[open plot] "); (`Plain, path); (`Comment, "\n") ]
+
 let image_output_spans (image : Ffi_backend.image) =
-  let basename = Filename.basename image.path in
+  let basename = Filename.basename image.source_path in
   let dims =
     match (image.width_px, image.height_px) with
     | Some w, Some h -> Printf.sprintf " (%dx%d)" w h
@@ -165,10 +197,8 @@ let image_output_spans (image : Ffi_backend.image) =
     (`Accent, "[image] ");
     (`Plain, basename);
     (`Comment, dims ^ mime ^ "\n");
-    (`Comment, "path: ");
-    (`Plain, image.path);
-    (`Comment, "\nopen externally for full review");
   ]
+  @ plot_banner_spans image.source_path
 
 (* NOTE: This clears from repl_cursor to end of screen before printing output,
    which erases any prompt the user typed while waiting. View then repaints.
@@ -197,17 +227,24 @@ let print_repl_output model =
       }
   | Some (Output_text _ | Output_image _ as output) ->
       let row, col = model.repl_cursor in
+      let rendered_image =
+        match output with
+        | Output_image image ->
+            Terminal_image.render ~terminal_capabilities ~config:user_options
+              ~term_width:model.term_width ~image
+        | Output_text _ -> None
+      in
       let spans =
         match output with
         | Output_text spans -> spans
         | Output_image image -> (
-            match Terminal_image.render ~terminal_capabilities ~config:user_options
-                    ~term_width:model.term_width ~image with
+            match rendered_image with
             | Some rendered ->
                 let prefix = if col = 1 then "\n" else "\n\n" in
                 (* Raw adds SGR resets around the content, which is harmless for
                    kitty APC sequences but would clobber SGR from other renderers. *)
-                [ (`Raw, prefix ^ rendered.Terminal_image.output ^ "\n") ]
+                [ (`Raw, prefix ^ rendered.Terminal_image.output) ]
+                @ plot_banner_spans image.source_path
             | None ->
                 image_output_spans image)
       in
@@ -215,6 +252,11 @@ let print_repl_output model =
       print_string Term.clear_to_eos;
       print_string (Term.render_spans model.theme spans);
       flush stdout;
+      (match output, rendered_image with
+       | Output_image image, Some _
+         when image.preview_path <> image.source_path ->
+           (try Sys.remove image.preview_path with _ -> ())
+       | _ -> ());
       let new_row, new_col = get_cursor_position () in
       let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
       {
@@ -403,7 +445,7 @@ let run env backend ~orig_termios =
         execute_effects backend effects;
         loop (make_init ())
     | [Repl_effect.Run_backslash_effect cmd] ->
-        let result_msg = run_backslash_effect ~orig_termios cmd in
+          let result_msg = run_backslash_effect ~orig_termios cmd in
         let effect_model, effect_effects = Update.update result_msg new_model in
         execute_effects backend effect_effects;
         loop (print_repl_output effect_model)

@@ -1,7 +1,8 @@
 type t
 
 type image = {
-  path : string;
+  source_path : string;
+  preview_path : string;
   mime_type : string option;
   width_px : int option;
   height_px : int option;

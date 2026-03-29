@@ -31,9 +31,13 @@ local({
   raoui_plot_registry <- new.env(parent = emptyenv())
   raoui_plot_dir <- Sys.getenv("RAOUI_PLOTS_DIR", tempdir())
   raoui_log_file <- Sys.getenv("RAOUI_LOG_FILE", "")
+  raoui_resvg <- unname(Sys.which("resvg"))
   raoui_dev_off_wrapped <- FALSE
   raoui_plot_callback_installed <- FALSE
   raoui_httpgd_opened <- FALSE
+  raoui_preview_width <- 600L
+  raoui_preview_height <- 450L
+  raoui_inspect_scale <- 3L
 
   plot_log <- function(...) {
     if (!nzchar(raoui_log_file)) {
@@ -50,24 +54,49 @@ local({
     dir.create(raoui_plot_dir, recursive = TRUE, showWarnings = FALSE)
   }
 
-  next_plot_path <- function() {
-    raoui_plot_counter <<- raoui_plot_counter + 1L
+  plot_png_path <- function(index) {
     file.path(
       raoui_plot_dir,
-      sprintf("plot-%06d.png", as.integer(raoui_plot_counter))
+      sprintf("plot-%06d.png", as.integer(index))
     )
   }
 
-  next_live_plot_path <- function() {
+  plot_preview_png_path <- function(index) {
     file.path(
       raoui_plot_dir,
-      sprintf(".live-%06d.png", as.integer(raoui_plot_counter + 1L))
+      sprintf("plot-%06d-preview.png", as.integer(index))
     )
   }
 
-  notify_plot_ready <- function(path, width, height) {
-    plot_log("emit image path=", path, " width=", width, " height=", height)
-    .Call("raoui_emit_image", path, as.character(width), as.character(height), "image/png")
+  next_plot_svg_path <- function(index = raoui_plot_counter) {
+    file.path(
+      raoui_plot_dir,
+      sprintf(".plot-%06d.svg", as.integer(index))
+    )
+  }
+
+  next_live_plot_path <- function(ext) {
+    file.path(
+      raoui_plot_dir,
+      sprintf(".live-%06d.%s", as.integer(raoui_plot_counter + 1L), ext)
+    )
+  }
+
+  notify_plot_ready <- function(source_path, preview_path, width, height) {
+    plot_log(
+      "emit image source=", source_path,
+      " preview=", preview_path,
+      " width=", width,
+      " height=", height
+    )
+    .Call(
+      "raoui_emit_image",
+      source_path,
+      preview_path,
+      as.character(width),
+      as.character(height),
+      "image/png"
+    )
   }
 
   resolve_png_opener <- function(renderer) {
@@ -106,14 +135,100 @@ local({
     }
   }
 
-  register_plot_device <- function(path, width, height, opener) {
+  resolve_svg_opener <- function() {
+    plot_log("using svglite live device")
+    function(path, width, height, ...) {
+      plot_log("open live svg path=", path, " width=", width, " height=", height)
+      svglite::svglite(
+        file = path,
+        width = width / 96,
+        height = height / 96,
+        system_fonts = list(
+          sans = "Arial",
+          serif = "Times New Roman",
+          mono = "Courier New"
+        ),
+        ...
+      )
+    }
+  }
+
+  choose_plot_transport <- function(renderer) {
+    if (nzchar(raoui_resvg) && requireNamespace("svglite", quietly = TRUE)) {
+      plot_log("selecting svglite+resvg transport")
+      return(list(
+        kind = "svg",
+        live_ext = "svg",
+        opener = resolve_svg_opener()
+      ))
+    }
+    if (!nzchar(raoui_resvg)) {
+      plot_log("resvg unavailable; falling back to direct png transport")
+    } else {
+      plot_log("svglite unavailable; falling back to direct png transport")
+    }
+    list(
+      kind = "png",
+      live_ext = "png",
+      opener = resolve_png_opener(renderer)
+    )
+  }
+
+  rasterize_svg_preview <- function(svg_path, png_path, width, height) {
+    if (!nzchar(raoui_resvg)) {
+      plot_log("resvg not found on PATH")
+      return(FALSE)
+    }
+    result <- tryCatch(
+      system2(
+        raoui_resvg,
+        c("-w", as.character(width), "-h", as.character(height), svg_path, png_path),
+        stdout = TRUE,
+        stderr = TRUE
+      ),
+      warning = function(w) w,
+      error = function(e) e
+    )
+    status <- attr(result, "status")
+    if (inherits(result, "warning") || inherits(result, "error")) {
+      plot_log("resvg invocation failed: ", conditionMessage(result))
+      return(FALSE)
+    }
+    if (!is.null(status) && status != 0L) {
+      plot_log(
+        "resvg failed status=", status,
+        if (length(result)) paste0(" output=", paste(result, collapse = " | ")) else ""
+      )
+      return(FALSE)
+    }
+    TRUE
+  }
+
+  render_recorded_plot <- function(opener, path, width, height, recorded) {
+    opener(path, width, height)
+    tryCatch(
+      {
+        replayPlot(recorded)
+        grDevices::dev.off()
+        TRUE
+      },
+      error = function(e) {
+        plot_log("snapshot replay failed: ", conditionMessage(e))
+        try(grDevices::dev.off(), silent = TRUE)
+        FALSE
+      }
+    )
+  }
+
+  register_plot_device <- function(path, width, height, opener, kind) {
     key <- as.character(grDevices::dev.cur())
-    plot_log("register device dev=", key, " live_path=", path)
+    plot_log("register device dev=", key, " live_path=", path, " kind=", kind)
     raoui_plot_registry[[key]] <- list(
       path = path,
       width = width,
       height = height,
       opener = opener,
+      kind = kind,
       last_snapshot = NULL
     )
   }
@@ -129,26 +244,65 @@ local({
       plot_log("snapshot unchanged for live_path=", meta$path)
       return(invisible(NULL))
     }
-    path <- next_plot_path()
-    plot_log("snapshot changed, rendering artifact path=", path)
-    meta$opener(path, meta$width, meta$height)
-    tryCatch(
-      {
-        replayPlot(recorded)
-        grDevices::dev.off()
-      },
-      error = function(e) {
-        plot_log("snapshot replay failed: ", conditionMessage(e))
-        try(grDevices::dev.off(), silent = TRUE)
-        stop(e)
+    next_index <- as.integer(raoui_plot_counter + 1L)
+    inspect_width <- as.integer(meta$width * raoui_inspect_scale)
+    inspect_height <- as.integer(meta$height * raoui_inspect_scale)
+    source_path <- plot_png_path(next_index)
+    preview_path <- plot_preview_png_path(next_index)
+    if (identical(meta$kind, "svg")) {
+      svg_path <- next_plot_svg_path(next_index)
+      plot_log(
+        "snapshot changed, rendering transient svg artifact path=", svg_path,
+        " inspect_png=", source_path, " preview_png=", preview_path
+      )
+      if (!render_recorded_plot(meta$opener, svg_path, meta$width, meta$height, recorded)) {
+        return(invisible(NULL))
       }
-    )
-    if (!file.exists(path)) {
-      plot_log("artifact missing after replay path=", path)
+    } else {
+      plot_log(
+        "snapshot changed, rendering png artifacts source=", source_path,
+        " preview=", preview_path
+      )
+      if (!render_recorded_plot(meta$opener, source_path, inspect_width, inspect_height, recorded)) {
+        return(invisible(NULL))
+      }
+      if (!render_recorded_plot(meta$opener, preview_path, meta$width, meta$height, recorded)) {
+        return(invisible(NULL))
+      }
+    }
+    if (identical(meta$kind, "svg")) {
+      if (!file.exists(svg_path)) {
+        plot_log("svg artifact missing after replay path=", svg_path)
+        return(invisible(NULL))
+      }
+      ok <- FALSE
+      tryCatch(
+        {
+          ok <- rasterize_svg_preview(svg_path, source_path, inspect_width, inspect_height) &&
+            rasterize_svg_preview(svg_path, preview_path, meta$width, meta$height)
+        },
+        finally = {
+          if (file.exists(svg_path)) {
+            unlink(svg_path, force = TRUE)
+          }
+        }
+      )
+      if (!ok) {
+        plot_log("failed to rasterize svg artifact path=", svg_path)
+        return(invisible(NULL))
+      }
+    }
+    raoui_plot_counter <<- next_index
+    if (!file.exists(source_path)) {
+      plot_log("source png missing after render path=", source_path)
+      return(invisible(NULL))
+    }
+    if (!file.exists(preview_path)) {
+      plot_log("preview png missing after render path=", preview_path)
       return(invisible(NULL))
     }
     meta$last_snapshot <- snapshot
-    notify_plot_ready(path, meta$width, meta$height)
+    notify_plot_ready(source_path, preview_path, meta$width, meta$height)
     invisible(meta)
   }
 
@@ -225,19 +379,19 @@ local({
   }, envir = .GlobalEnv)
 
   assign("raoui_use_png_device", function(renderer = "gr_devices") {
-    plot_log("installing png device renderer=", renderer)
-    opener <- resolve_png_opener(renderer)
+    plot_log("installing plot transport renderer=", renderer)
+    transport <- choose_plot_transport(renderer)
     ensure_dev_off_wrapper()
     ensure_plot_task_callback()
     options(device = function(...) {
-      path <- next_live_plot_path()
-      width <- 600L
-      height <- 450L
-      opener(path, width, height, ...)
+      path <- next_live_plot_path(transport$live_ext)
+      width <- raoui_preview_width
+      height <- raoui_preview_height
+      transport$opener(path, width, height, ...)
       grDevices::dev.control(displaylist = "enable")
-      register_plot_device(path, width, height, opener)
+      register_plot_device(path, width, height, transport$opener, transport$kind)
     })
-    plot_log("options(device=...) installed for png transport")
+    plot_log("options(device=...) installed for transport kind=", transport$kind)
     invisible(TRUE)
   }, envir = .GlobalEnv)
 
