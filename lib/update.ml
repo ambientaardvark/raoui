@@ -99,22 +99,20 @@ let universal_corrections key model =
   { s with previous_key = Some key; flipping_through_history }
 
 let sync_internal_coords model =
-  let width = effective_width model in
-  let cursor_line, cursor_pos =
-    terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
-  in
-  { model with cursor_line; cursor_pos }
+  match model.mode with
+  | History_search _ -> model
+  | _ ->
+    let width = effective_width model in
+    let cursor_line, cursor_pos =
+      terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
+    in
+    { model with cursor_line; cursor_pos }
 
 let handle_key_input key model =
-  let sync model =
-    match model.mode with
-    | History_search _ -> model
-    | _ -> sync_internal_coords model
-  in
   let new_model, effects =
     model
     |> handle_resize model.term_width model.term_height
-    |> sync
+    |> sync_internal_coords
     |> apply_key key
   in
   (universal_corrections key new_model, effects)
