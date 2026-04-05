@@ -165,7 +165,7 @@ let test_highlight_with_glue () =
   check string "roundtrip with glue" "glue(\"{x}\")" text
 
 let () =
-  run "syntax"
+  run "r_highlight"
     [
       ( "parse_glue_string",
         [
