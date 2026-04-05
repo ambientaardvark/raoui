@@ -67,7 +67,7 @@ let read_byte_timeout ~prefetched clock stdin timeout_sec =
   | None -> (
       match
         Eio.Time.with_timeout clock timeout_sec (fun () ->
-            Ok (read_byte ~prefetched stdin))
+            Ok (read_byte ~prefetched:None stdin))
       with
       | Ok result -> result
       | Error `Timeout -> None)

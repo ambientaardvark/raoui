@@ -36,6 +36,8 @@ let disable_bracketed_paste () =
   print_string Term.disable_bracketed_paste;
   flush stdout
 
+(* Populated during init (before Eio) by get_cursor_position, then drained
+   by the Eio event loop via tty_listener's prefetched-byte mechanism. *)
 let pending_input = Queue.create ()
 
 let enqueue_pending_char c = Queue.push c pending_input
