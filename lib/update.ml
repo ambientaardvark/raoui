@@ -698,10 +698,10 @@ let handle_resize new_width new_height model =
 let is_empty_input model =
   match model.lines with [ line ] -> Unicode_string.is_empty line | _ -> false
 
-let unicode_length text =
+let grapheme_cluster_count text =
   match Unicode_string.of_string text with
-  | Ok u -> Unicode_string.length u
-  | Error _ -> 0
+  | Ok u -> Ok (Unicode_string.length u)
+  | Error e -> Error e
 
 let replace_range model start_pos end_pos text =
   let line = current_line model in
@@ -997,7 +997,7 @@ let apply_key_in_normal_mode key model =
   | Other "next word" -> (go_to_next_word model, [])
   | Other "last word" -> (go_to_last_word model, [])
   | Char ";" when prompt_is_empty model ->
-      ({ model with mode = Frontend_types.Shell }, [])
+      ({ model with mode = Shell }, [])
   | Char c -> (user_input_char model c, [])
   | Backspace -> (user_input_delete model, [])
   | Left -> (move_left model, [])
@@ -1048,14 +1048,19 @@ let sync_internal_coords model =
   { model with cursor_line; cursor_pos }
 
 let handle_key_input key model =
-  let model = model |> handle_resize model.term_width model.term_height in
-  let model =
+  let sync model =
     match model.mode with
     | History_search _ -> model
     | _ -> sync_internal_coords model
   in
-  let m, effects = apply_key key model in
-  (universal_corrections key m, effects)
+  let new_model, effects =
+    model
+    |> handle_resize model.term_width model.term_height
+    |> sync
+    |> apply_key key
+  in
+  (universal_corrections key new_model, effects)
+
 
 let process_response model =
   match model.backend_response with
@@ -1151,7 +1156,10 @@ let update msg model =
           in
           (m, []))
   | Backslash_effect_result { token_start; original_token; inserted_text } ->
-      let original_len = unicode_length original_token in
+      let original_len =
+        grapheme_cluster_count original_token
+        |> Result.value ~default:0
+      in
       let token_end = token_start + original_len in
       let m =
         match inserted_text with

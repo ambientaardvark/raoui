@@ -10,13 +10,13 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
 
   let prompt_width_for_mode mode =
     match mode with
-    | Frontend_types.Readline rl_prompt ->
+    | Readline rl_prompt ->
         if String.length rl_prompt <= readline_prompt_max_length then
           String.length (rl_prompt ^ "> ")
         else String.length input_prompt
-    | Frontend_types.Shell -> String.length shell_prompt
-    | Frontend_types.Normal -> String.length prompt
-    | Frontend_types.History_search s ->
+    | Shell -> String.length shell_prompt
+    | Normal -> String.length prompt
+    | History_search s ->
         String.length search_prompt_prefix
         + Unicode_string.display_width s
         + String.length search_prompt_suffix
