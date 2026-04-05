@@ -3,7 +3,7 @@ open Terminal_ops
 (** {1 Lexer cache instantiation} *)
 
 (** Instantiate the generic incremental lexer cache for R *)
-module Cache = Language_syntax.Make (struct
+module Cache = Lexer_cache.Make (struct
   type token = R_lexer.token
   type mode = R_lexer.mode
 
@@ -290,7 +290,7 @@ module Continuation = struct
   (** Check if cursor is inside empty braces {} *)
   let inside_empty_brackets ~tokens ~cursor_byte_offset =
     let positioned =
-      Language_syntax.tokens_with_positions tokens ~token_to_lexeme
+      Lexer_cache.tokens_with_positions tokens ~token_to_lexeme
     in
     let token_before =
       List.fold_left

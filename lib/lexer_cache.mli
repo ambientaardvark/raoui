@@ -1,10 +1,9 @@
-(* language_syntax.mli *)
+(* lexer_cache.mli *)
 
-(** Generic incremental lexer cache and language-specific syntax analysis.
+(** Generic incremental lexer cache.
 
-    This module provides:
-    - A functor for building incremental lexer caches (language-agnostic)
-    - Common types for syntax highlighting and continuation detection *)
+    This module provides a functor for building incremental lexer caches over a
+    lexer with line-to-line mode/state. *)
 
 (** {1 Language-agnostic lexer interface} *)
 
@@ -82,36 +81,6 @@ module Make (L : LEXER) : sig
 
   val get_start_mode : t -> line:int -> L.mode option
   (** Get the lexer mode at the start of a given line *)
-end
-
-(** {1 Language-specific continuation detection} *)
-
-(** Signature for language-specific "is this statement complete?" logic *)
-module type CONTINUATION = sig
-  type token
-  (** Token type (typically matches the lexer's token type) *)
-
-  (** Result of continuation analysis *)
-  type signal =
-    | Submit  (** Statement is complete, should submit to REPL *)
-    | Continue of {
-        indent_levels : int;  (** How many levels to indent continuation *)
-        in_empty_brackets : bool;
-            (** Special case: cursor is in {} and should expand *)
-      }
-
-  val analyze : token list -> signal
-  (** Analyze tokens to determine if more input is needed.
-
-      Typically checks for:
-      - Unclosed delimiters (parens, brackets, braces)
-      - Trailing operators or keywords that require continuation
-      - Language-specific incomplete constructs *)
-
-  val inside_empty_brackets :
-    tokens:token list -> cursor_byte_offset:int -> bool
-  (** Check if cursor is positioned inside empty brackets (for special Enter
-      behavior) *)
 end
 
 (** {1 Byte offset utilities} *)

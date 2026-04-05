@@ -1,4 +1,4 @@
-(* language_syntax.ml *)
+(* lexer_cache.ml *)
 
 (** Language-agnostic lexer interface *)
 module type LEXER = sig
@@ -112,20 +112,6 @@ module Make (L : LEXER) = struct
   (** Get the lexer mode at the start of a given line *)
   let get_start_mode cache ~line =
     get_entry cache ~line |> Option.map (fun entry -> entry.start_mode)
-end
-
-(** Signature for language-specific continuation detection *)
-module type CONTINUATION = sig
-  type token
-
-  type signal =
-    | Submit
-    | Continue of { indent_levels : int; in_empty_brackets : bool }
-
-  val analyze : token list -> signal
-
-  val inside_empty_brackets :
-    tokens:token list -> cursor_byte_offset:int -> bool
 end
 
 (** Calculate the byte offset of a cursor position within a line *)

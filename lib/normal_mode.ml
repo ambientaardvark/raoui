@@ -12,7 +12,7 @@ let shift_history model ~amount =
       {
         model with
         lines;
-        lex_cache = Syntax.Cache.create lines;
+        lex_cache = R_syntax.Cache.create lines;
         flipping_through_history = Some 2;
       }
       |> move_cursor_to_end
@@ -21,19 +21,19 @@ let shift_history model ~amount =
 let continuation_indent_size = 2
 
 let tokens_before_cursor model =
-  Syntax.Cache.tokens_before_line model.lex_cache ~line:(model.cursor_line + 1)
+  R_syntax.Cache.tokens_before_line model.lex_cache ~line:(model.cursor_line + 1)
 
 let inside_empty_brackets model =
   match
-    Syntax.Cache.get_line_tokens model.lex_cache ~line:model.cursor_line
+    R_syntax.Cache.get_line_tokens model.lex_cache ~line:model.cursor_line
   with
   | None -> false
   | Some tokens ->
       let line = current_line model in
       let cursor_byte =
-        Language_syntax.cursor_byte_offset ~line ~cursor_pos:model.cursor_pos
+        Lexer_cache.cursor_byte_offset ~line ~cursor_pos:model.cursor_pos
       in
-      Syntax.Continuation.inside_empty_brackets ~tokens
+      R_syntax.Continuation.inside_empty_brackets ~tokens
         ~cursor_byte_offset:cursor_byte
 
 let leading_spaces s =
@@ -73,9 +73,9 @@ let submit model =
   else if at_empty_line model then submit_normal_text model
   else
     let tokens = tokens_before_cursor model in
-    match Syntax.Continuation.analyze tokens with
-    | Syntax.Continuation.Submit -> submit_normal_text model
-    | Syntax.Continuation.Continue { indent_levels; in_empty_brackets = _ } ->
+    match R_syntax.Continuation.analyze tokens with
+    | R_syntax.Continuation.Submit -> submit_normal_text model
+    | R_syntax.Continuation.Continue { indent_levels; in_empty_brackets = _ } ->
         let line = current_line model in
         let base_indent = leading_spaces (Unicode_string.to_string line) in
         let indent_spaces =
@@ -93,7 +93,7 @@ let enter_history_search model =
     model with
     mode = History_search Unicode_string.empty;
     lines = [ Unicode_string.empty ];
-    lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
+    lex_cache = R_syntax.Cache.create [ Unicode_string.empty ];
     cursor_pos = 0;
     cursor_col = 0;
     cursor_row = 0;

@@ -16,7 +16,7 @@ let search_and_update model =
   if String.length input_str = 0 then
     { model with
       lines = [ Unicode_string.empty ];
-      lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
+      lex_cache = R_syntax.Cache.create [ Unicode_string.empty ];
     }
   else
     let pattern = "%" ^ input_str ^ "%" in
@@ -24,7 +24,7 @@ let search_and_update model =
     if String.length search_result = 0 then
       { model with
         lines = [ Unicode_string.empty ];
-        lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
+        lex_cache = R_syntax.Cache.create [ Unicode_string.empty ];
       }
     else
       let lines =
@@ -32,7 +32,7 @@ let search_and_update model =
         |> String.split_on_char '\n'
         |> List.map (fun s -> Unicode_string.of_string s |> Result.get_ok)
       in
-      { model with lines; lex_cache = Syntax.Cache.create lines }
+      { model with lines; lex_cache = R_syntax.Cache.create lines }
 
 let sync_cursor_col model =
   let search = get_input model in
@@ -43,7 +43,7 @@ let cancel model =
   { model with
     mode = Normal;
     lines = [ Unicode_string.empty ];
-    lex_cache = Syntax.Cache.create [ Unicode_string.empty ];
+    lex_cache = R_syntax.Cache.create [ Unicode_string.empty ];
     cursor_row = 0;
     cursor_col = 0;
     cursor_line = 0;
@@ -60,7 +60,7 @@ let submit model =
   in
   { model with
     mode = Normal;
-    lex_cache = Syntax.Cache.create model.lines;
+    lex_cache = R_syntax.Cache.create model.lines;
     cursor_line = last_line_idx;
     cursor_pos = new_pos;
     cursor_row = new_row;
