@@ -2004,6 +2004,22 @@ let test_backslash_completion_enter_exact_simple_match_after_text () =
         (first_line_str new_model)
   | _ -> Alcotest.fail "Expected Continue"
 
+let test_backslash_completion_enter_exact_simple_match_after_text_with_backend_completion () =
+  let completion =
+    Completion.create ~token_start:2 [ Completion.backend_item "pirnorm" ]
+  in
+  let base_model =
+    with_lines (initial_model 20) [ us "a\\pi" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:4 |> fun model ->
+    { model with completion = Some completion }
+  in
+  match update (Update.Key Tty_listener.Enter) base_model with
+  | Continue new_model ->
+      Alcotest.(check string)
+        "exact simple command beats backend completion after text" "aπ"
+        (first_line_str new_model)
+  | _ -> Alcotest.fail "Expected Continue"
+
 let test_backslash_completion_enter_exact_effect_match () =
   let base_model =
     with_lines (initial_model 20) [ us "\\file" ] |> fun model ->
@@ -2501,6 +2517,8 @@ let () =
             test_backslash_completion_enter_exact_simple_match;
           test_case "Backslash enter exact simple match after text" `Quick
             test_backslash_completion_enter_exact_simple_match_after_text;
+          test_case "Backslash enter exact simple match after text with backend completion" `Quick
+            test_backslash_completion_enter_exact_simple_match_after_text_with_backend_completion;
           test_case "Backslash enter exact effect match" `Quick
             test_backslash_completion_enter_exact_effect_match;
           test_case "Backslash enter exact effect match after text" `Quick

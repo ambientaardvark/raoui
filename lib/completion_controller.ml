@@ -111,7 +111,7 @@ let accept_backslash_completion model =
           | Completion.Backslash command ->
               let token_start = Completion.token_start cs in
               apply_command token_start (Completion.label completion_item) command
-          | Completion.Backend -> None)
+          | Completion.Backend -> fallback_exact_command ())
       | None -> fallback_exact_command ())
 
 let make_backslash_completion model (token : Backslash_command.token) =
