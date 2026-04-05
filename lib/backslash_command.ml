@@ -97,6 +97,31 @@ let token_in_line line ~cursor_pos =
               command_name_prefix;
             }
 
+let exact_command_before_cursor registry line ~cursor_pos =
+  if cursor_pos <= 0 || cursor_pos > Unicode_string.length line then None
+  else
+    let rec consume_name idx =
+      if idx < 0 then -1
+      else
+        let cluster = Unicode_string.cluster_at line idx in
+        if is_command_char cluster then consume_name (idx - 1) else idx
+    in
+    let backslash_idx = consume_name (cursor_pos - 1) in
+    if backslash_idx < 0 then None
+    else if not (String.equal (Unicode_string.cluster_at line backslash_idx) "\\")
+    then None
+    else
+      let typed_len = cursor_pos - backslash_idx in
+      let typed_text =
+        Unicode_string.sub line ~start:backslash_idx ~len:typed_len
+        |> Unicode_string.to_string
+      in
+      if String.length typed_text <= 1 || String.equal typed_text "\\\\"
+      then None
+      else
+        find_by_label registry typed_text
+        |> Option.map (fun command -> (backslash_idx, command))
+
 let matching_commands registry ~prefix =
   List.filter
     (fun command ->

@@ -1992,6 +1992,18 @@ let test_backslash_completion_enter_exact_simple_match () =
         "exact simple command inserts unicode" "π" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected Continue"
 
+let test_backslash_completion_enter_exact_simple_match_after_text () =
+  let base_model =
+    with_lines (initial_model 20) [ us "sadfj\\pi" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:8
+  in
+  match update (Update.Key Tty_listener.Enter) base_model with
+  | Continue new_model ->
+      Alcotest.(check string)
+        "exact simple command inserts unicode after text" "sadfjπ"
+        (first_line_str new_model)
+  | _ -> Alcotest.fail "Expected Continue"
+
 let test_backslash_completion_enter_exact_effect_match () =
   let base_model =
     with_lines (initial_model 20) [ us "\\file" ] |> fun model ->
@@ -2009,6 +2021,22 @@ let test_backslash_completion_enter_exact_effect_match () =
       Alcotest.(check string) "exact command selected" "\\file" original_token;
       Alcotest.(check string)
         "buffer unchanged while effect runs" "\\file" (first_line_str new_model)
+  | _ -> Alcotest.fail "Expected backslash effect"
+
+let test_backslash_completion_enter_exact_effect_match_after_text () =
+  let base_model =
+    with_lines (initial_model 20) [ us "foo\\file" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:8
+  in
+  match update (Update.Key Tty_listener.Enter) base_model with
+  | Trigger_backslash_effect
+      (Repl_effect.Pick_file { token_start; original_token }, new_model) ->
+      Alcotest.(check int) "token start after text" 3 token_start;
+      Alcotest.(check string)
+        "exact command selected after text" "\\file" original_token;
+      Alcotest.(check string)
+        "buffer unchanged while effect runs after text" "foo\\file"
+        (first_line_str new_model)
   | _ -> Alcotest.fail "Expected backslash effect"
 
 let test_backslash_effect_result_inserts_quoted_path () =
@@ -2471,8 +2499,12 @@ let () =
             test_backslash_completion_enter_effect_runs_command;
           test_case "Backslash enter exact simple match" `Quick
             test_backslash_completion_enter_exact_simple_match;
+          test_case "Backslash enter exact simple match after text" `Quick
+            test_backslash_completion_enter_exact_simple_match_after_text;
           test_case "Backslash enter exact effect match" `Quick
             test_backslash_completion_enter_exact_effect_match;
+          test_case "Backslash enter exact effect match after text" `Quick
+            test_backslash_completion_enter_exact_effect_match_after_text;
           test_case "Backslash effect result inserts quoted path" `Quick
             test_backslash_effect_result_inserts_quoted_path;
           test_case "Backslash effect cancel keeps token" `Quick
