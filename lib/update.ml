@@ -1157,8 +1157,7 @@ let update msg model =
           (m, []))
   | Backslash_effect_result { token_start; original_token; inserted_text } ->
       let original_len =
-        grapheme_cluster_count original_token
-        |> Result.value ~default:0
+        grapheme_cluster_count original_token |> Result.get_ok
       in
       let token_end = token_start + original_len in
       let m =
