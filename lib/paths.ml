@@ -51,14 +51,15 @@ let should_remove_plot_session ~now ~pid ~started_at =
   now -. started_at >= plot_session_age_cutoff_seconds && not (is_pid_alive pid)
 
 let rec remove_tree path =
-  if Sys.file_exists path then
-    let stat = Unix.lstat path in
+  match Unix.lstat path with
+  | stat ->
     if stat.Unix.st_kind = Unix.S_DIR then begin
       Sys.readdir path
       |> Array.iter (fun entry -> remove_tree (Filename.concat path entry));
       Unix.rmdir path
     end else
       Sys.remove path
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()
 
 let resolve () =
   let started_at = Unix.gettimeofday () in
