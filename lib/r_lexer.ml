@@ -309,6 +309,28 @@ let print_type = function
   | DEFAULT s -> Printf.sprintf "DEFAULT: %s" s
   | EOF -> "EOF"
 
+let token_to_lexeme : token -> string = function
+  | NUMBER s -> s
+  | STRING s -> s
+  | COMMENT s -> s
+  | KEYWORD kw -> string_of_keyword kw
+  | CONSTANT s -> s
+  | OPERATOR s -> s
+  | IDENT s -> s
+  | BACKTICK_IDENT s -> s
+  | LAMBDA -> "\\"
+  | PUNCTUATION s -> s
+  | LEFT_PAREN -> "("
+  | RIGHT_PAREN -> ")"
+  | LEFT_BRACKET -> "["
+  | RIGHT_BRACKET -> "]"
+  | LEFT_BRACE -> "{"
+  | RIGHT_BRACE -> "}"
+  | WHITESPACE s -> s
+  | UNKNOWN s -> s
+  | DEFAULT s -> s
+  | EOF -> ""
+
 let lex_line mode line =
   let for_lexer = Sedlexing.Utf8.from_string line in
   let rec loop acc mode buf =

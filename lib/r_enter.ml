@@ -47,4 +47,6 @@ let action ~lines ~cursor_line ~cursor_pos ~cache =
                 max base_indent (indent_levels * continuation_indent_size)
               in
               Insert_newline { indent })
-    | None -> Submit
+    | None ->
+        (* cursor_line should always index a valid line, so this is unreachable *)
+        Submit

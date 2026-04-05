@@ -130,7 +130,7 @@ let analyze tokens =
 
 let inside_empty_brackets ~tokens ~cursor_byte_offset =
   let positioned =
-    Lexer_cache.tokens_with_positions tokens ~token_to_lexeme:R_highlight.token_to_lexeme
+    Lexer_cache.tokens_with_positions tokens ~token_to_lexeme:R_lexer.token_to_lexeme
   in
   let token_before =
     List.fold_left

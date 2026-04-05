@@ -21,27 +21,7 @@ let style_of_token : Lexer.token -> style = function
   | DEFAULT _ -> `Plain
   | EOF -> `Plain
 
-let token_to_lexeme : Lexer.token -> string = function
-  | NUMBER s -> s
-  | STRING s -> s
-  | COMMENT s -> s
-  | KEYWORD kw -> Lexer.string_of_keyword kw
-  | CONSTANT s -> s
-  | OPERATOR s -> s
-  | IDENT s -> s
-  | BACKTICK_IDENT s -> s
-  | LAMBDA -> "\\"
-  | PUNCTUATION s -> s
-  | LEFT_PAREN -> "("
-  | RIGHT_PAREN -> ")"
-  | LEFT_BRACKET -> "["
-  | RIGHT_BRACKET -> "]"
-  | LEFT_BRACE -> "{"
-  | RIGHT_BRACE -> "}"
-  | WHITESPACE s -> s
-  | UNKNOWN s -> s
-  | DEFAULT s -> s
-  | EOF -> ""
+let token_to_lexeme = Lexer.token_to_lexeme
 
 let token_to_span (token : Lexer.token) : span =
   (style_of_token token, token_to_lexeme token)
