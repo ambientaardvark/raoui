@@ -4,17 +4,7 @@ open Text_editor
 let submit model =
   let text = Unicode_string.to_string (current_line model) in
   let new_model =
-    {
-      model with
-      mode = Frontend_types.Normal;
-      completion = None;
-      lines = [ Unicode_string.empty ];
-      lex_cache = R_lex_cache.create [ Unicode_string.empty ];
-      cursor_row = 0;
-      cursor_col = 0;
-      cursor_line = 0;
-      cursor_pos = 0;
-    }
+    Mode_common.clear_model_for_submit { model with mode = Frontend_types.Normal }
   in
   (new_model, [ Repl_effect.SubmitReadlineInput text ])
 

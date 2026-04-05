@@ -2238,6 +2238,24 @@ let test_readline_empty_prompt_normalized () =
     "empty prompt normalized to 'input'" true
     (new_model.mode = Frontend_types.Readline "input")
 
+let test_readline_prompt_renders_bare () =
+  let width = 30 in
+  let model = readline_model width "Enter name: " in
+  match printed_rows model with
+  | [ (`Accent, prompt_text) :: _ ] ->
+      Alcotest.(check string)
+        "renders callback prompt directly" "Enter name: " prompt_text
+  | _ -> Alcotest.fail "Expected a single rendered readline row"
+
+let test_readline_empty_prompt_renders_input_colon () =
+  let width = 30 in
+  let model = readline_model width "input" in
+  match printed_rows model with
+  | [ (`Accent, prompt_text) :: _ ] ->
+      Alcotest.(check string)
+        "renders default prompt as input colon" "input: " prompt_text
+  | _ -> Alcotest.fail "Expected a single rendered readline row"
+
 let test_readline_done_resets_mode () =
   let width = 20 in
   let model =
@@ -2276,6 +2294,30 @@ let test_readline_down_blocked () =
       Alcotest.(check string)
         "line unchanged" "hello" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected Continue"
+
+let test_readline_submit_preserves_line_on_screen () =
+  let width = 30 in
+  let model =
+    {
+      (with_lines (readline_model width "Enter name: ") [ us "Alice" ]) with
+      prompt_top_row = 4;
+      term_height = 20;
+      prompt_box_height = Frontend_types.min_prompt_height;
+    }
+  in
+  let new_model, effects = Update.update (Update.Key Tty_listener.Enter) model in
+  Alcotest.(check bool)
+    "switches back to normal mode" true
+    (new_model.mode = Frontend_types.Normal);
+  Alcotest.(check bool)
+    "continues awaiting backend output" true new_model.awaiting_response;
+  Alcotest.(check string) "input cleared" "" (first_line_str new_model);
+  Alcotest.(check bool)
+    "prompt box moves below submitted line" true
+    (new_model.prompt_top_row > model.prompt_top_row);
+  match effects with
+  | [ Repl_effect.SubmitReadlineInput "Alice" ] -> ()
+  | _ -> Alcotest.fail "Expected SubmitReadlineInput effect"
 
 let () =
   let open Alcotest in
@@ -2550,6 +2592,10 @@ let () =
             test_readline_response_sets_mode;
           test_case "Empty prompt normalized" `Quick
             test_readline_empty_prompt_normalized;
+          test_case "Prompt renders bare" `Quick
+            test_readline_prompt_renders_bare;
+          test_case "Empty prompt renders input colon" `Quick
+            test_readline_empty_prompt_renders_input_colon;
           test_case "Done resets mode" `Quick test_readline_done_resets_mode;
           test_case "Typing works in readline mode" `Quick
             test_readline_typing_works;
@@ -2557,6 +2603,8 @@ let () =
             test_readline_up_blocked;
           test_case "Down blocked in readline mode" `Quick
             test_readline_down_blocked;
+          test_case "Submit preserves line on screen" `Quick
+            test_readline_submit_preserves_line_on_screen;
         ] );
       ( "matched_brackets",
         [

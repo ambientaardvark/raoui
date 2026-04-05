@@ -3,17 +3,20 @@ open Frontend_types
 module Make (Term : Terminal_ops.TERMINAL) = struct
   let completion_max_width = 30
   let readline_prompt_max_length = 20
-  let input_prompt = "input> "
+  let input_prompt = "input: "
   let shell_prompt = "shell> "
   let search_prompt_prefix = "r-search: "
   let search_prompt_suffix = "| >"
 
+  let rendered_readline_prompt rl_prompt =
+    if rl_prompt = "" || rl_prompt = "input" then input_prompt
+    else if String.length rl_prompt <= readline_prompt_max_length then rl_prompt
+    else input_prompt
+
   let prompt_width_for_mode mode =
     match mode with
     | Readline rl_prompt ->
-        if String.length rl_prompt <= readline_prompt_max_length then
-          String.length (rl_prompt ^ "> ")
-        else String.length input_prompt
+        String.length (rendered_readline_prompt rl_prompt)
     | Shell -> String.length shell_prompt
     | Normal -> String.length prompt
     | History_search s ->
@@ -232,10 +235,7 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
           add Clear_to_eol;
           let p =
             match (model.mode, i, model.awaiting_response) with
-            | Readline rl_prompt, 0, _ ->
-                if String.length rl_prompt <= readline_prompt_max_length then
-                  rl_prompt ^ "> "
-                else input_prompt
+            | Readline rl_prompt, 0, _ -> rendered_readline_prompt rl_prompt
             | Shell, 0, _ -> shell_prompt
             | Readline _, _, _ | Frontend_types.Shell, _, _ -> assert false
             | History_search search_input, 0, _ ->
