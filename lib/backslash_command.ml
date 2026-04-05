@@ -59,7 +59,10 @@ let is_command_char s =
 
 let is_token_boundary s = not (String.equal s "\\" || is_command_char s)
 
-let token_in_line line ~cursor_pos =
+(* Scans leftward from (cursor_pos - 1), consuming command chars until a
+   backslash is found.  Returns Some (backslash_idx, typed_text) when the
+   sequence looks like a backslash command, or None otherwise. *)
+let scan_backslash_token line ~cursor_pos =
   if cursor_pos <= 0 || cursor_pos > Unicode_string.length line then None
   else
     let rec consume_name idx =
@@ -86,41 +89,21 @@ let token_in_line line ~cursor_pos =
         in
         if String.length typed_text <= 1 || String.equal typed_text "\\\\"
         then None
-        else
-          let command_name_prefix =
-            String.sub typed_text 1 (String.length typed_text - 1)
-          in
-          Some
-            {
-              token_start = backslash_idx;
-              typed_text;
-              command_name_prefix;
-            }
+        else Some (backslash_idx, typed_text)
+
+let token_in_line line ~cursor_pos =
+  scan_backslash_token line ~cursor_pos
+  |> Option.map (fun (backslash_idx, typed_text) ->
+         let command_name_prefix =
+           String.sub typed_text 1 (String.length typed_text - 1)
+         in
+         { token_start = backslash_idx; typed_text; command_name_prefix })
 
 let exact_command_before_cursor registry line ~cursor_pos =
-  if cursor_pos <= 0 || cursor_pos > Unicode_string.length line then None
-  else
-    let rec consume_name idx =
-      if idx < 0 then -1
-      else
-        let cluster = Unicode_string.cluster_at line idx in
-        if is_command_char cluster then consume_name (idx - 1) else idx
-    in
-    let backslash_idx = consume_name (cursor_pos - 1) in
-    if backslash_idx < 0 then None
-    else if not (String.equal (Unicode_string.cluster_at line backslash_idx) "\\")
-    then None
-    else
-      let typed_len = cursor_pos - backslash_idx in
-      let typed_text =
-        Unicode_string.sub line ~start:backslash_idx ~len:typed_len
-        |> Unicode_string.to_string
-      in
-      if String.length typed_text <= 1 || String.equal typed_text "\\\\"
-      then None
-      else
-        find_by_label registry typed_text
-        |> Option.map (fun command -> (backslash_idx, command))
+  Option.bind (scan_backslash_token line ~cursor_pos)
+    (fun (backslash_idx, typed_text) ->
+       find_by_label registry typed_text
+       |> Option.map (fun command -> (backslash_idx, command)))
 
 let matching_commands registry ~prefix =
   List.filter

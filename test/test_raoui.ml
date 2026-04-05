@@ -1998,11 +1998,10 @@ let test_backslash_completion_enter_exact_simple_match_after_text () =
     with_cursor_internal model ~line:0 ~pos:8
   in
   match update (Update.Key Tty_listener.Enter) base_model with
-  | Continue new_model ->
+  | Submit (text, _) ->
       Alcotest.(check string)
-        "exact simple command inserts unicode after text" "sadfjπ"
-        (first_line_str new_model)
-  | _ -> Alcotest.fail "Expected Continue"
+        "non-boundary backslash submits as R code" "sadfj\\pi" text
+  | _ -> Alcotest.fail "Expected Submit"
 
 let test_backslash_completion_enter_exact_simple_match_after_text_with_backend_completion () =
   let completion =
@@ -2014,11 +2013,10 @@ let test_backslash_completion_enter_exact_simple_match_after_text_with_backend_c
     { model with completion = Some completion }
   in
   match update (Update.Key Tty_listener.Enter) base_model with
-  | Continue new_model ->
+  | Submit (text, _) ->
       Alcotest.(check string)
-        "exact simple command beats backend completion after text" "aπ"
-        (first_line_str new_model)
-  | _ -> Alcotest.fail "Expected Continue"
+        "non-boundary backslash submits as R code" "a\\pi" text
+  | _ -> Alcotest.fail "Expected Submit"
 
 let test_backslash_completion_enter_exact_effect_match () =
   let base_model =
@@ -2045,15 +2043,10 @@ let test_backslash_completion_enter_exact_effect_match_after_text () =
     with_cursor_internal model ~line:0 ~pos:8
   in
   match update (Update.Key Tty_listener.Enter) base_model with
-  | Trigger_backslash_effect
-      (Repl_effect.Pick_file { token_start; original_token }, new_model) ->
-      Alcotest.(check int) "token start after text" 3 token_start;
+  | Submit (text, _) ->
       Alcotest.(check string)
-        "exact command selected after text" "\\file" original_token;
-      Alcotest.(check string)
-        "buffer unchanged while effect runs after text" "foo\\file"
-        (first_line_str new_model)
-  | _ -> Alcotest.fail "Expected backslash effect"
+        "non-boundary backslash submits as R code" "foo\\file" text
+  | _ -> Alcotest.fail "Expected Submit"
 
 let test_backslash_effect_result_inserts_quoted_path () =
   let model =
