@@ -18,7 +18,7 @@ let restore_mode termio = Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH termio
 
 let examine ~clock ~stdin =
   let desc =
-    match await_input ~clock ~stdin with
+    match await_input ~prefetched:None ~clock ~stdin with
     | Char key -> Printf.sprintf "Char %S (bytes: %s)" key
         (String.to_seq key |> Seq.map (fun c -> Printf.sprintf "0x%02x" (Char.code c))
          |> List.of_seq |> String.concat " ")

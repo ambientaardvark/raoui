@@ -13,3 +13,7 @@
 (test
  (name test_syntax)
  (libraries raoui alcotest))
+
+(test
+ (name test_tty_listener)
+ (libraries raoui alcotest))

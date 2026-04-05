@@ -36,20 +36,49 @@ let disable_bracketed_paste () =
   print_string Term.disable_bracketed_paste;
   flush stdout
 
+let pending_input = Queue.create ()
+
+let enqueue_pending_char c = Queue.push c pending_input
+
+let enqueue_pending_string s = String.iter enqueue_pending_char s
+
+let is_csi_final_byte c =
+  (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c = '~'
+
+let parse_cursor_position_response response =
+  try Some (Scanf.sscanf response "\x1b[%d;%dR" (fun row col -> (row, col)))
+  with Scanf.Scan_failure _ | End_of_file | Failure _ -> None
+
 let get_cursor_position () =
   print_string Term.cursor_position_request;
   flush stdout;
-  let buf = Buffer.create 16 in
-  let rec read_until_r () =
+  let rec read_csi_sequence buf =
     let c = input_char stdin in
-    if c = 'R' then ()
-    else (
-      Buffer.add_char buf c;
-      read_until_r ())
+    Buffer.add_char buf c;
+    if is_csi_final_byte c then Buffer.contents buf else read_csi_sequence buf
   in
-  read_until_r ();
-  let response = Buffer.contents buf in
-  Scanf.sscanf response "\x1b[%d;%d" (fun row col -> (row, col))
+  let rec loop () =
+    match input_char stdin with
+    | '\x1b' -> (
+        match input_char stdin with
+        | '[' ->
+            let buf = Buffer.create 16 in
+            Buffer.add_string buf "\x1b[";
+            let response = read_csi_sequence buf in
+            (match parse_cursor_position_response response with
+             | Some pos -> pos
+             | None ->
+                 enqueue_pending_string response;
+                 loop ())
+        | c ->
+            enqueue_pending_char '\x1b';
+            enqueue_pending_char c;
+            loop ())
+    | c ->
+        enqueue_pending_char c;
+        loop ()
+  in
+  loop ()
 
 let get_term_dimensions () =
   let height =
@@ -366,12 +395,6 @@ let enter_passthrough model backend orig_termios loop =
 let run env backend ~orig_termios =
   let clock = Eio.Stdenv.clock env
   and stdin = Eio.Stdenv.stdin env in
-  let cached_keys =
-    Tty_listener.drain_to_keys_with_timeouts ~clock ~stdin
-      ~escape_timeout_sec:0.2
-      ~settle_timeout_sec:0.2
-  in
-
   let init_model = make_init () in
   let init_width = init_model.term_width in
   let startup_mode =
@@ -403,6 +426,11 @@ let run env backend ~orig_termios =
        Ffi_backend.background_submit backend command
    | None -> ());
 
+  let cached_keys =
+    Tty_listener.drain_to_keys_with_timeouts ~prefetched:(Some pending_input) ~clock
+      ~stdin ~escape_timeout_sec:0.2 ~settle_timeout_sec:0.2
+  in
+
   let model_after_cached =
     List.fold_left
       (fun m key ->
@@ -428,8 +456,8 @@ let run env backend ~orig_termios =
                 if model.running_in_ide then 0.2 else 0.05
               in
               Update.Key
-                (Tty_listener.await_input_with_timeout ~escape_timeout_sec
-                   ~clock ~stdin));
+                (Tty_listener.await_input_with_timeout ~prefetched:(Some pending_input)
+                   ~escape_timeout_sec ~clock ~stdin));
             (fun () -> Update.Response (Ffi_backend.await_response backend));
             (fun () ->
               let w, h =

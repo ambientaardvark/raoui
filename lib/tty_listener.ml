@@ -18,10 +18,23 @@ type key =
 
 let default_escape_timeout_sec = 0.05
 
-let read_byte stdin =
-  let buf = Cstruct.create 1 in
-  let n = Eio.Flow.single_read stdin buf in
-  if n = 0 then None else Some (Cstruct.get_char buf 0)
+let pop_prefetched = function
+  | Some queue when not (Queue.is_empty queue) -> Some (Queue.pop queue)
+  | Some _ | None -> None
+
+let has_prefetched = function
+  | Some queue -> not (Queue.is_empty queue)
+  | None -> false
+
+let read_byte ~prefetched stdin =
+  match pop_prefetched prefetched with
+  | Some c -> Some c
+  | None ->
+      let buf = Cstruct.create 1 in
+      (try
+         let n = Eio.Flow.single_read stdin buf in
+         if n = 0 then None else Some (Cstruct.get_char buf 0)
+       with End_of_file -> None)
 
 let utf8_continuation_bytes leading_byte =
   let b = Char.code leading_byte in
@@ -31,7 +44,7 @@ let utf8_continuation_bytes leading_byte =
   else if b land 0xF8 = 0xF0 then 3
   else 0
 
-let read_utf8_char stdin leading_byte =
+let read_utf8_char ~prefetched stdin leading_byte =
   let n = utf8_continuation_bytes leading_byte in
   if n = 0 then String.make 1 leading_byte
   else
@@ -40,7 +53,7 @@ let read_utf8_char stdin leading_byte =
     let rec read_rest i =
       if i > n then Bytes.to_string bytes
       else
-        match read_byte stdin with
+        match read_byte ~prefetched stdin with
         | None -> Bytes.sub_string bytes 0 i
         | Some c ->
             Bytes.set bytes i c;
@@ -48,18 +61,22 @@ let read_utf8_char stdin leading_byte =
     in
     read_rest 1
 
-let read_byte_timeout clock stdin timeout_sec =
-  match
-    Eio.Time.with_timeout clock timeout_sec (fun () -> Ok (read_byte stdin))
-  with
-  | Ok result -> result
-  | Error `Timeout -> None
+let read_byte_timeout ~prefetched clock stdin timeout_sec =
+  match pop_prefetched prefetched with
+  | Some c -> Some c
+  | None -> (
+      match
+        Eio.Time.with_timeout clock timeout_sec (fun () ->
+            Ok (read_byte ~prefetched stdin))
+      with
+      | Ok result -> result
+      | Error `Timeout -> None)
 
-let read_bracketed_paste stdin =
+let read_bracketed_paste ~prefetched stdin =
   let buf = Buffer.create 256 in
   let add_chars chars = List.iter (Buffer.add_char buf) chars in
   let rec loop () =
-    match read_byte stdin with
+    match read_byte ~prefetched stdin with
     | None -> Buffer.contents buf
     | Some '\x1b' -> check_end [ '\x1b' ]
     | Some c ->
@@ -71,11 +88,11 @@ let read_bracketed_paste stdin =
     else if List.length acc >= 6 then (
       add_chars acc;
       loop ())
-    else
-      match read_byte stdin with
-      | None ->
-          add_chars acc;
-          Buffer.contents buf
+      else
+        match read_byte ~prefetched stdin with
+        | None ->
+            add_chars acc;
+            Buffer.contents buf
       | Some c ->
           let next = acc @ [ c ] in
           if List.nth expected (List.length acc) = c then check_end next
@@ -85,10 +102,10 @@ let read_bracketed_paste stdin =
   in
   loop ()
 
-let parse_csi_sequence stdin =
+let parse_csi_sequence ~prefetched stdin =
   (* Read all parameter bytes until we hit a final byte (letter or ~) *)
   let rec read_until_final acc =
-    match read_byte stdin with
+    match read_byte ~prefetched stdin with
     | None -> (List.rev acc, None)
     | Some c when (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c = '~' ->
         (List.rev acc, Some c)
@@ -107,47 +124,55 @@ let parse_csi_sequence stdin =
   | Some '~' -> (
       match params with
       | "3" -> Delete
-      | "200" -> Paste (read_bracketed_paste stdin)
+      | "200" -> Paste (read_bracketed_paste ~prefetched stdin)
       | "27;5;13" -> Ctrl '\r' (* Ctrl+Enter *)
       | _ -> Unknown (Printf.sprintf "\x1b[%s~" params))
   | Some c -> Unknown (Printf.sprintf "\x1b[%s%c" params c)
 
-let parse_escape ~escape_timeout_sec clock stdin =
-  match read_byte_timeout clock stdin escape_timeout_sec with
+let parse_escape ~prefetched ~escape_timeout_sec clock stdin =
+  match read_byte_timeout ~prefetched clock stdin escape_timeout_sec with
   | None -> Escape
-  | Some '[' -> parse_csi_sequence stdin
+  | Some '[' -> parse_csi_sequence ~prefetched stdin
   | Some '\n' -> Ctrl '\r' (* newline on linux *)
   | Some 'b' -> Other "last word"
   | Some 'f' -> Other "next word"
   | Some c -> Unknown (Printf.sprintf "\x1b%c" c)
 
-let await_input_with_timeout ~escape_timeout_sec ~clock ~stdin =
-  match read_byte stdin with
+let await_input_with_timeout ~prefetched ~escape_timeout_sec ~clock ~stdin =
+  match read_byte ~prefetched stdin with
   | None -> Escape (* EOF, treat as escape? *)
-  | Some '\x1b' -> parse_escape ~escape_timeout_sec clock stdin
+  | Some '\x1b' -> parse_escape ~prefetched ~escape_timeout_sec clock stdin
   | Some '\x7f' -> Backspace
   | Some '\t' -> Tab
   | Some '\r' | Some '\n' -> Enter
   | Some c when Char.code c < 32 -> Ctrl (Char.chr (Char.code c + 96))
-  | Some c -> Char (read_utf8_char stdin c)
+  | Some c -> Char (read_utf8_char ~prefetched stdin c)
 
-let await_input ~clock ~stdin =
-  await_input_with_timeout ~escape_timeout_sec:default_escape_timeout_sec ~clock
-    ~stdin
+let await_input ~prefetched ~clock ~stdin =
+  await_input_with_timeout ~prefetched
+    ~escape_timeout_sec:default_escape_timeout_sec ~clock ~stdin
 
-let drain_to_keys_with_timeouts ~escape_timeout_sec ~settle_timeout_sec ~clock
-    ~stdin =
+let drain_to_keys_with_timeouts ~prefetched ~escape_timeout_sec
+    ~settle_timeout_sec ~clock ~stdin =
   let rec loop acc =
-    let timeout = if acc = [] then 0.0 else settle_timeout_sec in
-    let ready, _, _ = Unix.select [ Unix.stdin ] [] [] timeout in
-    if ready = [] then List.rev acc
+    if has_prefetched prefetched then
+        let key =
+          await_input_with_timeout ~prefetched ~escape_timeout_sec ~clock ~stdin
+        in
+        loop (key :: acc)
     else
-      let key = await_input_with_timeout ~escape_timeout_sec ~clock ~stdin in
-      loop (key :: acc)
+        let timeout = if acc = [] then 0.0 else settle_timeout_sec in
+        let ready, _, _ = Unix.select [ Unix.stdin ] [] [] timeout in
+        if ready = [] then List.rev acc
+        else
+          let key =
+            await_input_with_timeout ~prefetched ~escape_timeout_sec ~clock ~stdin
+          in
+          loop (key :: acc)
   in
   loop []
 
-let drain_to_keys ~clock ~stdin =
-  drain_to_keys_with_timeouts
+let drain_to_keys ~prefetched ~clock ~stdin =
+  drain_to_keys_with_timeouts ~prefetched
     ~escape_timeout_sec:default_escape_timeout_sec
     ~settle_timeout_sec:0.0 ~clock ~stdin
