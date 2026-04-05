@@ -155,7 +155,7 @@ let make_init () : Frontend_types.model =
   end;
   {
     lines;
-    lex_cache = R_syntax.Cache.create lines;
+    lex_cache = R_lex_cache.create lines;
     theme = initial_theme ();
     cursor_row = 0;
     cursor_col = 0;

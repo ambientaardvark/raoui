@@ -48,7 +48,7 @@ let initial_model width =
   let lines = [ Unicode_string.empty ] in
   {
     lines;
-    lex_cache = R_syntax.Cache.create lines;
+    lex_cache = R_lex_cache.create lines;
     theme = Theme.tokyo_night;
     cursor_row = 0;
     cursor_col = 0;
@@ -74,7 +74,7 @@ let initial_model width =
   }
 
 let with_lines model lines =
-  { model with lines; lex_cache = R_syntax.Cache.create lines }
+  { model with lines; lex_cache = R_lex_cache.create lines }
 
 let with_cursor_internal model ~line ~pos =
   let row, col =
@@ -407,12 +407,12 @@ let completion_row_selected = function
 
 let spans_of_cache cache =
   List.map
-    (fun (l : R_syntax.Cache.entry) ->
-      List.map (fun t -> R_syntax.token_to_span t) l.tokens)
+    (fun (l : R_lex_cache.entry) ->
+      List.map (fun t -> R_highlight.token_to_span t) l.tokens)
     cache
 
 let check_lex_cache ~msg model =
-  let expected = R_syntax.Cache.create model.lines |> spans_of_cache in
+  let expected = R_lex_cache.create model.lines |> spans_of_cache in
   let actual = spans_of_cache model.lex_cache in
   let span_testable = Alcotest.testable pp_span ( = ) in
   let spans_testable = Alcotest.list span_testable in
@@ -1392,8 +1392,8 @@ let test_lex_delete_empty_line : unit -> unit =
   | Continue new_model ->
       let lexemes =
         List.concat_map
-          (fun (line : R_syntax.Cache.entry) ->
-            List.map R_syntax.token_to_lexeme line.tokens)
+          (fun (line : R_lex_cache.entry) ->
+            List.map R_highlight.token_to_lexeme line.tokens)
           new_model.lex_cache
       in
       Alcotest.(check string) "First letter is a" "a" (List.nth lexemes 0);

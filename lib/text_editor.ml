@@ -6,11 +6,11 @@ let lexer_update start_line end_line model =
       {
         model with
         lex_cache =
-          R_syntax.Cache.update ~start_line ~end_line ~lines:model.lines
+          R_lex_cache.update ~start_line ~end_line ~lines:model.lines
             model.lex_cache;
       }
   | Shell | Readline _ ->
-      { model with lex_cache = R_syntax.Cache.make_all_default model.lines }
+      { model with lex_cache = R_lex_cache.make_all_default model.lines }
 
 let current_line model = List.nth model.lines model.cursor_line
 let line_length model = Unicode_string.length (current_line model)

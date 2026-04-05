@@ -12,51 +12,20 @@ let shift_history model ~amount =
       {
         model with
         lines;
-        lex_cache = R_syntax.Cache.create lines;
+        lex_cache = R_lex_cache.create lines;
         flipping_through_history = Some 2;
       }
       |> move_cursor_to_end
   | None -> model
 
-let continuation_indent_size = 2
-
-let tokens_before_cursor model =
-  R_syntax.Cache.tokens_before_line model.lex_cache ~line:(model.cursor_line + 1)
-
-let inside_empty_brackets model =
-  match
-    R_syntax.Cache.get_line_tokens model.lex_cache ~line:model.cursor_line
-  with
-  | None -> false
-  | Some tokens ->
-      let line = current_line model in
-      let cursor_byte =
-        Lexer_cache.cursor_byte_offset ~line ~cursor_pos:model.cursor_pos
-      in
-      R_syntax.Continuation.inside_empty_brackets ~tokens
-        ~cursor_byte_offset:cursor_byte
-
-let leading_spaces s =
-  let rec loop i =
-    if i >= String.length s then i
-    else if String.get s i = ' ' then loop (i + 1)
-    else i
-  in
-  loop 0
-
 let insert_spaces count model =
   let rec loop m n = if n <= 0 then m else loop (insert_char m " ") (n - 1) in
   loop model count
 
-let expand_empty_brackets model =
-  let line = current_line model in
-  let base_indent = leading_spaces (Unicode_string.to_string line) in
+let expand_braces ~inner_indent ~outer_indent model =
   model |> insert_newline
-  |> insert_spaces (base_indent + continuation_indent_size)
-  |> insert_newline |> insert_spaces base_indent |> move_up |> go_to_line_end
-
-let at_empty_line model =
-  "" = (model |> current_line |> Unicode_string.to_string |> String.trim)
+  |> insert_spaces inner_indent
+  |> insert_newline |> insert_spaces outer_indent |> move_up |> go_to_line_end
 
 let submit_normal_text model =
   let text =
@@ -69,31 +38,27 @@ let submit_normal_text model =
       [ Repl_effect.Submit text ] )
 
 let submit model =
-  if inside_empty_brackets model then (expand_empty_brackets model, [])
-  else if at_empty_line model then submit_normal_text model
-  else
-    let tokens = tokens_before_cursor model in
-    match R_syntax.Continuation.analyze tokens with
-    | R_syntax.Continuation.Submit -> submit_normal_text model
-    | R_syntax.Continuation.Continue { indent_levels; in_empty_brackets = _ } ->
-        let line = current_line model in
-        let base_indent = leading_spaces (Unicode_string.to_string line) in
-        let indent_spaces =
-          max base_indent (indent_levels * continuation_indent_size)
-        in
-        let rec repeat_n_times n f m =
-          if n <= 0 then m else repeat_n_times (n - 1) f (f m)
-        in
-        ( model |> insert_newline
-          |> repeat_n_times indent_spaces (fun m -> insert_char m " "),
-          [] )
+  match
+    R_enter.action ~lines:model.lines ~cursor_line:model.cursor_line
+      ~cursor_pos:model.cursor_pos ~cache:model.lex_cache
+  with
+  | R_enter.Submit -> submit_normal_text model
+  | R_enter.Insert_newline { indent } ->
+      let rec repeat_n_times n f m =
+        if n <= 0 then m else repeat_n_times (n - 1) f (f m)
+      in
+      ( model |> insert_newline
+        |> repeat_n_times indent (fun m -> insert_char m " "),
+        [] )
+  | R_enter.Expand_braces { inner_indent; outer_indent } ->
+      (expand_braces ~inner_indent ~outer_indent model, [])
 
 let enter_history_search model =
   {
     model with
     mode = History_search Unicode_string.empty;
     lines = [ Unicode_string.empty ];
-    lex_cache = R_syntax.Cache.create [ Unicode_string.empty ];
+    lex_cache = R_lex_cache.create [ Unicode_string.empty ];
     cursor_pos = 0;
     cursor_col = 0;
     cursor_row = 0;

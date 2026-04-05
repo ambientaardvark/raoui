@@ -1,5 +1,5 @@
 open Alcotest
-module R_syntax = Raoui.R_syntax
+module R_highlight = Raoui.R_highlight
 module Lexer = Raoui.R_lexer
 
 let span_to_string (style, text) =
@@ -33,13 +33,13 @@ let check_spans name expected actual =
 (* parse_glue_string tests *)
 
 let test_glue_simple () =
-  let result = R_syntax.parse_glue_string "\"hello\"" in
+  let result = R_highlight.parse_glue_string "\"hello\"" in
   check_spans "simple string"
     [ (`String, "\""); (`String, "hello"); (`String, "\"") ]
     result
 
 let test_glue_interpolation () =
-  let result = R_syntax.parse_glue_string "\"hello {name}\"" in
+  let result = R_highlight.parse_glue_string "\"hello {name}\"" in
   check_spans "interpolation"
     [
       (`String, "\"");
@@ -52,20 +52,20 @@ let test_glue_interpolation () =
     result
 
 let test_glue_escaped_open () =
-  let result = R_syntax.parse_glue_string "\"{{literal\"" in
+  let result = R_highlight.parse_glue_string "\"{{literal\"" in
   check_spans "escaped {{"
     [ (`String, "\""); (`String, "{{"); (`String, "literal"); (`String, "\"") ]
     result
 
 let test_glue_escaped_close () =
-  let result = R_syntax.parse_glue_string "\"literal}}\"" in
+  let result = R_highlight.parse_glue_string "\"literal}}\"" in
   check_spans "escaped }}"
     [ (`String, "\""); (`String, "literal"); (`String, "}}"); (`String, "\"") ]
     result
 
 let test_glue_expr_then_escaped () =
   (* glue("hello, {a}}}") -> hello, 2} *)
-  let result = R_syntax.parse_glue_string "\"hello, {a}}}\"" in
+  let result = R_highlight.parse_glue_string "\"hello, {a}}}\"" in
   check_spans "expr then escaped"
     [
       (`String, "\"");
@@ -80,7 +80,7 @@ let test_glue_expr_then_escaped () =
 
 let test_glue_escaped_then_expr () =
   (* glue("hello, {{{a}") -> hello, {2 *)
-  let result = R_syntax.parse_glue_string "\"hello, {{{a}\"" in
+  let result = R_highlight.parse_glue_string "\"hello, {{{a}\"" in
   check_spans "escaped then expr"
     [
       (`String, "\"");
@@ -95,7 +95,7 @@ let test_glue_escaped_then_expr () =
 
 let test_glue_nested_braces () =
   (* R code with braces inside interpolation *)
-  let result = R_syntax.parse_glue_string "\"{if (x) { 1 } else { 2 }}\"" in
+  let result = R_highlight.parse_glue_string "\"{if (x) { 1 } else { 2 }}\"" in
   (* Should find matching } accounting for nesting *)
   let styles = List.map fst result in
   check bool "starts with string quote" true (List.hd styles = `String);
@@ -103,7 +103,7 @@ let test_glue_nested_braces () =
   check bool "has keyword" true (List.mem `Keyword styles)
 
 let test_glue_multiple_interpolations () =
-  let result = R_syntax.parse_glue_string "\"{a} and {b}\"" in
+  let result = R_highlight.parse_glue_string "\"{a} and {b}\"" in
   check_spans "multiple interpolations"
     [
       (`String, "\"");
@@ -119,7 +119,7 @@ let test_glue_multiple_interpolations () =
     result
 
 let test_glue_complex_expr () =
-  let result = R_syntax.parse_glue_string "\"{x + 1}\"" in
+  let result = R_highlight.parse_glue_string "\"{x + 1}\"" in
   check_spans "complex expr"
     [
       (`String, "\"");
@@ -138,14 +138,14 @@ let test_glue_complex_expr () =
 
 let test_function_detection () =
   let tokens, _ = Lexer.lex_line Lexer.Normal "foo(x)" in
-  let spans = R_syntax.tokens_to_spans tokens in
+  let spans = R_highlight.tokens_to_spans tokens in
   let styles = List.map fst spans in
   check bool "function style detected" true (List.hd styles = `Function);
   check bool "has bracket" true (List.mem `Bracket styles)
 
 let test_glue_in_tokens_to_spans () =
   let tokens, _ = Lexer.lex_line Lexer.Normal "glue(\"hi {x}\")" in
-  let spans = R_syntax.tokens_to_spans tokens in
+  let spans = R_highlight.tokens_to_spans tokens in
   let styles = List.map fst spans in
   check bool "glue is function" true (List.hd styles = `Function);
   check bool "has bracket for interpolation" true
@@ -154,13 +154,13 @@ let test_glue_in_tokens_to_spans () =
 (* highlight_line tests *)
 
 let test_highlight_simple () =
-  let spans, mode = R_syntax.highlight_line Lexer.Normal "x <- 1" in
+  let spans, mode = R_highlight.highlight_line Lexer.Normal "x <- 1" in
   check bool "returns Normal mode" true (mode = Lexer.Normal);
   let text = String.concat "" (List.map snd spans) in
   check string "roundtrip" "x <- 1" text
 
 let test_highlight_with_glue () =
-  let spans, _ = R_syntax.highlight_line Lexer.Normal "glue(\"{x}\")" in
+  let spans, _ = R_highlight.highlight_line Lexer.Normal "glue(\"{x}\")" in
   let text = String.concat "" (List.map snd spans) in
   check string "roundtrip with glue" "glue(\"{x}\")" text
 

@@ -196,8 +196,7 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
     (* Convert cached tokens to spans *)
     let highlighted_lines =
       List.map
-        (fun (entry : R_syntax.Cache.entry) ->
-          R_syntax.tokens_to_spans entry.tokens)
+        (fun (entry : R_lex_cache.entry) -> R_highlight.render_entry entry)
         model.lex_cache
     in
 
