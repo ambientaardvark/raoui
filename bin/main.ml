@@ -367,6 +367,20 @@ let execute_one backend = function
 let execute_effects backend effects =
   List.iter (execute_one backend) effects
 
+let render_submit_snapshot model effects =
+  let should_render_snapshot =
+    List.exists
+      (function
+        | Repl_effect.Submit _ | Repl_effect.SubmitReadlineInput _ -> true
+        | _ -> false)
+      effects
+  in
+  if should_render_snapshot then begin
+    let snapshot_top = Mode_common.submit_aligned_prompt_top model in
+    print_string (V.view { model with prompt_top_row = snapshot_top });
+    flush stdout
+  end
+
 let enter_passthrough model backend orig_termios loop =
   restore_mode orig_termios;
   disable_bracketed_paste ();
@@ -483,6 +497,7 @@ let run env backend ~orig_termios =
         execute_effects backend effects;
         enter_passthrough new_model backend orig_termios loop
     | _ ->
+        render_submit_snapshot model effects;
         execute_effects backend effects;
         loop (print_repl_output new_model)
   in

@@ -1,10 +1,16 @@
 open Frontend_types
 
+let submit_aligned_prompt_top model =
+  let width = effective_width model in
+  let total_rows = model.lines |> wrap_lines width |> List.length in
+  min model.prompt_top_row (model.term_height - total_rows)
+
 let scroll_terminal_after_submit model =
+  let prompt_top_row = submit_aligned_prompt_top model in
   let width = effective_width model in
   let wrapped = wrap_lines width model.lines in
   let total_rows = List.length wrapped in
-  let output_row = model.prompt_top_row + total_rows in
+  let output_row = prompt_top_row + total_rows in
   let new_prompt_top = output_row + 1 in
   let scroll_amount =
     if new_prompt_top > model.term_height then

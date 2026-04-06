@@ -809,12 +809,35 @@ let test_submit_scrolls_when_at_bottom () =
 
   match submit model with
   | Submit (_, new_model) ->
-      (* output_row would be 11, new_prompt_top would be 12 *)
-      (* need to scroll up by 2 to fit *)
-      Alcotest.(check int) "scroll_amount" (-2) new_model.scroll_amount;
+      (* Submit aligns the prompt up one row first, preserving a visible
+         output row before moving the next prompt into place. *)
+      Alcotest.(check int) "scroll_amount" (-1) new_model.scroll_amount;
       Alcotest.(check int) "prompt_top_row" 10 new_model.prompt_top_row;
       let repl_row, _ = new_model.repl_cursor in
       Alcotest.(check int) "repl_cursor row" 9 repl_row
+  | _ -> Alcotest.fail "Expected Submit result"
+
+let test_submit_aligns_tail_when_cursor_not_on_last_line () =
+  let width = 40 in
+  let model =
+    with_cursor_internal
+      ({ (with_lines (initial_model width)
+            [ us "f <- function() {"; us "  1"; us "  "; us "}" ]) with
+         prompt_top_row = 8;
+         term_height = 10;
+       })
+      ~line:2 ~pos:2
+  in
+  match submit model with
+  | Submit (text, new_model) ->
+      Alcotest.(check string)
+        "submitted text keeps closing brace"
+        "f <- function() {\n  1\n  \n}"
+        text;
+      Alcotest.(check int)
+        "tail-aligned submit only needs one scroll" (-1) new_model.scroll_amount;
+      let repl_row, _ = new_model.repl_cursor in
+      Alcotest.(check int) "repl cursor lands on reserved output row" 9 repl_row
   | _ -> Alcotest.fail "Expected Submit result"
 
 let test_process_response_clears_scroll () =
@@ -2163,6 +2186,24 @@ let test_submit_prompt_box_height () =
         Frontend_types.min_prompt_height new_model.prompt_box_height
   | _ -> Alcotest.fail "Expected Submit"
 
+let test_vertical_movement_keeps_prompt_tail_visible_when_it_fits () =
+  let width = 20 in
+  let lines = [ us "a"; us "b"; us "c"; us "d"; us "e" ] in
+  let model =
+    with_cursor_internal
+      ({ (with_lines (initial_model width) lines) with
+         prompt_top_row = 8;
+         term_height = 10;
+       })
+      ~line:1 ~pos:0
+  in
+  let new_model = Update.handle_vertical_cursor_movement model in
+  Alcotest.(check int) "prompt height stays at five rows" 5
+    new_model.prompt_box_height;
+  Alcotest.(check int)
+    "prompt top row shifts up so the tail stays visible" 6
+    new_model.prompt_top_row
+
 let test_resize_clamps_prompt () =
   (* Prompt at row 15, terminal shrinks from 25 to 12 *)
   let width = 20 in
@@ -2477,6 +2518,8 @@ let () =
             test_scroll_when_cursor_below_screen;
           test_case "Submit scrolls when at bottom" `Quick
             test_submit_scrolls_when_at_bottom;
+          test_case "Submit aligns tail when cursor above final line" `Quick
+            test_submit_aligns_tail_when_cursor_not_on_last_line;
           test_case "Process response clears scroll" `Quick
             test_process_response_clears_scroll;
           test_case "View clears reserved output row" `Quick
@@ -2580,6 +2623,8 @@ let () =
             test_prompt_capped_at_bottom_zone;
           test_case "Submit sets prompt_box_height" `Quick
             test_submit_prompt_box_height;
+          test_case "Vertical movement keeps prompt tail visible" `Quick
+            test_vertical_movement_keeps_prompt_tail_visible_when_it_fits;
           test_case "Resize clamps prompt" `Quick test_resize_clamps_prompt;
           test_case "Resize preserves prompt in zone" `Quick
             test_resize_preserves_prompt_in_zone;

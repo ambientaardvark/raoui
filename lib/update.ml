@@ -16,10 +16,11 @@ let handle_vertical_cursor_movement model =
   (* Completions are rendered as an overlay in view.ml and should not
      contribute to prompt box height or scrolling math. *)
   let dropdown_rows = 0 in
-  let new_height =
+  let content_height =
     model.lines |> wrap_lines width |> List.length |> ( + ) dropdown_rows
-    |> max model.prompt_box_height
-    |> max min_prompt_height
+  in
+  let new_height =
+    content_height |> max model.prompt_box_height |> max min_prompt_height
   in
   let scrolls_from_expansion =
     if new_height > model.prompt_box_height then
@@ -37,12 +38,19 @@ let handle_vertical_cursor_movement model =
     else if cursor_term_row < 1 then 1 - cursor_term_row
     else 0
   in
+  let prompt_top =
+    let proposed =
+      model.prompt_top_row + scrolls_from_expansion
+      + scrolls_from_cursor_movement
+    in
+    if content_height <= model.term_height then
+      min proposed (model.term_height - content_height + 1) |> max 1
+    else proposed
+  in
   {
     model with
     prompt_box_height = new_height;
-    prompt_top_row =
-      model.prompt_top_row + scrolls_from_expansion
-      + scrolls_from_cursor_movement;
+    prompt_top_row = prompt_top;
     scroll_amount = scrolls_from_expansion;
   }
 
