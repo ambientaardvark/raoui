@@ -5,20 +5,20 @@
 (generate_opam_files true)
 
 (source
- (github username/reponame))
+ (github ambientaardvark/raoui))
 
-(authors "Author Name <author@example.com>")
+(authors "Alan Lee")
 
-(maintainers "Maintainer Name <maintainer@example.com>")
+(maintainers "Alan Lee")
 
 (license LICENSE)
 
-(documentation https://url/to/documentation)
+(documentation https://github.com/ambientaardvark/raoui)
 
 (package
  (name raoui)
- (synopsis "A short synopsis")
- (description "A longer description")
+ (synopsis "A modern terminal console for R built in OCaml")
+ (description "Raoui is an interactive terminal R console with syntax highlighting, completion, inline plotting, and an asynchronous UI/interpreter architecture.")
  (depends
   ocaml
   eio
@@ -32,6 +32,6 @@
   sedlex
   (alcotest :with-test))
  (tags
-  ("add topics" "to describe" your project)))
+  ("r" "repl" "terminal" "ocaml")))
 
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/reference/dune-project/index.html

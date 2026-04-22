@@ -20,23 +20,21 @@ let make_model () =
   ] in
   (* Cursor in middle of line 1 (0-indexed) *)
   let cursor_line = 1 in
-  let cursor_col = Unicode_string.length (List.nth lines cursor_line) / 2 in
+  let cursor_pos = Unicode_string.length (List.nth lines cursor_line) / 2 in
   {
     Frontend_types.
     lines;
     lex_cache = R_lex_cache.create lines;
     theme = Theme.tokyo_night;
-    cursor_row = cursor_line;  (* simplified: assume no wrapping *)
-    cursor_col = cursor_col;
     cursor_line;
-    cursor_pos = cursor_col;
+    cursor_pos;
     prompt_top_row = 1;
     term_width = 80;
     term_height = 24;
     prompt_box_height = 5;
     previous_prompt_top_row = 1;
     previous_key = None;
-    persistent_col = cursor_col;
+    persistent_col = cursor_pos;
     awaiting_response = false;
     backend_response = None;
     repl_output = None;
@@ -65,17 +63,17 @@ let () =
     [
       ( base,
         Tty_listener.Char "x" );
-      ( { base with cursor_col = 0 },
+      ( { base with cursor_pos = 0 },
         Tty_listener.Backspace );
-      ( { base with cursor_col = Unicode_string.length line;
+      ( { base with cursor_pos = Unicode_string.length line;
+                 cursor_line = 0;
                  lines = [ line ];
-                 lex_cache = R_lex_cache.create [ line ];
-                 cursor_row = 0 },
+                 lex_cache = R_lex_cache.create [ line ] },
         Tty_listener.Ctrl '\r' );
-      ( { base with cursor_col = 0; cursor_row = 0; lines = [ us "abc" ];
+      ( { base with cursor_pos = 0; cursor_line = 0; lines = [ us "abc" ];
                  lex_cache = R_lex_cache.create [ us "abc" ] },
         Tty_listener.Right );
-      ( { base with lines = [ us "hello world" ]; cursor_col = 5; cursor_row = 0;
+      ( { base with lines = [ us "hello world" ]; cursor_pos = 5; cursor_line = 0;
                  lex_cache = R_lex_cache.create [ us "hello world" ] },
         Tty_listener.Paste "X\nY\nZ" );
     ]

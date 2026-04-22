@@ -31,7 +31,8 @@ let handle_vertical_cursor_movement model =
   let prompt_top_after_expansion =
     model.prompt_top_row + scrolls_from_expansion
   in
-  let cursor_term_row = model.cursor_row + prompt_top_after_expansion in
+  let cursor_row, _ = cursor_terminal_pos model in
+  let cursor_term_row = cursor_row + prompt_top_after_expansion in
   let scrolls_from_cursor_movement =
     if cursor_term_row > model.term_height then
       model.term_height - cursor_term_row
@@ -60,16 +61,9 @@ let handle_resize new_width new_height model =
     let model =
       { model with term_width = new_width; term_height = new_height }
     in
-    let new_eff_width = effective_width model in
-    let new_row, new_col =
-      internal_to_terminal new_eff_width model.lines
-        (model.cursor_line, model.cursor_pos)
-    in
     let prompt_top = clamp_prompt_top new_height model.prompt_top_row in
     {
       model with
-      cursor_row = new_row;
-      cursor_col = new_col;
       prompt_top_row = prompt_top;
       prompt_box_height = min_prompt_height;
     }
@@ -106,21 +100,10 @@ let universal_corrections key model =
   in
   { s with previous_key = Some key; flipping_through_history }
 
-let sync_internal_coords model =
-  match model.mode with
-  | History_search _ -> model
-  | _ ->
-    let width = effective_width model in
-    let cursor_line, cursor_pos =
-      terminal_to_internal width model.lines (model.cursor_row, model.cursor_col)
-    in
-    { model with cursor_line; cursor_pos }
-
 let handle_key_input key model =
   let new_model, effects =
     model
     |> handle_resize model.term_width model.term_height
-    |> sync_internal_coords
     |> apply_key key
   in
   (universal_corrections key new_model, effects)

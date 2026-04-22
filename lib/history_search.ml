@@ -3,7 +3,7 @@ open Frontend_types
 (* Design:
    - History_search s stores the search input (what the user types)
    - model.lines stores the search result from history
-   - cursor_pos/cursor_col track position within the search input
+   - cursor_pos tracks position within the search input
    - The view renders "r-search: {input}> " as the prompt, result as content *)
 
 let get_input model =
@@ -34,18 +34,11 @@ let search_and_update model =
       in
       { model with lines; lex_cache = R_lex_cache.create lines }
 
-let sync_cursor_col model =
-  let search = get_input model in
-  let col = Unicode_string.prefix_width search model.cursor_pos in
-  { model with cursor_col = col; cursor_row = 0; cursor_line = 0 }
-
 let cancel model =
   { model with
     mode = Normal;
     lines = [ Unicode_string.empty ];
     lex_cache = R_lex_cache.create [ Unicode_string.empty ];
-    cursor_row = 0;
-    cursor_col = 0;
     cursor_line = 0;
     cursor_pos = 0;
   }
@@ -54,17 +47,11 @@ let submit model =
   let last_line_idx = List.length model.lines - 1 in
   let last_line = List.nth model.lines last_line_idx in
   let new_pos = Unicode_string.length last_line in
-  let width = effective_width model in
-  let new_row, new_col =
-    internal_to_terminal width model.lines (last_line_idx, new_pos)
-  in
   { model with
     mode = Normal;
     lex_cache = R_lex_cache.create model.lines;
     cursor_line = last_line_idx;
     cursor_pos = new_pos;
-    cursor_row = new_row;
-    cursor_col = new_col;
   }
 
 let insert_char model c =
@@ -76,7 +63,6 @@ let insert_char model c =
       mode = History_search new_search;
       cursor_pos = model.cursor_pos + 1;
     }
-    |> sync_cursor_col
 
 let delete_char model =
   if model.cursor_pos = 0 then model
@@ -87,7 +73,6 @@ let delete_char model =
       mode = History_search new_search;
       cursor_pos = model.cursor_pos - 1;
     }
-    |> sync_cursor_col
 
 let delete_char_after model =
   let search = get_input model in
@@ -95,7 +80,6 @@ let delete_char_after model =
   else
     let new_search = Unicode_string.delete search model.cursor_pos in
     { model with mode = History_search new_search }
-    |> sync_cursor_col
 
 let delete_before_cursor model =
   let search = get_input model in
@@ -105,30 +89,25 @@ let delete_before_cursor model =
   { model with
     mode = History_search new_search;
     cursor_pos = 0;
-    cursor_col = 0;
   }
 
 let move_left model =
   if model.cursor_pos > 0 then
     { model with cursor_pos = model.cursor_pos - 1 }
-    |> sync_cursor_col
   else model
 
 let move_right model =
   let search = get_input model in
   if model.cursor_pos < Unicode_string.length search then
     { model with cursor_pos = model.cursor_pos + 1 }
-    |> sync_cursor_col
   else model
 
-let go_to_start model =
-  { model with cursor_pos = 0; cursor_col = 0; cursor_row = 0 }
+let go_to_start model = { model with cursor_pos = 0 }
 
 let go_to_end model =
   let search = get_input model in
   let len = Unicode_string.length search in
   { model with cursor_pos = len }
-  |> sync_cursor_col
 
 let is_word_char s =
   if String.length s > 1 then true
@@ -152,7 +131,7 @@ let go_to_next_word model =
       else loop false (pos + 1)
   in
   let new_pos = loop false model.cursor_pos in
-  { model with cursor_pos = new_pos } |> sync_cursor_col
+  { model with cursor_pos = new_pos }
 
 let go_to_last_word model =
   let search = get_input model in
@@ -165,7 +144,7 @@ let go_to_last_word model =
       else loop false (pos - 1)
   in
   let new_pos = loop false model.cursor_pos in
-  { model with cursor_pos = new_pos } |> sync_cursor_col
+  { model with cursor_pos = new_pos }
 
 let insert_paste model text =
   let search = get_input model in
@@ -178,7 +157,6 @@ let insert_paste model text =
       mode = History_search new_search;
       cursor_pos = model.cursor_pos + added;
     }
-    |> sync_cursor_col
 
 let apply_key key model =
   let open Tty_listener in

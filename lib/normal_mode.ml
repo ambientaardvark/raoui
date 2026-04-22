@@ -60,8 +60,6 @@ let enter_history_search model =
     lines = [ Unicode_string.empty ];
     lex_cache = R_lex_cache.create [ Unicode_string.empty ];
     cursor_pos = 0;
-    cursor_col = 0;
-    cursor_row = 0;
     cursor_line = 0;
     completion = None;
   }

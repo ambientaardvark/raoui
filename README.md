@@ -1,12 +1,12 @@
 # Raoui: a modern R console for busy statisticians
 
-_Warning: This is pre-alpha software. It might not run on your computer. Expect some bugs._
+Raoui is a personal project and terminal application for interactive work in R. It is built in OCaml with a small C bridge into the R runtime, with a focus on responsive terminal UX, careful control over rendering, and experimentation with REPL features that are awkward to build on top of the standard R console.
 
 ### Why build Raoui?
 
-R in the terminal is great for quick analysis, portability, and working on remote servers. The R extension in VS Code also uses the terminal for interactive features. However, the console that ships with the R programming language is bare-bones and lacks quality of life features like syntax highlighting and tab autocomplete. A fantastic alternative is radian, which uses the prompttoolkit python library to add these features to terminal R. However, it can be laggy and I want to add even more features on top of what radian provides. This repo aims to provide a smooth experience of terminal R without sacrificing feature-richness, and serves as a foundation for me to experiment with adding more features to the experience of working with the language.
+R in the terminal is useful for quick analysis, portability, and remote work, but the default console is fairly bare-bones. Tools like `radian` improve the experience, though I wanted lower-level control over rendering, responsiveness, and integration with terminal-native features. Raoui is an attempt to build a smoother terminal R workflow without giving up performance or flexibility.
 
-### Features:
+### Features
 
 - Syntax highlighting
 
@@ -30,17 +30,23 @@ R in the terminal is great for quick analysis, portability, and working on remot
 
 ### Architecture
 
-Unlike traditional REPLs, I run the UI and interpreter on separate OS threads. This is similar to how interactive data analysis works in Jupyter Notebooks. The interpreter thread uses C to link against the R language at runtime, and communicates asynchronously with the UI via a ring buffer. This allows the UI to start up very fast without waiting for R to initialize, and to not block while code is executing, which avoids some visual jank when typing characters while code executes in other environments, and could allow for more fancy features later. The UI thread is built as an event-driven runtime using the Elm architecture. Dependencies are fairly minimal, allowing for fine-grained control over performance and a small binary.
+Unlike a traditional REPL, Raoui runs the UI and interpreter on separate OS threads. The interpreter side uses C to link against the R runtime at run time and communicates asynchronously with the UI through a ring buffer. This keeps startup fast, lets the UI remain responsive while code is executing, and provides a base for features like inline plotting and background completion requests. The UI itself is built as an event-driven runtime with Elm-style state updates and views.
+
+### Development Status
+
+The project is under active development, but it is already a fully working codebase with automated tests.
 
 ### Build instructions
 
-You will need OCaml 5.0+ and a C compiler. Build with
+You will need OCaml 5.0+, a C compiler, and a local R installation. The main development target is macOS. Build with
 
 ```bash
 opam install --deps-only .
 dune exec raoui
 ```
 
-### AI usage
+Run the test suite with
 
-While I designed the architecture and wrote some modules by hand, I used LLMs extensively to accelerate implementation. My process is to spend significant time designing features and planning their implementation, then let AI write much of the initial code, which I review, test, and refine. I maintain a close understanding of the full codebase.
+```bash
+dune runtest
+```

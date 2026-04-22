@@ -2,7 +2,11 @@ let prompt = "> "
 let continued_prompt = ". "
 let pending_prompt = "  "
 
-type mode = Normal | Readline of string | Shell | History_search of Unicode_string.t
+type mode =
+  | Normal
+  | Readline of string
+  | Shell
+  | History_search of Unicode_string.t
 
 type repl_output =
   | Output_text of Terminal_ops.span list
@@ -10,18 +14,17 @@ type repl_output =
 
 let min_prompt_height = 5
 let default_prompt_top term_height = max 2 (term_height - min_prompt_height + 1)
-let clamp_prompt_top term_height row = max 2 (min row (default_prompt_top term_height))
+
+let clamp_prompt_top term_height row =
+  max 2 (min row (default_prompt_top term_height))
 
 type model = {
   lines : Unicode_string.t list;
   lex_cache : R_lex_cache.t;
   theme : Theme.t;
-  (* Terminal coordinates - deprecated, will be removed *)
-  cursor_row : int;
-  cursor_col : int;
   (* Internal coordinates - source of truth *)
-  cursor_line : int;  (* logical line index, 0-indexed *)
-  cursor_pos : int;   (* grapheme position within line *)
+  cursor_line : int; (* logical line index, 0-indexed *)
+  cursor_pos : int; (* grapheme position within line *)
   prompt_top_row : int;
   term_width : int;
   term_height : int;
@@ -43,7 +46,6 @@ type model = {
 
 (* Line wrapping utilities - uses display width *)
 let wrap_line width line = Unicode_string.wrap line ~width
-
 let wrap_lines width lines = List.concat_map (wrap_line width) lines
 
 (* Coordinate conversion between internal (line_idx, grapheme_col) and terminal (row, display_col) *)
@@ -70,8 +72,7 @@ let internal_to_terminal width lines (line_idx, col) =
           let offset_in_chunk = col - graphemes_so_far in
           let display_col = Unicode_string.prefix_width chunk offset_in_chunk in
           (row_idx, display_col)
-        else
-          find_row (row_idx + 1) end_of_chunk rest
+        else find_row (row_idx + 1) end_of_chunk rest
   in
   let row_in_line, col_in_line = find_row 0 0 wrapped in
   (rows_before + row_in_line, col_in_line)
@@ -95,7 +96,8 @@ let terminal_to_internal width lines (row, display_col) =
             else
               match l with
               | [] -> acc
-              | h :: t -> sum_graphemes (acc + Unicode_string.length h) (idx - 1) t
+              | h :: t ->
+                  sum_graphemes (acc + Unicode_string.length h) (idx - 1) t
           in
           let graphemes_before = sum_graphemes 0 row_offset wrapped in
           (* Convert display_col to grapheme offset within this wrapped row *)
@@ -103,7 +105,9 @@ let terminal_to_internal width lines (row, display_col) =
             if row_offset < num_rows then List.nth wrapped row_offset
             else Unicode_string.empty
           in
-          let grapheme_col = Unicode_string.grapheme_at_width chunk display_col in
+          let grapheme_col =
+            Unicode_string.grapheme_at_width chunk display_col
+          in
           (internal_row, graphemes_before + grapheme_col)
         else loop (internal_row + 1) rest (current_terminal_row + num_rows)
   in
@@ -116,3 +120,11 @@ let update_line lines line_idx new_line =
   List.mapi (fun i line -> if i = line_idx then new_line else line) lines
 
 let effective_width model = model.term_width - String.length prompt
+
+let cursor_terminal_pos model =
+  match model.mode with
+  | History_search search ->
+      (0, Unicode_string.prefix_width search model.cursor_pos)
+  | _ ->
+      internal_to_terminal (effective_width model) model.lines
+        (model.cursor_line, model.cursor_pos)

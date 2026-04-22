@@ -32,8 +32,6 @@ let clear_model_for_submit ?(awaiting_response = true) model =
     previous_prompt_top_row = new_prompt_top + scroll_amount;
     lines = [ Unicode_string.empty ];
     lex_cache = R_lex_cache.create [ Unicode_string.empty ];
-    cursor_row = 0;
-    cursor_col = 0;
     cursor_line = 0;
     cursor_pos = 0;
     prompt_box_height = min_prompt_height;
@@ -46,8 +44,6 @@ let set_mode_normal_blank model =
     mode = Frontend_types.Normal;
     lines = [ Unicode_string.empty ];
     lex_cache = R_lex_cache.create [ Unicode_string.empty ];
-    cursor_row = 0;
-    cursor_col = 0;
     cursor_line = 0;
     cursor_pos = 0;
   }

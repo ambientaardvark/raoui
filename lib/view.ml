@@ -24,10 +24,10 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
         + Unicode_string.display_width s
         + String.length search_prompt_suffix
 
-  let absolute_cursor_pos model =
+  let absolute_cursor_pos model ~cursor_row ~cursor_col =
     let prompt_width = prompt_width_for_mode model.mode in
-    let cursor_abs_row = model.prompt_top_row + model.cursor_row in
-    let cursor_abs_col = prompt_width + model.cursor_col + 1 in
+    let cursor_abs_row = model.prompt_top_row + cursor_row in
+    let cursor_abs_col = prompt_width + cursor_col + 1 in
     (cursor_abs_row, cursor_abs_col)
 
   let print_completion_line line ~selected ~max_width =
@@ -42,10 +42,6 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
     in
     let style = if selected then `Completion_selected else `Completion in
     Terminal_ops.Print [ (style, line) ]
-
-  let completion_col_offset model =
-    let _, col = absolute_cursor_pos model in
-    col
 
   let awaiting_first_output_chunk model =
     let out_row, out_col = model.repl_cursor in
@@ -157,7 +153,7 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
         (fun chunk -> (chunk, [ (`Plain, Unicode_string.to_string chunk) ]))
         wrapped_text
 
-  let view_completions model ops =
+  let view_completions model ops ~cursor_abs_row ~cursor_abs_col =
     let add op = Queue.add op ops in
     if not (should_show_completions model) then ()
     else
@@ -167,9 +163,8 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
           let visible = Completion.visible_items cs in
           if visible = [] then ()
           else
-            let cursor_row, _ = absolute_cursor_pos model in
-            let start_row = cursor_row + 1 in
-            let col_offset = completion_col_offset model in
+            let start_row = cursor_abs_row + 1 in
+            let col_offset = cursor_abs_col in
             let terminal_remaining =
               max 0 (model.term_width - col_offset + 1)
             in
@@ -193,8 +188,11 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
     let ops = Queue.create () in
     let add op = Queue.add op ops in
 
-    let prompt_width = prompt_width_for_mode model.mode in
     let width = effective_width model in
+    let cursor_row, cursor_col = cursor_terminal_pos model in
+    let cursor_abs_row, cursor_abs_col =
+      absolute_cursor_pos model ~cursor_row ~cursor_col
+    in
 
     (* Convert cached tokens to spans *)
     let highlighted_lines =
@@ -283,25 +281,21 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
     end;
 
     (* Render completion dropdown as an overlay after base prompt cleanup. *)
-    view_completions model ops;
+    view_completions model ops ~cursor_abs_row ~cursor_abs_col;
 
     (* Position cursor: in output area during eval, in prompt otherwise.
      Exception: during readline/search mode, always position in prompt area. *)
     (match (model.mode, model.awaiting_response) with
     | Readline _, _ ->
         (* Readline mode: cursor in input area even if awaiting *)
-        let cursor_abs_row = model.prompt_top_row + model.cursor_row in
-        let cursor_abs_col = prompt_width + model.cursor_col + 1 in
         add (Cursor_to (cursor_abs_row, cursor_abs_col))
     | Shell, _ ->
-        let cursor_abs_row = model.prompt_top_row + model.cursor_row in
-        let cursor_abs_col = prompt_width + model.cursor_col + 1 in
         add (Cursor_to (cursor_abs_row, cursor_abs_col))
     | History_search _, _ ->
         (* History search: cursor in the search input within the prompt *)
         let cursor_abs_row = model.prompt_top_row in
         let cursor_abs_col =
-          String.length search_prompt_prefix + model.cursor_col + 1
+          String.length search_prompt_prefix + cursor_col + 1
         in
         add (Cursor_to (cursor_abs_row, cursor_abs_col))
     | Normal, true ->
@@ -310,8 +304,6 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
         add (Cursor_to (row, col))
     | Normal, false ->
         (* Normal mode: cursor in input area *)
-        let cursor_abs_row = model.prompt_top_row + model.cursor_row in
-        let cursor_abs_col = prompt_width + model.cursor_col + 1 in
         add (Cursor_to (cursor_abs_row, cursor_abs_col)));
 
     ops

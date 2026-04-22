@@ -7,3 +7,7 @@ debug_log.txt
 vendor/
 rchitecht/
 Rplots.pdf
+/c_ffi/test_load
+/c_ffi/test_r_bridge
+/c_ffi/test_ring_buffer
+/c_ffi/*.dSYM/
