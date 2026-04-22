@@ -70,6 +70,15 @@ let accept_backslash_completion model =
                 (Repl_effect.Pick_file
                    { token_start; original_token = label });
             ] )
+    | Backslash_command.Effectful
+        { action = Backslash_command.Pick_file_fzf; _ } ->
+        Some
+          ( { model with completion = None },
+            [
+              Repl_effect.Run_backslash_effect
+                (Repl_effect.Pick_file_fzf
+                   { token_start; original_token = label });
+            ] )
   in
   let fallback_exact_command () =
     let line = current_line model in

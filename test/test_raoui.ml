@@ -1880,6 +1880,23 @@ let test_backslash_completion_filters_multiple_greek_matches () =
         (item_labels (Completion.filtered_items cs))
   | None -> Alcotest.fail "Expected backslash completion"
 
+let test_backslash_completion_shows_fzf_command () =
+  let base_model =
+    with_lines (initial_model 20) [ us "\\fz" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:3
+  in
+  let model =
+    match update (Update.Key Tty_listener.Right) base_model with
+    | Continue model -> model
+    | _ -> Alcotest.fail "Expected Continue"
+  in
+  match model.completion with
+  | Some cs ->
+      Alcotest.(check (list string))
+        "shows fzf completion" [ "\\fzf" ]
+        (item_labels (Completion.filtered_items cs))
+  | None -> Alcotest.fail "Expected backslash completion"
+
 let test_normal_completion_not_shown_for_single_character () =
   let base_model =
     with_lines (initial_model 20) [ us "p" ] |> fun model ->
@@ -2051,6 +2068,25 @@ let test_backslash_completion_enter_exact_effect_match () =
         "buffer unchanged while effect runs" "\\file" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected backslash effect"
 
+let test_backslash_completion_enter_exact_fzf_effect_match () =
+  let base_model =
+    with_lines (initial_model 20) [ us "\\fzf" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:4
+  in
+  let model =
+    match update (Update.Key Tty_listener.Right) base_model with
+    | Continue model -> model
+    | _ -> Alcotest.fail "Expected Continue"
+  in
+  match update (Update.Key Tty_listener.Enter) model with
+  | Trigger_backslash_effect
+      (Repl_effect.Pick_file_fzf { token_start; original_token }, new_model) ->
+      Alcotest.(check int) "token start" 0 token_start;
+      Alcotest.(check string) "exact command selected" "\\fzf" original_token;
+      Alcotest.(check string)
+        "buffer unchanged while effect runs" "\\fzf" (first_line_str new_model)
+  | _ -> Alcotest.fail "Expected backslash effect"
+
 let test_backslash_completion_enter_exact_effect_match_after_text () =
   let base_model =
     with_lines (initial_model 20) [ us "foo\\file" ] |> fun model ->
@@ -2082,6 +2118,26 @@ let test_backslash_effect_result_inserts_quoted_path () =
         "path inserted" "\"/tmp/data.csv\"" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected Continue"
 
+let test_backslash_fzf_effect_result_inserts_quoted_path () =
+  let model =
+    with_lines (initial_model 20) [ us "\\fzf" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:4
+  in
+  match
+    update
+      (Update.Backslash_effect_result
+         {
+           token_start = 0;
+           original_token = "\\fzf";
+           inserted_text = Some "\"/tmp/data.csv\"";
+         })
+      model
+  with
+  | Continue new_model ->
+      Alcotest.(check string)
+        "path inserted" "\"/tmp/data.csv\"" (first_line_str new_model)
+  | _ -> Alcotest.fail "Expected Continue"
+
 let test_backslash_effect_cancel_keeps_token () =
   let model =
     with_lines (initial_model 20) [ us "\\file" ] |> fun model ->
@@ -2095,6 +2151,21 @@ let test_backslash_effect_cancel_keeps_token () =
   with
   | Continue new_model ->
       Alcotest.(check string) "token kept" "\\file" (first_line_str new_model)
+  | _ -> Alcotest.fail "Expected Continue"
+
+let test_backslash_fzf_effect_cancel_keeps_token () =
+  let model =
+    with_lines (initial_model 20) [ us "\\fzf" ] |> fun model ->
+    with_cursor_internal model ~line:0 ~pos:4
+  in
+  match
+    update
+      (Update.Backslash_effect_result
+         { token_start = 0; original_token = "\\fzf"; inserted_text = None })
+      model
+  with
+  | Continue new_model ->
+      Alcotest.(check string) "token kept" "\\fzf" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected Continue"
 
 (* Prompt placement tests *)
@@ -2574,6 +2645,8 @@ let () =
             test_backslash_completion_lists_common_greek_letters;
           test_case "Backslash completion filters multiple greek matches" `Quick
             test_backslash_completion_filters_multiple_greek_matches;
+          test_case "Backslash completion shows fzf command" `Quick
+            test_backslash_completion_shows_fzf_command;
           test_case "Normal completion not shown for single character" `Quick
             test_normal_completion_not_shown_for_single_character;
           test_case "History search typing ignores completions" `Quick
@@ -2590,12 +2663,18 @@ let () =
             test_backslash_completion_enter_exact_simple_match_after_text_with_backend_completion;
           test_case "Backslash enter exact effect match" `Quick
             test_backslash_completion_enter_exact_effect_match;
+          test_case "Backslash enter exact fzf effect match" `Quick
+            test_backslash_completion_enter_exact_fzf_effect_match;
           test_case "Backslash enter exact effect match after text" `Quick
             test_backslash_completion_enter_exact_effect_match_after_text;
           test_case "Backslash effect result inserts quoted path" `Quick
             test_backslash_effect_result_inserts_quoted_path;
+          test_case "Backslash fzf effect result inserts quoted path" `Quick
+            test_backslash_fzf_effect_result_inserts_quoted_path;
           test_case "Backslash effect cancel keeps token" `Quick
             test_backslash_effect_cancel_keeps_token;
+          test_case "Backslash fzf effect cancel keeps token" `Quick
+            test_backslash_fzf_effect_cancel_keeps_token;
         ] );
       ( "prompt_placement",
         [

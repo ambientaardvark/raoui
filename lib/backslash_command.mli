@@ -5,6 +5,7 @@ type simple_command = {
 
 type effectful_command =
   | Pick_file
+  | Pick_file_fzf
 
 type command =
   | Simple of simple_command

@@ -5,6 +5,7 @@ type simple_command = {
 
 type effectful_command =
   | Pick_file
+  | Pick_file_fzf
 
 type command =
   | Simple of simple_command
@@ -37,6 +38,7 @@ let default_registry =
     Simple { name = "psi"; inserted_text = "ψ" };
     Simple { name = "omega"; inserted_text = "ω" };
     Effectful { name = "file"; action = Pick_file };
+    Effectful { name = "fzf"; action = Pick_file_fzf };
   ]
 
 let name = function

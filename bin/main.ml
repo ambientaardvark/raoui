@@ -335,10 +335,39 @@ let choose_file ~orig_termios =
   let command = "osascript -e 'POSIX path of (choose file)'" in
   with_normal_terminal ~orig_termios (fun () -> run_command_capture command)
 
+let choose_file_fzf ~orig_termios =
+  let command =
+    "if command -v fd >/dev/null 2>&1; then \
+     fd --type f --strip-cwd-prefix; \
+     else find . -type f | sed 's#^\\./##'; fi | fzf"
+  in
+  with_normal_terminal ~orig_termios (fun () -> run_command_capture command)
+
+let normalize_selected_path path =
+  assert (path <> "");
+  let normalized =
+    if Filename.is_relative path then Unix.realpath path else path
+  in
+  assert (not (Filename.is_relative normalized));
+  normalized
+
+let inserted_path_text selected_path =
+  selected_path |> normalize_selected_path |> quote_r_string
+
 let run_backslash_effect ~orig_termios = function
   | Repl_effect.Pick_file { token_start; original_token } ->
       let inserted_text =
-        choose_file ~orig_termios |> Option.map quote_r_string
+        choose_file ~orig_termios |> Option.map inserted_path_text
+      in
+      Update.Backslash_effect_result
+        {
+          token_start;
+          original_token;
+          inserted_text;
+        }
+  | Repl_effect.Pick_file_fzf { token_start; original_token } ->
+      let inserted_text =
+        choose_file_fzf ~orig_termios |> Option.map inserted_path_text
       in
       Update.Backslash_effect_result
         {

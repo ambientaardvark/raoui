@@ -3,6 +3,10 @@ type backslash_effect =
       token_start : int;
       original_token : string;
     }
+  | Pick_file_fzf of {
+      token_start : int;
+      original_token : string;
+    }
 
 type t =
   | Submit of string
