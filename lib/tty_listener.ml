@@ -129,10 +129,22 @@ let parse_csi_sequence ~prefetched stdin =
       | _ -> Unknown (Printf.sprintf "\x1b[%s~" params))
   | Some c -> Unknown (Printf.sprintf "\x1b[%s%c" params c)
 
+let parse_ss3_sequence ~prefetched ~escape_timeout_sec clock stdin =
+  match read_byte_timeout ~prefetched clock stdin escape_timeout_sec with
+  | None -> Unknown "\x1bO"
+  | Some 'A' -> Up
+  | Some 'B' -> Down
+  | Some 'C' -> Right
+  | Some 'D' -> Left
+  | Some 'H' -> Home
+  | Some 'F' -> End
+  | Some c -> Unknown (Printf.sprintf "\x1bO%c" c)
+
 let parse_escape ~prefetched ~escape_timeout_sec clock stdin =
   match read_byte_timeout ~prefetched clock stdin escape_timeout_sec with
   | None -> Escape
   | Some '[' -> parse_csi_sequence ~prefetched stdin
+  | Some 'O' -> parse_ss3_sequence ~prefetched ~escape_timeout_sec clock stdin
   | Some '\n' -> Ctrl '\r' (* newline on linux *)
   | Some 'b' -> Other "last word"
   | Some 'f' -> Other "next word"

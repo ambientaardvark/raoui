@@ -65,6 +65,26 @@ let test_prefetched_chars_are_read_in_order () =
     ]
     keys
 
+let test_prefetched_ss3_left_arrow_decodes () =
+  let prefetched = queue_of_string "\x1bOD" in
+  let key =
+    with_clock (fun clock ->
+        Raoui.Tty_listener.await_input ~prefetched:(Some prefetched) ~clock
+          ~stdin:(Eio.Flow.string_source ""))
+  in
+  check bool "ss3 left arrow decodes" true
+    (key = Raoui.Tty_listener.Left)
+
+let test_prefetched_ss3_home_decodes () =
+  let prefetched = queue_of_string "\x1bOH" in
+  let key =
+    with_clock (fun clock ->
+        Raoui.Tty_listener.await_input ~prefetched:(Some prefetched) ~clock
+          ~stdin:(Eio.Flow.string_source ""))
+  in
+  check bool "ss3 home decodes" true
+    (key = Raoui.Tty_listener.Home)
+
 let () =
   run "tty_listener"
     [
@@ -74,5 +94,8 @@ let () =
             test_prefetched_bracketed_paste_decodes;
           test_case "plain chars read in order" `Quick
             test_prefetched_chars_are_read_in_order;
+          test_case "ss3 left arrow decodes" `Quick
+            test_prefetched_ss3_left_arrow_decodes;
+          test_case "ss3 home decodes" `Quick test_prefetched_ss3_home_decodes;
         ] );
     ]
