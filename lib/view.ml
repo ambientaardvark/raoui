@@ -256,17 +256,11 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
     let visible_rows = max 0 (min (total_rows - skip_rows) model.term_height) in
 
     let total_box_rows = visible_rows in
-    let old_visible_rows = min model.prompt_box_height model.term_height in
-    let extra_lines = old_visible_rows - total_box_rows in
     let cursor_after_render = viewport_start + total_box_rows - 1 in
-    let possible_space = max 0 (model.term_height - cursor_after_render) in
-    let rows_to_clear = max 0 (min extra_lines possible_space) in
-    for i = 1 to rows_to_clear do
-      let row = cursor_after_render + i in
-      if row <= model.term_height then begin
-        add (Cursor_to (row, 1));
-        add Clear_to_eol
-      end
+    let first_row_to_clear = max viewport_start (cursor_after_render + 1) in
+    for row = first_row_to_clear to model.term_height do
+      add (Cursor_to (row, 1));
+      add Clear_to_eol
     done;
 
     (* Clear the reserved output row before the first chunk arrives so stale

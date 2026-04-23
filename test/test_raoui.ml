@@ -873,6 +873,30 @@ let test_view_preserves_streamed_output_row () =
     "streamed output row is not cleared" false
     (clears_row 4 (view_ops_list model))
 
+let test_view_clears_below_prompt_box_to_bottom () =
+  let width = 20 in
+  let model =
+    {
+      (with_lines (initial_model width) [ us "alpha"; us "beta"; us "gamma" ])
+      with
+      prompt_top_row = 6;
+      term_height = 10;
+      prompt_box_height = Frontend_types.min_prompt_height;
+      completion =
+        Some
+          (Completion.create ~token_start:0
+             (List.map Completion.backend_item [ "item0"; "item1"; "item2"; "item3" ]));
+    }
+    |> fun model -> with_cursor_internal model ~line:2 ~pos:5
+  in
+  let ops = view_ops_list model in
+  Alcotest.(check bool)
+    "clears first row below prompt content" true
+    (clears_row 9 ops);
+  Alcotest.(check bool)
+    "clears terminal bottom row" true
+    (clears_row 10 ops)
+
 let test_history_search_hides_cursor () =
   let model = { (initial_model 20) with mode = History_search (us "as") } in
   let ops = view_ops_list model in
@@ -2627,6 +2651,8 @@ let () =
             test_view_completion_rows_capped_at_4;
           test_case "View scrolls completion rows with tab" `Quick
             test_view_completion_rows_scroll_with_tab;
+          test_case "View clears below prompt box to bottom" `Quick
+            test_view_clears_below_prompt_box_to_bottom;
           test_case "Backslash exact match is visually selected" `Quick
             test_backslash_exact_match_is_visually_selected;
           test_case "Backend exact match is visually selected" `Quick
