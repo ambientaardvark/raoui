@@ -2,6 +2,7 @@
  (name raoui)
  (libraries
  unix
+ terminal_size
   eio
   eio_main
   logs

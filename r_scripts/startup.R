@@ -61,13 +61,6 @@ local({
     )
   }
 
-  plot_preview_png_path <- function(index) {
-    file.path(
-      raoui_plot_dir,
-      sprintf("plot-%06d-preview.png", as.integer(index))
-    )
-  }
-
   next_plot_svg_path <- function(index = raoui_plot_counter) {
     file.path(
       raoui_plot_dir,
@@ -247,25 +240,19 @@ local({
     inspect_width <- as.integer(meta$width * raoui_inspect_scale)
     inspect_height <- as.integer(meta$height * raoui_inspect_scale)
     source_path <- plot_png_path(next_index)
-    preview_path <- plot_preview_png_path(next_index)
+    preview_path <- source_path
     if (identical(meta$kind, "svg")) {
       svg_path <- next_plot_svg_path(next_index)
       plot_log(
         "snapshot changed, rendering transient svg artifact path=", svg_path,
-        " inspect_png=", source_path, " preview_png=", preview_path
+        " inspect_png=", source_path
       )
       if (!render_recorded_plot(meta$opener, svg_path, meta$width, meta$height, recorded)) {
         return(invisible(NULL))
       }
     } else {
-      plot_log(
-        "snapshot changed, rendering png artifacts source=", source_path,
-        " preview=", preview_path
-      )
+      plot_log("snapshot changed, rendering png artifact source=", source_path)
       if (!render_recorded_plot(meta$opener, source_path, inspect_width, inspect_height, recorded)) {
-        return(invisible(NULL))
-      }
-      if (!render_recorded_plot(meta$opener, preview_path, meta$width, meta$height, recorded)) {
         return(invisible(NULL))
       }
     }
@@ -277,8 +264,7 @@ local({
       ok <- FALSE
       tryCatch(
         {
-          ok <- rasterize_svg_preview(svg_path, source_path, inspect_width, inspect_height) &&
-            rasterize_svg_preview(svg_path, preview_path, meta$width, meta$height)
+          ok <- rasterize_svg_preview(svg_path, source_path, inspect_width, inspect_height)
         },
         finally = {
           if (file.exists(svg_path)) {
@@ -294,10 +280,6 @@ local({
     raoui_plot_counter <<- next_index
     if (!file.exists(source_path)) {
       plot_log("source png missing after render path=", source_path)
-      return(invisible(NULL))
-    }
-    if (!file.exists(preview_path)) {
-      plot_log("preview png missing after render path=", preview_path)
       return(invisible(NULL))
     }
     meta$last_snapshot <- snapshot
