@@ -1,5 +1,4 @@
 open Frontend_types
-
 module Term = Terminal_ops.Ansi
 
 let initial_theme user_options =
@@ -7,8 +6,8 @@ let initial_theme user_options =
   | Some name -> Theme.of_name name
   | None -> Theme.tokyo_night
 
-let make ~history ~user_options ~terminal_capabilities () :
-    Frontend_types.model =
+let make ~history ~user_options ~terminal_capabilities () : Frontend_types.model
+    =
   let row, _col = Terminal_session.get_cursor_position () in
   let term_width, term_height = Terminal_session.get_term_dimensions () in
   let lines = [ Unicode_string.empty ] in
@@ -18,12 +17,14 @@ let make ~history ~user_options ~terminal_capabilities () :
     | _ -> false
   in
   Logs.info (fun m ->
-      m "initial terminal state: row=%d width=%d height=%d ide=%b image_protocol=%s"
+      m
+        "initial terminal state: row=%d width=%d height=%d ide=%b \
+         image_protocol=%s"
         row term_width term_height running_in_ide
         (match terminal_capabilities.Terminal_capabilities.image_protocol with
-         | Terminal_capabilities.Kitty -> "kitty"
-         | Terminal_capabilities.ITerm -> "iterm"
-         | Terminal_capabilities.No_image -> "none"));
+        | Terminal_capabilities.Kitty -> "kitty"
+        | Terminal_capabilities.ITerm -> "iterm"
+        | Terminal_capabilities.No_image -> "none"));
   let clamped = Frontend_types.clamp_prompt_top term_height row in
   let scroll_needed = row - clamped in
   if scroll_needed > 0 then begin

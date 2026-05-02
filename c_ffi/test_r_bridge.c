@@ -231,6 +231,37 @@ int main(void) {
     ASSERT(count > 0, "user var: returns completions");
     ASSERT(completions_contain(buf, "my_test_var_xyz"), "user var: contains \"my_test_var_xyz\"");
 
+    printf("\n--- Column completion: data.frame ---\n");
+    rffi_submit("my_test_df <- data.frame(alpha = 1, beta_value = 2)");
+    drain();
+    rffi_request_columns("my_test_df");
+    count = collect_completions(buf, sizeof(buf), token, sizeof(token));
+    ASSERT(count == 2, "data.frame columns: returns two columns");
+    ASSERT(strcmp(token, "") == 0, "data.frame columns: token is empty");
+    ASSERT(completions_contain(buf, "alpha"), "data.frame columns: contains \"alpha\"");
+    ASSERT(completions_contain(buf, "beta_value"), "data.frame columns: contains \"beta_value\"");
+
+    printf("\n--- Column completion: tibble-like data frame ---\n");
+    rffi_submit("my_test_tbl <- data.frame(gamma = 1, delta_value = 2); class(my_test_tbl) <- c('tbl_df', 'tbl', 'data.frame')");
+    drain();
+    rffi_request_columns("my_test_tbl");
+    count = collect_completions(buf, sizeof(buf), token, sizeof(token));
+    ASSERT(count == 2, "tibble columns: returns two columns");
+    ASSERT(completions_contain(buf, "gamma"), "tibble columns: contains \"gamma\"");
+    ASSERT(completions_contain(buf, "delta_value"), "tibble columns: contains \"delta_value\"");
+
+    printf("\n--- Column completion: non-data object ---\n");
+    rffi_submit("my_test_scalar <- 42");
+    drain();
+    rffi_request_columns("my_test_scalar");
+    count = collect_completions(buf, sizeof(buf), token, sizeof(token));
+    ASSERT(count == 0, "non-data object columns: returns empty");
+
+    printf("\n--- Column completion: missing object ---\n");
+    rffi_request_columns("my_missing_df");
+    count = collect_completions(buf, sizeof(buf), token, sizeof(token));
+    ASSERT(count == 0, "missing object columns: returns empty");
+
     /* ---- Readline test ---- */
 
     printf("\n--- Readline: simple prompt ---\n");

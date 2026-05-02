@@ -32,6 +32,12 @@ void     rffi_rb_reset(void);
    Result arrives via RB_MSG_COMPLETIONS in the ring buffer. */
 void rffi_request_completions(const char *line, int cursor_pos);
 
+/* Request column names for a data-frame-like R object by name.
+   Non-blocking: posts to the worker thread's queue.
+   Result arrives via RB_MSG_COMPLETIONS with an empty token line followed by
+   column names, one per line. Non-data-frame objects return no items. */
+void rffi_request_columns(const char *object_name);
+
 /* Signal the passthrough gate so the R thread can proceed with system(). */
 void rffi_signal_passthrough(void);
 

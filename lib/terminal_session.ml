@@ -32,7 +32,6 @@ let disable_bracketed_paste () =
 (* Populated during init (before Eio) by get_cursor_position, then drained
    by the Eio event loop via tty_listener's prefetched-byte mechanism. *)
 let pending_input = Queue.create ()
-
 let enqueue_pending_char c = Queue.push c pending_input
 let enqueue_pending_string s = String.iter enqueue_pending_char s
 
@@ -55,15 +54,15 @@ let get_cursor_position () =
     match input_char stdin with
     | '\x1b' -> (
         match input_char stdin with
-        | '[' ->
+        | '[' -> (
             let buf = Buffer.create 16 in
             Buffer.add_string buf "\x1b[";
             let response = read_csi_sequence buf in
-            (match parse_cursor_position_response response with
-             | Some pos -> pos
-             | None ->
-                 enqueue_pending_string response;
-                 loop ())
+            match parse_cursor_position_response response with
+            | Some pos -> pos
+            | None ->
+                enqueue_pending_string response;
+                loop ())
         | c ->
             enqueue_pending_char '\x1b';
             enqueue_pending_char c;
@@ -76,14 +75,12 @@ let get_cursor_position () =
 
 let get_term_dimensions () =
   let height =
-    Terminal_size.get_rows ()
-    |> function
+    Terminal_size.get_rows () |> function
     | Some h -> h
     | None -> failwith "can't get terminal height"
   in
   let width =
-    Terminal_size.get_columns ()
-    |> function
+    Terminal_size.get_columns () |> function
     | Some w -> w
     | None -> failwith "can't get terminal width"
   in
@@ -93,7 +90,7 @@ let sigwinch_pipe_rd, sigwinch_pipe_wr =
   let rd, wr = Unix.pipe ~cloexec:true () in
   Unix.set_nonblock rd;
   Unix.set_nonblock wr;
-  rd, wr
+  (rd, wr)
 
 let sigwinch_byte = Bytes.of_string "x"
 
@@ -107,9 +104,11 @@ let () =
 let rec await_dim_change ~current_w ~current_h =
   Eio_unix.await_readable sigwinch_pipe_rd;
   let buf = Bytes.create 16 in
-  (try while Unix.read sigwinch_pipe_rd buf 0 16 > 0 do () done
+  (try
+     while Unix.read sigwinch_pipe_rd buf 0 16 > 0 do
+       ()
+     done
    with Unix.Unix_error (Unix.EAGAIN, _, _) -> ());
   let w, h = get_term_dimensions () in
-  if w = current_w && h = current_h then
-    await_dim_change ~current_w ~current_h
+  if w = current_w && h = current_h then await_dim_change ~current_w ~current_h
   else (w, h)

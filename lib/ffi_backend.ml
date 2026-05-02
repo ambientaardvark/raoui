@@ -260,5 +260,9 @@ let cancel _t = ignore (Rffi.interrupt ())
 let request_completions t input ~cursor_pos =
   if t.ready && not t.busy then
     Rffi.request_completions input cursor_pos
+
+let request_columns t object_name =
+  if t.ready && not t.busy then Rffi.request_columns object_name
+
 let restart _t = ()
 let deinit _t = Rffi.shutdown ()

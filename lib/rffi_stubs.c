@@ -98,6 +98,11 @@ CAMLprim value caml_rffi_request_completions(value v_line, value v_cursor_pos) {
     return Val_unit;
 }
 
+CAMLprim value caml_rffi_request_columns(value v_object_name) {
+    rffi_request_columns(String_val(v_object_name));
+    return Val_unit;
+}
+
 CAMLprim value caml_rffi_submit_readline_input(value v_input) {
     rffi_submit_readline_input(String_val(v_input));
     return Val_unit;

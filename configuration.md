@@ -63,9 +63,9 @@ Supported keys:
   when needed
 
 When the SVG transport is available, Raoui uses a transient SVG internally and
-keeps a durable high-resolution PNG artifact for external opening. Inline
-terminal rendering uses a smaller preview PNG and prints a clickable `open
-plot` banner pointing at the durable PNG.
+keeps a durable high-resolution PNG artifact for both inline terminal rendering
+and external opening. Inline output prints a clickable `open plot` banner
+pointing at the same durable PNG.
 
 ## Runtime Paths
 

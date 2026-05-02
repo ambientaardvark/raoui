@@ -1,8 +1,6 @@
 open Raoui
 open Frontend_types
-
 module Term = Terminal_ops.Ansi
-
 module V = View.Make (Term)
 
 let paths = Paths.resolve ()
@@ -18,10 +16,8 @@ let print_repl_output =
   Output_renderer.print_repl_output ~terminal_capabilities ~user_options
 
 let execute_one backend = function
-  | Repl_effect.Submit text ->
-      Ffi_backend.submit backend text
-  | Repl_effect.Cancel ->
-      Ffi_backend.cancel backend
+  | Repl_effect.Submit text -> Ffi_backend.submit backend text
+  | Repl_effect.Cancel -> Ffi_backend.cancel backend
   | Repl_effect.RequestCompletions (text, cursor_pos) ->
       Ffi_backend.request_completions backend text ~cursor_pos
   | Repl_effect.SubmitReadlineInput text ->
@@ -32,8 +28,7 @@ let execute_one backend = function
   | Repl_effect.EnterPassthrough -> ()
   | Repl_effect.Quit -> ()
 
-let execute_effects backend effects =
-  List.iter (execute_one backend) effects
+let execute_effects backend effects = List.iter (execute_one backend) effects
 
 let render_submit_snapshot model effects =
   let should_render_snapshot =
@@ -61,54 +56,61 @@ let enter_passthrough model backend orig_termios loop =
         let new_row, new_col = Terminal_session.get_cursor_position () in
         let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
         let natural = max model.prompt_top_row next_prompt_row in
-        let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
+        let clamped =
+          Frontend_types.clamp_prompt_top model.term_height natural
+        in
         let scroll_needed = natural - clamped in
         if scroll_needed > 0 then begin
-          print_string (Term.scroll_up ~term_height:model.term_height scroll_needed);
+          print_string
+            (Term.scroll_up ~term_height:model.term_height scroll_needed);
           flush stdout
         end;
-        loop { model with
-          prompt_top_row = clamped;
-          repl_cursor = (new_row - scroll_needed, new_col);
-          prompt_box_height = Frontend_types.min_prompt_height;
-        }
+        loop
+          {
+            model with
+            prompt_top_row = clamped;
+            repl_cursor = (new_row - scroll_needed, new_col);
+            prompt_box_height = Frontend_types.min_prompt_height;
+          }
     | _ -> passthrough_loop ()
   in
   passthrough_loop ()
 
 let run env backend ~orig_termios =
-  let clock = Eio.Stdenv.clock env
-  and stdin = Eio.Stdenv.stdin env in
+  let clock = Eio.Stdenv.clock env and stdin = Eio.Stdenv.stdin env in
   let init_model = make_init () in
   let init_width = init_model.term_width in
   let startup_mode =
     Plot_policy.resolve ~running_in_ide:init_model.running_in_ide
-      ~terminal_caps:terminal_capabilities
-      ~plot_mode:user_options.plot_mode
+      ~terminal_caps:terminal_capabilities ~plot_mode:user_options.plot_mode
   in
   Logs.info (fun m ->
-      m "plot startup mode: %s" (Plot_policy.string_of_startup_mode startup_mode));
+      m "plot startup mode: %s"
+        (Plot_policy.string_of_startup_mode startup_mode));
   let startup_file =
     let dir = Filename.dirname Sys.executable_name in
     let bundled = Filename.concat dir "startup.R" in
     if Sys.file_exists bundled then bundled else "r_scripts/startup.R"
   in
   Logs.info (fun m ->
-      m "startup: cwd=%s exe=%s term_program=%s vscode_init_r=%s startup_file=%s"
-        (Sys.getcwd ())
-        Sys.executable_name
+      m
+        "startup: cwd=%s exe=%s term_program=%s vscode_init_r=%s \
+         startup_file=%s"
+        (Sys.getcwd ()) Sys.executable_name
         (Option.value ~default:"" (Sys.getenv_opt "TERM_PROGRAM"))
         (Option.value ~default:"" (Sys.getenv_opt "VSCODE_INIT_R"))
         startup_file);
 
   Ffi_backend.background_submit backend
     (Printf.sprintf "source('%s');options(width=%d)" startup_file init_width);
-  (match Plot_policy.startup_command startup_mode
-           ~renderer:user_options.plot_renderer with
-   | Some command ->
-       Logs.info (fun m -> m "plot startup command: %s" command);
-       Ffi_backend.background_submit backend command
-   | None -> ());
+  (match
+     Plot_policy.startup_command startup_mode
+       ~renderer:user_options.plot_renderer
+   with
+  | Some command ->
+      Logs.info (fun m -> m "plot startup command: %s" command);
+      Ffi_backend.background_submit backend command
+  | None -> ());
 
   let cached_keys =
     Tty_listener.drain_to_keys_with_timeouts
@@ -121,12 +123,11 @@ let run env backend ~orig_termios =
       (fun m key ->
         let m', effects = Update.update (Update.Key key) m in
         match effects with
-        | [Repl_effect.Quit] -> m
+        | [ Repl_effect.Quit ] -> m
         | _ ->
-          execute_effects backend effects;
-          m')
-      init_model
-      cached_keys
+            execute_effects backend effects;
+            m')
+      init_model cached_keys
   in
 
   let rec loop model =
@@ -134,37 +135,37 @@ let run env backend ~orig_termios =
     print_string (V.view model);
     flush stdout;
     let msg =
-        Eio.Fiber.any
-          [
-            (fun () ->
-              let escape_timeout_sec =
-                if model.running_in_ide then 0.2 else 0.05
-              in
-              Update.Key
-                (Tty_listener.await_input_with_timeout
-                   ~prefetched:(Some Terminal_session.pending_input)
-                   ~escape_timeout_sec ~clock ~stdin));
-            (fun () -> Update.Response (Ffi_backend.await_response backend));
-            (fun () ->
-              let w, h =
-                Terminal_session.await_dim_change
-                  ~current_w:model.term_width ~current_h:model.term_height
-              in
-              Update.TermResize (w, h));
-          ]
+      Eio.Fiber.any
+        [
+          (fun () ->
+            let escape_timeout_sec =
+              if model.running_in_ide then 0.2 else 0.05
+            in
+            Update.Key
+              (Tty_listener.await_input_with_timeout
+                 ~prefetched:(Some Terminal_session.pending_input)
+                 ~escape_timeout_sec ~clock ~stdin));
+          (fun () -> Update.Response (Ffi_backend.await_response backend));
+          (fun () ->
+            let w, h =
+              Terminal_session.await_dim_change ~current_w:model.term_width
+                ~current_h:model.term_height
+            in
+            Update.TermResize (w, h));
+        ]
     in
     let new_model, effects = Update.update msg model in
     match effects with
-    | [Repl_effect.Quit] -> ()
-    | [Repl_effect.Cancel] ->
+    | [ Repl_effect.Quit ] -> ()
+    | [ Repl_effect.Cancel ] ->
         execute_effects backend effects;
         loop (make_init ())
-    | [Repl_effect.Run_backslash_effect cmd] ->
+    | [ Repl_effect.Run_backslash_effect cmd ] ->
         let result_msg = Backslash_effect_runner.run ~orig_termios cmd in
         let effect_model, effect_effects = Update.update result_msg new_model in
         execute_effects backend effect_effects;
         loop (print_repl_output effect_model)
-    | [Repl_effect.EnterPassthrough] ->
+    | [ Repl_effect.EnterPassthrough ] ->
         execute_effects backend effects;
         enter_passthrough new_model backend orig_termios loop
     | _ ->

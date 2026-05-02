@@ -40,8 +40,7 @@ let choose_file ~orig_termios =
 
 let choose_file_fzf ~orig_termios =
   let command =
-    "if command -v fd >/dev/null 2>&1; then \
-     fd --type f --strip-cwd-prefix; \
+    "if command -v fd >/dev/null 2>&1; then fd --type f --strip-cwd-prefix; \
      else find . -type f | sed 's#^\\./##'; fi | fzf"
   in
   with_normal_terminal ~orig_termios (fun () -> run_command_capture command)
@@ -63,18 +62,10 @@ let run ~orig_termios = function
         choose_file ~orig_termios |> Option.map inserted_path_text
       in
       Update.Backslash_effect_result
-        {
-          token_start;
-          original_token;
-          inserted_text;
-        }
+        { token_start; original_token; inserted_text }
   | Repl_effect.Pick_file_fzf { token_start; original_token } ->
       let inserted_text =
         choose_file_fzf ~orig_termios |> Option.map inserted_path_text
       in
       Update.Backslash_effect_result
-        {
-          token_start;
-          original_token;
-          inserted_text;
-        }
+        { token_start; original_token; inserted_text }

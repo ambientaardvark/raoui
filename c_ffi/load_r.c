@@ -50,6 +50,7 @@ static pthread_cond_t cmd_cond = PTHREAD_COND_INITIALIZER;
 static char *pending_cmd = NULL;
 static char *pending_completion_line = NULL;
 static int   pending_completion_pos  = 0;
+static char *pending_column_object = NULL;
 static atomic_int shutdown_flag = 0;
 
 /* ---- Crash logging ---- */
@@ -640,6 +641,32 @@ static void run_completions(const char *line, int cursor_pos) {
     }
 }
 
+static void run_column_completions(const char *object_name) {
+    /* Set .raoui_column_object in R's global env (avoids string escaping) */
+    SEXP sym = Rf_install(".raoui_column_object");
+    SEXP val = Rf_protect(Rf_mkString(object_name));
+    Rf_defineVar(sym, val, *R_GlobalEnv_ptr);
+    Rf_unprotect(1);
+
+    const char *code =
+        "local({"
+        "  object_name <- .raoui_column_object;"
+        "  cols <- tryCatch({"
+        "    obj <- get(object_name, envir=.GlobalEnv, inherits=TRUE);"
+        "    if (is.data.frame(obj)) names(obj) else character();"
+        "  }, error=function(e) character());"
+        "  paste0(c('', cols), collapse='\\n')"
+        "})";
+
+    char *result = eval_for_string(code);
+    if (result) {
+        rb_push(&g_rb, RB_MSG_COMPLETIONS, 0, result, (uint32_t)strlen(result));
+        free(result);
+    } else {
+        rb_push(&g_rb, RB_MSG_COMPLETIONS, 0, "", 0);
+    }
+}
+
 /* ---- Worker thread ---- */
 
 static void *r_thread_func(void *arg) {
@@ -660,7 +687,7 @@ static void *r_thread_func(void *arg) {
     /* Worker loop: wait for commands, process R events while idle */
     while (!atomic_load(&shutdown_flag)) {
         pthread_mutex_lock(&cmd_mutex);
-        if (!pending_cmd && !pending_completion_line
+        if (!pending_cmd && !pending_completion_line && !pending_column_object
             && !atomic_load(&shutdown_flag)) {
             struct timeval tv;
             gettimeofday(&tv, NULL);
@@ -680,6 +707,8 @@ static void *r_thread_func(void *arg) {
             /* Discard stale completion request */
             free(pending_completion_line);
             pending_completion_line = NULL;
+            free(pending_column_object);
+            pending_column_object = NULL;
             pthread_mutex_unlock(&cmd_mutex);
             rb_reset(&g_rb);
             eval_code(code);
@@ -688,9 +717,17 @@ static void *r_thread_func(void *arg) {
             char *line = pending_completion_line;
             int pos = pending_completion_pos;
             pending_completion_line = NULL;
+            free(pending_column_object);
+            pending_column_object = NULL;
             pthread_mutex_unlock(&cmd_mutex);
             run_completions(line, pos);
             free(line);
+        } else if (pending_column_object) {
+            char *object_name = pending_column_object;
+            pending_column_object = NULL;
+            pthread_mutex_unlock(&cmd_mutex);
+            run_column_completions(object_name);
+            free(object_name);
         } else {
             pthread_mutex_unlock(&cmd_mutex);
         }
@@ -732,6 +769,18 @@ void rffi_request_completions(const char *line, int cursor_pos) {
     free(pending_completion_line);
     pending_completion_line = strdup(line);
     pending_completion_pos = cursor_pos;
+    free(pending_column_object);
+    pending_column_object = NULL;
+    pthread_cond_signal(&cmd_cond);
+    pthread_mutex_unlock(&cmd_mutex);
+}
+
+void rffi_request_columns(const char *object_name) {
+    pthread_mutex_lock(&cmd_mutex);
+    free(pending_column_object);
+    pending_column_object = strdup(object_name);
+    free(pending_completion_line);
+    pending_completion_line = NULL;
     pthread_cond_signal(&cmd_cond);
     pthread_mutex_unlock(&cmd_mutex);
 }

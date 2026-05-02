@@ -759,6 +759,20 @@ let test_parse_image_full_payload () =
       Alcotest.(check (option int)) "height" (Some 600) img.height_px
   | None -> Alcotest.fail "expected Some image"
 
+let test_parse_image_aliased_preview_payload () =
+  let payload =
+    "source_path = /tmp/plot.png\npreview_path = /tmp/plot.png\nmime = image/png\nwidth = 1800\nheight = 1350"
+  in
+  let result = Ffi_backend.parse_image_payload payload in
+  match result with
+  | Some img ->
+      Alcotest.(check string) "source path" "/tmp/plot.png" img.source_path;
+      Alcotest.(check string) "preview path aliases source" img.source_path
+        img.preview_path;
+      Alcotest.(check (option int)) "width" (Some 1800) img.width_px;
+      Alcotest.(check (option int)) "height" (Some 1350) img.height_px
+  | None -> Alcotest.fail "expected Some image"
+
 let test_parse_image_missing_path () =
   let payload = "mime = image/png\nwidth = 800" in
   Alcotest.(check bool) "no path key" true
@@ -2543,6 +2557,8 @@ let () =
           test_case "Parse image: empty" `Quick test_parse_image_empty;
           test_case "Parse image: path only" `Quick test_parse_image_path_only;
           test_case "Parse image: full payload" `Quick test_parse_image_full_payload;
+          test_case "Parse image: aliased preview payload" `Quick
+            test_parse_image_aliased_preview_payload;
           test_case "Parse image: missing path" `Quick test_parse_image_missing_path;
           test_case "Parse image: value with =" `Quick test_parse_image_value_with_equals;
           test_case "R_error followed by Done" `Quick

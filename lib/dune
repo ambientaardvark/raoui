@@ -1,13 +1,13 @@
 (library
  (name raoui)
  (libraries
- unix
- terminal_size
+  unix
+  terminal_size
   eio
   eio_main
   logs
- ptime
- uutf
+  ptime
+  uutf
   uuseg
   uucp
   sedlex
@@ -16,8 +16,10 @@
   (language c)
   (names rffi_stubs)
   (include_dirs ../c_ffi)
-  (flags (:standard -std=c99)))
+  (flags
+   (:standard -std=c99)))
  (foreign_archives ../c_ffi/r_ffi_c)
  (preprocess
   (per_module
-   ((pps sedlex.ppx) r_lexer))))
+   ((pps sedlex.ppx)
+    r_lexer))))

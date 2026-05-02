@@ -33,6 +33,7 @@ val signal_passthrough : unit -> unit
 val submit_readline_input : string -> unit
 val cancel : t -> unit
 val request_completions : t -> string -> cursor_pos:int -> unit
+val request_columns : t -> string -> unit
 val restart : t -> unit
 val deinit : t -> unit
 
