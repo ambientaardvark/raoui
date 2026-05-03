@@ -14,8 +14,9 @@ let submit model =
   in
   let guard = safe_guard 1 in
   let r_command = Printf.sprintf "system(r\"%s(%s)%s\")" guard text guard in
-  History.add_to_history model.history model.lines;
-  ( Mode_common.clear_model_for_submit { model with mode = Normal },
+  History.add_to_history model.input.history model.input.lines;
+  ( Mode_common.clear_model_for_submit
+      { model with input = { model.input with mode = Normal } },
     [ Repl_effect.Submit r_command ] )
 
 let apply_key key model =
@@ -29,9 +30,9 @@ let apply_key key model =
         match key with
         | Tab | Escape -> model
         | _ -> (
-            match model.completion with
+            match model.input.completion with
             | Some cs when Completion.is_in_completion_mode cs ->
-                { model with completion = None }
+                { model with input = { model.input with completion = None } }
             | _ -> model)
       in
       match key with

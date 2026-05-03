@@ -15,8 +15,7 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
 
   let prompt_width_for_mode mode =
     match mode with
-    | Readline rl_prompt ->
-        String.length (rendered_readline_prompt rl_prompt)
+    | Readline rl_prompt -> String.length (rendered_readline_prompt rl_prompt)
     | Shell -> String.length shell_prompt
     | Normal -> String.length prompt
     | History_search s ->
@@ -25,8 +24,8 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
         + String.length search_prompt_suffix
 
   let absolute_cursor_pos model ~cursor_row ~cursor_col =
-    let prompt_width = prompt_width_for_mode model.mode in
-    let cursor_abs_row = model.prompt_top_row + cursor_row in
+    let prompt_width = prompt_width_for_mode model.input.mode in
+    let cursor_abs_row = model.layout.prompt_top_row + cursor_row in
     let cursor_abs_col = prompt_width + cursor_col + 1 in
     (cursor_abs_row, cursor_abs_col)
 
@@ -44,13 +43,14 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
     Terminal_ops.Print [ (style, line) ]
 
   let awaiting_first_output_chunk model =
-    let out_row, out_col = model.repl_cursor in
-    model.awaiting_response && out_col = 1 && model.prompt_top_row = out_row + 1
+    let out_row, out_col = model.repl.repl_cursor in
+    model.repl.awaiting_response && out_col = 1
+    && model.layout.prompt_top_row = out_row + 1
 
   let should_show_completions model =
-    model.mode = Frontend_types.Normal
+    model.input.mode = Frontend_types.Normal
     &&
-    match model.completion with
+    match model.input.completion with
     | None -> false
     | Some cs -> Completion.filtered_items cs <> []
 
@@ -157,7 +157,7 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
     let add op = Queue.add op ops in
     if not (should_show_completions model) then ()
     else
-      match model.completion with
+      match model.input.completion with
       | None -> ()
       | Some cs ->
           let visible = Completion.visible_items cs in
@@ -166,13 +166,13 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
             let start_row = cursor_abs_row + 1 in
             let col_offset = cursor_abs_col in
             let terminal_remaining =
-              max 0 (model.term_width - col_offset + 1)
+              max 0 (model.layout.term_width - col_offset + 1)
             in
             let max_width = min completion_max_width terminal_remaining in
             let selected = Completion.selected_index_in_window cs in
             let rec loop row idx = function
               | [] -> ()
-              | _ when row > model.term_height -> ()
+              | _ when row > model.layout.term_height -> ()
               | item :: rest ->
                   add (Terminal_ops.Cursor_to (row, col_offset));
                   add Terminal_ops.Clear_to_eol;
@@ -198,41 +198,41 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
     let highlighted_lines =
       List.map
         (fun (entry : R_lex_cache.entry) -> R_highlight.render_entry entry)
-        model.lex_cache
+        model.input.lex_cache
     in
 
     (* Wrap each line's spans for display *)
     let wrapped_rows =
-      List.map2 (wrap_line_with_spans width) model.lines highlighted_lines
+      List.map2 (wrap_line_with_spans width) model.input.lines highlighted_lines
       |> List.concat
     in
     let total_rows = List.length wrapped_rows in
 
     let show_cursor =
-      match model.mode with
+      match model.input.mode with
       | Frontend_types.Readline _ -> true
       | Frontend_types.History_search _ -> false
-      | _ -> not model.awaiting_response
+      | _ -> not model.repl.awaiting_response
     in
     add (if show_cursor then Show_cursor else Hide_cursor);
 
-    if model.scroll_amount < 0 then begin
-      add (Cursor_to (model.term_height, 1));
-      for _ = 1 to -model.scroll_amount do
+    if model.layout.scroll_amount < 0 then begin
+      add (Cursor_to (model.layout.term_height, 1));
+      for _ = 1 to -model.layout.scroll_amount do
         add Newline
       done
     end;
 
-    let viewport_start = max 1 model.prompt_top_row in
+    let viewport_start = max 1 model.layout.prompt_top_row in
     add (Cursor_to (viewport_start, 1));
-    let skip_rows = viewport_start - model.prompt_top_row in
+    let skip_rows = viewport_start - model.layout.prompt_top_row in
 
     List.iteri
       (fun i (_line, content) ->
-        if i >= skip_rows && i < skip_rows + model.term_height then begin
+        if i >= skip_rows && i < skip_rows + model.layout.term_height then begin
           add Clear_to_eol;
           let p =
-            match (model.mode, i, model.awaiting_response) with
+            match (model.input.mode, i, model.repl.awaiting_response) with
             | Readline rl_prompt, 0, _ -> rendered_readline_prompt rl_prompt
             | Shell, 0, _ -> shell_prompt
             | Readline _, _, _ | Frontend_types.Shell, _, _ -> assert false
@@ -246,19 +246,22 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
             | Normal, 0, true -> pending_prompt
             | Normal, _, _ -> continued_prompt
           in
-          if model.mode = Shell then add (Print ((`Shell_prompt, p) :: content))
+          if model.input.mode = Shell then
+            add (Print ((`Shell_prompt, p) :: content))
           else add (Print ((`Accent, p) :: content));
-          if i < skip_rows + model.term_height - 1 && i < total_rows - 1 then
-            add Newline
+          if i < skip_rows + model.layout.term_height - 1 && i < total_rows - 1
+          then add Newline
         end)
       wrapped_rows;
 
-    let visible_rows = max 0 (min (total_rows - skip_rows) model.term_height) in
+    let visible_rows =
+      max 0 (min (total_rows - skip_rows) model.layout.term_height)
+    in
 
     let total_box_rows = visible_rows in
     let cursor_after_render = viewport_start + total_box_rows - 1 in
     let first_row_to_clear = max viewport_start (cursor_after_render + 1) in
-    for row = first_row_to_clear to model.term_height do
+    for row = first_row_to_clear to model.layout.term_height do
       add (Cursor_to (row, 1));
       add Clear_to_eol
     done;
@@ -267,8 +270,8 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
      completion overlay content does not linger there. Once output has been
      printed, clearing this row would erase streamed content mid-response. *)
     if awaiting_first_output_chunk model then begin
-      let out_row, _ = model.repl_cursor in
-      if out_row >= 1 && out_row <= model.term_height then begin
+      let out_row, _ = model.repl.repl_cursor in
+      if out_row >= 1 && out_row <= model.layout.term_height then begin
         add (Cursor_to (out_row, 1));
         add Clear_to_eol
       end
@@ -279,22 +282,21 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
 
     (* Position cursor: in output area during eval, in prompt otherwise.
      Exception: during readline/search mode, always position in prompt area. *)
-    (match (model.mode, model.awaiting_response) with
+    (match (model.input.mode, model.repl.awaiting_response) with
     | Readline _, _ ->
         (* Readline mode: cursor in input area even if awaiting *)
         add (Cursor_to (cursor_abs_row, cursor_abs_col))
-    | Shell, _ ->
-        add (Cursor_to (cursor_abs_row, cursor_abs_col))
+    | Shell, _ -> add (Cursor_to (cursor_abs_row, cursor_abs_col))
     | History_search _, _ ->
         (* History search: cursor in the search input within the prompt *)
-        let cursor_abs_row = model.prompt_top_row in
+        let cursor_abs_row = model.layout.prompt_top_row in
         let cursor_abs_col =
           String.length search_prompt_prefix + cursor_col + 1
         in
         add (Cursor_to (cursor_abs_row, cursor_abs_col))
     | Normal, true ->
         (* Awaiting response: cursor in output area *)
-        let row, col = model.repl_cursor in
+        let row, col = model.repl.repl_cursor in
         add (Cursor_to (row, col))
     | Normal, false ->
         (* Normal mode: cursor in input area *)

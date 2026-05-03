@@ -1,32 +1,45 @@
 open Frontend_types
 
 let lexer_update start_line end_line model =
-  match model.mode with
+  match model.input.mode with
   | Normal | History_search _ ->
       {
         model with
-        lex_cache =
-          R_lex_cache.update ~start_line ~end_line ~lines:model.lines
-            model.lex_cache;
+        input =
+          {
+            model.input with
+            lex_cache =
+              R_lex_cache.update ~start_line ~end_line ~lines:model.input.lines
+                model.input.lex_cache;
+          };
       }
   | Shell | Readline _ ->
-      { model with lex_cache = R_lex_cache.make_all_default model.lines }
+      {
+        model with
+        input =
+          {
+            model.input with
+            lex_cache = R_lex_cache.make_all_default model.input.lines;
+          };
+      }
 
-let current_line model = List.nth model.lines model.cursor_line
+let current_line model = List.nth model.input.lines model.input.cursor_line
 let line_length model = Unicode_string.length (current_line model)
 
 let char_at model =
   let line = current_line model in
-  if model.cursor_pos >= Unicode_string.length line then None
-  else Some (Unicode_string.cluster_at line model.cursor_pos)
+  if model.input.cursor_pos >= Unicode_string.length line then None
+  else Some (Unicode_string.cluster_at line model.input.cursor_pos)
 
 let char_before model =
-  if model.cursor_pos = 0 then None
+  if model.input.cursor_pos = 0 then None
   else
-    Some (Unicode_string.cluster_at (current_line model) (model.cursor_pos - 1))
+    Some
+      (Unicode_string.cluster_at (current_line model)
+         (model.input.cursor_pos - 1))
 
-let at_line_start model = model.cursor_pos = 0
-let at_line_end model = model.cursor_pos >= line_length model
+let at_line_start model = model.input.cursor_pos = 0
+let at_line_end model = model.input.cursor_pos >= line_length model
 
 let should_auto_pair model =
   match char_at model with
@@ -38,79 +51,95 @@ let should_auto_pair model =
       | ')' | ']' | '}' | ' ' | '\t' -> true
       | _ -> false)
 
-let at_first_line model = model.cursor_line = 0
-let at_last_line model = model.cursor_line >= List.length model.lines - 1
+let at_first_line model = model.input.cursor_line = 0
+
+let at_last_line model =
+  model.input.cursor_line >= List.length model.input.lines - 1
 
 let same_cursor_pos m1 m2 =
-  m1.cursor_line = m2.cursor_line && m1.cursor_pos = m2.cursor_pos
+  m1.input.cursor_line = m2.input.cursor_line
+  && m1.input.cursor_pos = m2.input.cursor_pos
 
 let prompt_is_empty model =
-  model.lines = [] || model.lines = [ Unicode_string.empty ]
+  model.input.lines = [] || model.input.lines = [ Unicode_string.empty ]
 
 let insert_char model s =
   let line = current_line model in
-  match Unicode_string.insert_string line ~pos:model.cursor_pos s with
+  match Unicode_string.insert_string line ~pos:model.input.cursor_pos s with
   | Error _ -> model
   | Ok new_line ->
-      let new_lines = update_line model.lines model.cursor_line new_line in
-      let new_pos = model.cursor_pos + 1 in
+      let new_lines =
+        update_line model.input.lines model.input.cursor_line new_line
+      in
+      let new_pos = model.input.cursor_pos + 1 in
       {
         model with
-        lines = new_lines;
-        cursor_pos = new_pos;
+        input = { model.input with lines = new_lines; cursor_pos = new_pos };
       }
-      |> lexer_update model.cursor_line model.cursor_line
+      |> lexer_update model.input.cursor_line model.input.cursor_line
 
 let delete_char model =
   if at_line_start model then
     if at_first_line model then model
     else
-      let prev_line = List.nth model.lines (model.cursor_line - 1) in
+      let prev_line =
+        List.nth model.input.lines (model.input.cursor_line - 1)
+      in
       let curr_line = current_line model in
       let merged = Unicode_string.append prev_line curr_line in
       let new_lines =
-        model.lines
-        |> List.filteri (fun i _ -> i <> model.cursor_line)
+        model.input.lines
+        |> List.filteri (fun i _ -> i <> model.input.cursor_line)
         |> List.mapi (fun i line ->
-            if i = model.cursor_line - 1 then merged else line)
+            if i = model.input.cursor_line - 1 then merged else line)
       in
-      let new_line_idx = model.cursor_line - 1 in
+      let new_line_idx = model.input.cursor_line - 1 in
       let new_pos = Unicode_string.length prev_line in
       {
         model with
-        lines = new_lines;
-        cursor_line = new_line_idx;
-        cursor_pos = new_pos;
+        input =
+          {
+            model.input with
+            lines = new_lines;
+            cursor_line = new_line_idx;
+            cursor_pos = new_pos;
+          };
       }
       |> lexer_update new_line_idx (new_line_idx + 1)
   else
     let line = current_line model in
-    let new_line = Unicode_string.delete line (model.cursor_pos - 1) in
-    let new_lines = update_line model.lines model.cursor_line new_line in
-    let new_pos = model.cursor_pos - 1 in
+    let new_line = Unicode_string.delete line (model.input.cursor_pos - 1) in
+    let new_lines =
+      update_line model.input.lines model.input.cursor_line new_line
+    in
+    let new_pos = model.input.cursor_pos - 1 in
     {
       model with
-      lines = new_lines;
-      cursor_pos = new_pos;
+      input = { model.input with lines = new_lines; cursor_pos = new_pos };
     }
-    |> lexer_update model.cursor_line model.cursor_line
+    |> lexer_update model.input.cursor_line model.input.cursor_line
 
 let insert_newline model =
   let line = current_line model in
-  let before, after = Unicode_string.split line model.cursor_pos in
+  let before, after = Unicode_string.split line model.input.cursor_pos in
   let new_lines =
     List.concat_map
-      (fun (i, l) -> if i = model.cursor_line then [ before; after ] else [ l ])
-      (List.mapi (fun i l -> (i, l)) model.lines)
+      (fun (i, l) ->
+        if i = model.input.cursor_line then [ before; after ] else [ l ])
+      (List.mapi (fun i l -> (i, l)) model.input.lines)
   in
-  let new_line_idx = model.cursor_line + 1 in
+  let new_line_idx = model.input.cursor_line + 1 in
   {
     model with
-    lines = new_lines;
-    cursor_line = new_line_idx;
-    cursor_pos = 0;
+    input =
+      {
+        model.input with
+        lines = new_lines;
+        cursor_line = new_line_idx;
+        cursor_pos = 0;
+      };
   }
-  |> lexer_update model.cursor_line new_line_idx
+  |> lexer_update model.input.cursor_line new_line_idx
 
 let insert_paste model text =
   let max_len = 5 * 1024 in
@@ -118,7 +147,7 @@ let insert_paste model text =
     if String.length text > max_len then String.sub text 0 max_len else text
   in
   let line = current_line model in
-  let before, after = Unicode_string.split line model.cursor_pos in
+  let before, after = Unicode_string.split line model.input.cursor_pos in
   let paste_lines = String.split_on_char '\n' text in
   let to_us s =
     match Unicode_string.of_string s with
@@ -127,11 +156,11 @@ let insert_paste model text =
   in
   let inserted, final_pos =
     match paste_lines with
-    | [] -> ([ Unicode_string.append before after ], model.cursor_pos)
+    | [] -> ([ Unicode_string.append before after ], model.input.cursor_pos)
     | [ single ] ->
         let single_us = to_us single in
         ( [ Unicode_string.concat [ before; single_us; after ] ],
-          model.cursor_pos + Unicode_string.length single_us )
+          model.input.cursor_pos + Unicode_string.length single_us )
     | first :: rest ->
         let rec split_last = function
           | [] -> ([], "")
@@ -151,104 +180,108 @@ let insert_paste model text =
   in
   let new_lines =
     List.concat_map
-      (fun (i, l) -> if i = model.cursor_line then inserted else [ l ])
-      (List.mapi (fun i l -> (i, l)) model.lines)
+      (fun (i, l) -> if i = model.input.cursor_line then inserted else [ l ])
+      (List.mapi (fun i l -> (i, l)) model.input.lines)
   in
-  let final_line_idx = model.cursor_line + List.length paste_lines - 1 in
+  let final_line_idx = model.input.cursor_line + List.length paste_lines - 1 in
   {
     model with
-    lines = new_lines;
-    cursor_line = final_line_idx;
-    cursor_pos = final_pos;
+    input =
+      {
+        model.input with
+        lines = new_lines;
+        cursor_line = final_line_idx;
+        cursor_pos = final_pos;
+      };
   }
-  |> lexer_update model.cursor_line final_line_idx
+  |> lexer_update model.input.cursor_line final_line_idx
 
 let move_left model =
   if not (at_line_start model) then
-    let new_pos = model.cursor_pos - 1 in
-    {
-      model with
-      cursor_pos = new_pos;
-    }
+    let new_pos = model.input.cursor_pos - 1 in
+    { model with input = { model.input with cursor_pos = new_pos } }
   else if not (at_first_line model) then
-    let new_line = model.cursor_line - 1 in
-    let prev_line = List.nth model.lines new_line in
+    let new_line = model.input.cursor_line - 1 in
+    let prev_line = List.nth model.input.lines new_line in
     let new_pos = Unicode_string.length prev_line in
     {
       model with
-      cursor_line = new_line;
-      cursor_pos = new_pos;
+      input = { model.input with cursor_line = new_line; cursor_pos = new_pos };
     }
   else model
 
 let move_right model =
   if not (at_line_end model) then
-    let new_pos = model.cursor_pos + 1 in
-    {
-      model with
-      cursor_pos = new_pos;
-    }
+    let new_pos = model.input.cursor_pos + 1 in
+    { model with input = { model.input with cursor_pos = new_pos } }
   else if not (at_last_line model) then
-    let new_line = model.cursor_line + 1 in
+    let new_line = model.input.cursor_line + 1 in
     {
       model with
-      cursor_line = new_line;
-      cursor_pos = 0;
+      input = { model.input with cursor_line = new_line; cursor_pos = 0 };
     }
   else model
 
 let move_up model =
   let width = effective_width model in
-  let wrapped_lines = wrap_lines width model.lines in
+  let wrapped_lines = wrap_lines width model.input.lines in
   let current_row, current_col = cursor_terminal_pos model in
   if current_row > 0 then
     let target_col =
-      match model.previous_key with
-      | Some Tty_listener.Up | Some Tty_listener.Down -> model.persistent_col
+      match model.input.previous_key with
+      | Some Tty_listener.Up | Some Tty_listener.Down ->
+          model.input.persistent_col
       | _ -> current_col
     in
     let line_width =
-      List.nth wrapped_lines (current_row - 1)
-      |> Unicode_string.display_width
+      List.nth wrapped_lines (current_row - 1) |> Unicode_string.display_width
     in
     let new_row = current_row - 1 in
     let new_col = min target_col line_width in
     let new_cursor_line, new_cursor_pos =
-      terminal_to_internal width model.lines (new_row, new_col)
+      terminal_to_internal width model.input.lines (new_row, new_col)
     in
     {
       model with
-      cursor_line = new_cursor_line;
-      cursor_pos = new_cursor_pos;
-      persistent_col = target_col;
+      input =
+        {
+          model.input with
+          cursor_line = new_cursor_line;
+          cursor_pos = new_cursor_pos;
+          persistent_col = target_col;
+        };
     }
   else model
 
 let move_down model =
   let width = effective_width model in
-  let wrapped_lines = wrap_lines width model.lines in
+  let wrapped_lines = wrap_lines width model.input.lines in
   let total_rows = List.length wrapped_lines in
   let current_row, current_col = cursor_terminal_pos model in
   if current_row < total_rows - 1 then
     let target_col =
-      match model.previous_key with
-      | Some Tty_listener.Up | Some Tty_listener.Down -> model.persistent_col
+      match model.input.previous_key with
+      | Some Tty_listener.Up | Some Tty_listener.Down ->
+          model.input.persistent_col
       | _ -> current_col
     in
     let line_width =
-      List.nth wrapped_lines (current_row + 1)
-      |> Unicode_string.display_width
+      List.nth wrapped_lines (current_row + 1) |> Unicode_string.display_width
     in
     let new_row = current_row + 1 in
     let new_col = min target_col line_width in
     let new_cursor_line, new_cursor_pos =
-      terminal_to_internal width model.lines (new_row, new_col)
+      terminal_to_internal width model.input.lines (new_row, new_col)
     in
     {
       model with
-      cursor_line = new_cursor_line;
-      cursor_pos = new_cursor_pos;
-      persistent_col = target_col;
+      input =
+        {
+          model.input with
+          cursor_line = new_cursor_line;
+          cursor_pos = new_cursor_pos;
+          persistent_col = target_col;
+        };
     }
   else model
 
@@ -300,23 +333,21 @@ let user_input_delete model =
     | _ -> delete_char model
 
 let move_cursor_to_end model =
-  let last_line_idx = List.length model.lines - 1 in
-  let last_line = List.nth model.lines last_line_idx in
+  let last_line_idx = List.length model.input.lines - 1 in
+  let last_line = List.nth model.input.lines last_line_idx in
   let new_pos = Unicode_string.length last_line in
   {
     model with
-    cursor_line = last_line_idx;
-    cursor_pos = new_pos;
+    input =
+      { model.input with cursor_line = last_line_idx; cursor_pos = new_pos };
   }
 
-let go_to_line_start model = { model with cursor_pos = 0 }
+let go_to_line_start model =
+  { model with input = { model.input with cursor_pos = 0 } }
 
 let go_to_line_end model =
   let new_pos = line_length model in
-  {
-    model with
-    cursor_pos = new_pos;
-  }
+  { model with input = { model.input with cursor_pos = new_pos } }
 
 let is_word_char s =
   if String.length s > 1 then true
@@ -367,15 +398,16 @@ let delete_before_cursor model =
   else
     let line = current_line model in
     let new_line =
-      Unicode_string.delete_range line ~start:0 ~len:model.cursor_pos
+      Unicode_string.delete_range line ~start:0 ~len:model.input.cursor_pos
     in
-    let new_lines = update_line model.lines model.cursor_line new_line in
+    let new_lines =
+      update_line model.input.lines model.input.cursor_line new_line
+    in
     {
       model with
-      lines = new_lines;
-      cursor_pos = 0;
+      input = { model.input with lines = new_lines; cursor_pos = 0 };
     }
-    |> lexer_update model.cursor_line model.cursor_line
+    |> lexer_update model.input.cursor_line model.input.cursor_line
 
 let delete_char_after_cursor model =
   let after_move_right = move_right model in
@@ -383,7 +415,9 @@ let delete_char_after_cursor model =
   else delete_char after_move_right
 
 let is_empty_input model =
-  match model.lines with [ line ] -> Unicode_string.is_empty line | _ -> false
+  match model.input.lines with
+  | [ line ] -> Unicode_string.is_empty line
+  | _ -> false
 
 let replace_range model start_pos end_pos text =
   let line = current_line model in
@@ -399,11 +433,21 @@ let replace_range model start_pos end_pos text =
     | Error _ -> Unicode_string.empty
   in
   let new_line = Unicode_string.concat [ before; text_us; after ] in
-  let new_lines = update_line model.lines model.cursor_line new_line in
+  let new_lines =
+    update_line model.input.lines model.input.cursor_line new_line
+  in
   let new_cursor_pos = start_pos + Unicode_string.length text_us in
-  let model = { model with lines = new_lines; cursor_pos = new_cursor_pos } in
-  let model = lexer_update model.cursor_line model.cursor_line model in
+  let model =
+    {
+      model with
+      input =
+        { model.input with lines = new_lines; cursor_pos = new_cursor_pos };
+    }
+  in
+  let model =
+    lexer_update model.input.cursor_line model.input.cursor_line model
+  in
   model
 
 let replace_token model token_start text =
-  replace_range model token_start model.cursor_pos text
+  replace_range model token_start model.input.cursor_pos text

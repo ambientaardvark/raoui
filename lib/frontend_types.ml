@@ -18,30 +18,42 @@ let default_prompt_top term_height = max 2 (term_height - min_prompt_height + 1)
 let clamp_prompt_top term_height row =
   max 2 (min row (default_prompt_top term_height))
 
-type model = {
+type input_state = {
   lines : Unicode_string.t list;
   lex_cache : R_lex_cache.t;
-  theme : Theme.t;
   (* Internal coordinates - source of truth *)
   cursor_line : int; (* logical line index, 0-indexed *)
   cursor_pos : int; (* grapheme position within line *)
+  previous_key : Tty_listener.key option;
+  persistent_col : int;
+  history : History.t;
+  flipping_through_history : int option;
+  completion : Completion.t option;
+  mode : mode;
+}
+
+type layout_state = {
   prompt_top_row : int;
   term_width : int;
   term_height : int;
   prompt_box_height : int;
   previous_prompt_top_row : int;
-  previous_key : Tty_listener.key option;
-  persistent_col : int;
+  scroll_amount : int;
+  running_in_ide : bool;
+}
+
+type repl_state = {
   awaiting_response : bool;
   backend_response : Ffi_backend.response_chunk option;
   repl_output : repl_output option;
   repl_cursor : int * int;
-  scroll_amount : int;
-  history : History.t;
-  flipping_through_history : int option;
-  running_in_ide : bool;
-  completion : Completion.t option;
-  mode : mode;
+}
+
+type model = {
+  input : input_state;
+  layout : layout_state;
+  repl : repl_state;
+  theme : Theme.t;
 }
 
 (* Line wrapping utilities - uses display width *)
@@ -119,12 +131,25 @@ let get_line lines line_idx = List.nth lines line_idx
 let update_line lines line_idx new_line =
   List.mapi (fun i line -> if i = line_idx then new_line else line) lines
 
-let effective_width model = model.term_width - String.length prompt
+let effective_width model = model.layout.term_width - String.length prompt
 
 let cursor_terminal_pos model =
-  match model.mode with
+  match model.input.mode with
   | History_search search ->
-      (0, Unicode_string.prefix_width search model.cursor_pos)
+      (0, Unicode_string.prefix_width search model.input.cursor_pos)
   | _ ->
-      internal_to_terminal (effective_width model) model.lines
-        (model.cursor_line, model.cursor_pos)
+      internal_to_terminal (effective_width model) model.input.lines
+        (model.input.cursor_line, model.input.cursor_pos)
+
+let assert_model_invariants model =
+  let lines = model.input.lines in
+  assert (lines <> []);
+  assert (model.input.cursor_line >= 0);
+  assert (model.input.cursor_line < List.length lines);
+  let line = List.nth lines model.input.cursor_line in
+  assert (model.input.cursor_pos >= 0);
+  match model.input.mode with
+  | History_search search ->
+      assert (model.input.cursor_pos <= Unicode_string.length search)
+  | Normal | Readline _ | Shell ->
+      assert (model.input.cursor_pos <= Unicode_string.length line)

@@ -32,26 +32,35 @@ let make ~history ~user_options ~terminal_capabilities () : Frontend_types.model
     flush stdout
   end;
   {
-    lines;
-    lex_cache = R_lex_cache.create lines;
+    input =
+      {
+        lines;
+        lex_cache = R_lex_cache.create lines;
+        cursor_line = 0;
+        cursor_pos = 0;
+        previous_key = None;
+        persistent_col = 0;
+        history;
+        flipping_through_history = None;
+        completion = None;
+        mode = Frontend_types.Normal;
+      };
+    layout =
+      {
+        prompt_top_row = clamped;
+        term_width;
+        term_height;
+        prompt_box_height = Frontend_types.min_prompt_height;
+        previous_prompt_top_row = row;
+        scroll_amount = 0;
+        running_in_ide;
+      };
+    repl =
+      {
+        awaiting_response = false;
+        backend_response = None;
+        repl_output = None;
+        repl_cursor = (row, 1);
+      };
     theme = initial_theme user_options;
-    cursor_line = 0;
-    cursor_pos = 0;
-    prompt_top_row = clamped;
-    term_width;
-    term_height;
-    prompt_box_height = Frontend_types.min_prompt_height;
-    previous_prompt_top_row = row;
-    previous_key = None;
-    persistent_col = 0;
-    awaiting_response = false;
-    backend_response = None;
-    repl_output = None;
-    repl_cursor = (row, 1);
-    scroll_amount = 0;
-    history;
-    flipping_through_history = None;
-    running_in_ide;
-    completion = None;
-    mode = Frontend_types.Normal;
   }

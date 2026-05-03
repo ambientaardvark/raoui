@@ -4,16 +4,22 @@ open Text_editor
 let shift_history model ~amount =
   let result =
     if amount > 0 then
-      History.go_back model.history ~current_prompt:model.lines ()
-    else History.go_forwards model.history ~current_prompt:model.lines ()
+      History.go_back model.input.history ~current_prompt:model.input.lines ()
+    else
+      History.go_forwards model.input.history ~current_prompt:model.input.lines
+        ()
   in
   match result with
   | Some lines ->
       {
         model with
-        lines;
-        lex_cache = R_lex_cache.create lines;
-        flipping_through_history = Some 2;
+        input =
+          {
+            model.input with
+            lines;
+            lex_cache = R_lex_cache.create lines;
+            flipping_through_history = Some 2;
+          };
       }
       |> move_cursor_to_end
   | None -> model
@@ -23,24 +29,21 @@ let insert_spaces count model =
   loop model count
 
 let expand_braces ~inner_indent ~outer_indent model =
-  model |> insert_newline
-  |> insert_spaces inner_indent
-  |> insert_newline |> insert_spaces outer_indent |> move_up |> go_to_line_end
+  model |> insert_newline |> insert_spaces inner_indent |> insert_newline
+  |> insert_spaces outer_indent |> move_up |> go_to_line_end
 
 let submit_normal_text model =
   let text =
-    String.concat "\n" (List.map Unicode_string.to_string model.lines)
+    String.concat "\n" (List.map Unicode_string.to_string model.input.lines)
   in
-  History.add_to_history model.history model.lines;
+  History.add_to_history model.input.history model.input.lines;
   if String.equal (String.trim text) "q()" then (model, [ Repl_effect.Quit ])
-  else
-    ( Mode_common.clear_model_for_submit model,
-      [ Repl_effect.Submit text ] )
+  else (Mode_common.clear_model_for_submit model, [ Repl_effect.Submit text ])
 
 let submit model =
   match
-    R_enter.action ~lines:model.lines ~cursor_line:model.cursor_line
-      ~cursor_pos:model.cursor_pos ~cache:model.lex_cache
+    R_enter.action ~lines:model.input.lines ~cursor_line:model.input.cursor_line
+      ~cursor_pos:model.input.cursor_pos ~cache:model.input.lex_cache
   with
   | R_enter.Submit -> submit_normal_text model
   | R_enter.Insert_newline { indent } ->
@@ -56,12 +59,16 @@ let submit model =
 let enter_history_search model =
   {
     model with
-    mode = History_search Unicode_string.empty;
-    lines = [ Unicode_string.empty ];
-    lex_cache = R_lex_cache.create [ Unicode_string.empty ];
-    cursor_pos = 0;
-    cursor_line = 0;
-    completion = None;
+    input =
+      {
+        model.input with
+        mode = History_search Unicode_string.empty;
+        lines = [ Unicode_string.empty ];
+        lex_cache = R_lex_cache.create [ Unicode_string.empty ];
+        cursor_pos = 0;
+        cursor_line = 0;
+        completion = None;
+      };
   }
 
 let apply_key key model =
@@ -70,14 +77,14 @@ let apply_key key model =
     match key with
     | Tab | Escape | Enter -> model
     | _ -> (
-        match model.completion with
+        match model.input.completion with
         | Some cs when Completion.is_in_completion_mode cs ->
-            { model with completion = None }
+            { model with input = { model.input with completion = None } }
         | _ -> model)
   in
   match key with
-  | Ctrl 'c' when model.awaiting_response -> (model, [ Repl_effect.Cancel ])
-  | Ctrl 'p' when model.awaiting_response -> (model, [])
+  | Ctrl 'c' when model.repl.awaiting_response -> (model, [ Repl_effect.Cancel ])
+  | Ctrl 'p' when model.repl.awaiting_response -> (model, [])
   | Ctrl 'd' ->
       if is_empty_input model then (model, [ Repl_effect.Quit ])
       else (delete_char_after_cursor model, [])
@@ -94,28 +101,34 @@ let apply_key key model =
   | Other "next word" -> (go_to_next_word model, [])
   | Other "last word" -> (go_to_last_word model, [])
   | Char ";" when prompt_is_empty model ->
-      ({ model with mode = Shell }, [])
+      ({ model with input = { model.input with mode = Shell } }, [])
   | Char c -> (user_input_char model c, [])
   | Backspace -> (user_input_delete model, [])
   | Left -> (move_left model, [])
   | Right -> (move_right model, [])
   | Up ->
-      if at_first_line model || Option.is_some model.flipping_through_history
+      if
+        at_first_line model
+        || Option.is_some model.input.flipping_through_history
       then (shift_history model ~amount:1, [])
       else (move_up model, [])
   | Down ->
-      if at_last_line model || Option.is_some model.flipping_through_history
+      if
+        at_last_line model
+        || Option.is_some model.input.flipping_through_history
       then (shift_history model ~amount:(-1), [])
       else (move_down model, [])
   | Paste text -> (insert_paste model text, [])
   | Tab -> (Completion_controller.handle_tab model, [])
   | Escape -> (
-      match model.completion with
+      match model.input.completion with
       | Some cs when Completion.is_in_completion_mode cs ->
           let token_start = Completion.token_start cs in
           let original = Completion.original_token cs in
           let reverted = replace_token model token_start original in
-          ({ reverted with completion = None }, [])
-      | Some _ -> ({ model with completion = None }, [])
+          ( { reverted with input = { reverted.input with completion = None } },
+            [] )
+      | Some _ ->
+          ({ model with input = { model.input with completion = None } }, [])
       | None -> (model, []))
   | _ -> (model, [])

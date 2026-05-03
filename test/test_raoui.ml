@@ -42,39 +42,61 @@ let us s =
   | Error _ -> failwith ("Invalid unicode: " ^ s)
 
 (* Helper to get first line as string for assertions *)
-let first_line_str model = Unicode_string.to_string (List.hd model.lines)
+let first_line_str model = Unicode_string.to_string (List.hd model.input.lines)
 
 let initial_model width =
   let lines = [ Unicode_string.empty ] in
   {
-    lines;
-    lex_cache = R_lex_cache.create lines;
+    input =
+      {
+        lines;
+        lex_cache = R_lex_cache.create lines;
+        cursor_line = 0;
+        cursor_pos = 0;
+        previous_key = None;
+        persistent_col = 0;
+        history = History.init "/dev/null";
+        flipping_through_history = None;
+        completion = None;
+        mode = Frontend_types.Normal;
+      };
+    layout =
+      {
+        prompt_top_row = 0;
+        term_width = width;
+        term_height = 10;
+        prompt_box_height = Frontend_types.min_prompt_height;
+        previous_prompt_top_row = 0;
+        scroll_amount = 0;
+        running_in_ide = false;
+      };
+    repl =
+      {
+        awaiting_response = false;
+        backend_response = None;
+        repl_output = None;
+        repl_cursor = (0, 1);
+      };
     theme = Theme.tokyo_night;
-    cursor_line = 0;
-    cursor_pos = 0;
-    prompt_top_row = 0;
-    term_width = width;
-    term_height = 10;
-    prompt_box_height = Frontend_types.min_prompt_height;
-    previous_prompt_top_row = 0;
-    previous_key = None;
-    persistent_col = 0;
-    awaiting_response = false;
-    backend_response = None;
-    repl_output = None;
-    repl_cursor = (0, 1);
-    scroll_amount = 0;
-    history = History.init "/dev/null";
-    flipping_through_history = None;
-    running_in_ide = false;
-    completion = None;
-    mode = Frontend_types.Normal;
   }
 
 let with_lines model lines =
-  { model with lines; lex_cache = R_lex_cache.create lines }
+  {
+    model with
+    input = { model.input with lines; lex_cache = R_lex_cache.create lines };
+  }
 
-let with_cursor_internal model ~line ~pos = { model with cursor_line = line; cursor_pos = pos }
+let with_cursor_internal model ~line ~pos =
+  {
+    model with
+    input = { model.input with cursor_line = line; cursor_pos = pos };
+  }
+
+let with_layout f model = { model with layout = f model.layout }
+let with_repl f model = { model with repl = f model.repl }
+
+let with_completion completion model =
+  { model with input = { model.input with completion } }
 
 let cursor_row model = model |> cursor_terminal_pos |> fst
 let cursor_col model = model |> cursor_terminal_pos |> snd
@@ -142,13 +164,17 @@ let test_user_options_reads_theme_name () =
 
 let test_user_options_reads_plot_settings () =
   with_temp_file
-    "theme = \"tokyo_night\"\nplot_mode = \"png\"\nplot_renderer = \"ragg\"\ninline_image_max_width_cols = 72\ninline_image_max_height_rows = 14\n"
-    (fun path ->
+    "theme = \"tokyo_night\"\n\
+     plot_mode = \"png\"\n\
+     plot_renderer = \"ragg\"\n\
+     inline_image_max_width_cols = 72\n\
+     inline_image_max_height_rows = 14\n" (fun path ->
       let config = User_options.read path in
       Alcotest.(check (option string))
         "reads theme" (Some "tokyo_night") config.theme_name;
       Alcotest.(check bool)
-        "reads plot_mode" true (config.plot_mode = User_options.Png);
+        "reads plot_mode" true
+        (config.plot_mode = User_options.Png);
       Alcotest.(check bool)
         "reads plot_renderer" true
         (config.plot_renderer = User_options.Ragg);
@@ -163,7 +189,8 @@ let test_user_options_returns_defaults_when_missing () =
       Alcotest.(check (option string))
         "returns none when no theme key" None config.theme_name;
       Alcotest.(check bool)
-        "default plot mode" true (config.plot_mode = User_options.Auto);
+        "default plot mode" true
+        (config.plot_mode = User_options.Auto);
       Alcotest.(check bool)
         "default plot renderer" true
         (config.plot_renderer = User_options.Gr_devices);
@@ -186,9 +213,10 @@ let test_terminal_image_renders_kitty_escape () =
       match
         Terminal_image.render
           ~terminal_capabilities:
-            { Terminal_capabilities.image_protocol = Terminal_capabilities.Kitty }
-          ~config:User_options.default
-          ~term_width:120 ~image
+            {
+              Terminal_capabilities.image_protocol = Terminal_capabilities.Kitty;
+            }
+          ~config:User_options.default ~term_width:120 ~image
       with
       | None -> Alcotest.fail "expected kitty renderer output"
       | Some rendered ->
@@ -197,7 +225,8 @@ let test_terminal_image_renders_kitty_escape () =
             (string_contains rendered.output "\x1b_Ga=T,f=100,t=d,c=");
           Alcotest.(check bool)
             "ends with newline" true
-            (String.get rendered.output (String.length rendered.output - 1) = '\n');
+            (String.get rendered.output (String.length rendered.output - 1)
+            = '\n');
           Alcotest.(check bool) "reports positive rows" true (rendered.rows > 0))
 
 let test_terminal_image_falls_back_without_protocol () =
@@ -218,54 +247,43 @@ let test_terminal_image_falls_back_without_protocol () =
               Terminal_capabilities.image_protocol =
                 Terminal_capabilities.No_image;
             }
-          ~config:User_options.default
-          ~term_width:120 ~image
+          ~config:User_options.default ~term_width:120 ~image
       in
-      Alcotest.(check bool) "unsupported protocol falls back" true
-        (rendered = None))
+      Alcotest.(check bool)
+        "unsupported protocol falls back" true (rendered = None))
 
 let test_terminal_capabilities_detect_kitty () =
-  let getenv = function
-    | "KITTY_WINDOW_ID" -> Some "10"
-    | _ -> None
-  in
+  let getenv = function "KITTY_WINDOW_ID" -> Some "10" | _ -> None in
   let caps = Terminal_capabilities.detect ~getenv () in
   Alcotest.(check bool)
     "detects kitty" true
     (caps.image_protocol = Terminal_capabilities.Kitty)
 
 let test_terminal_capabilities_detect_iterm () =
-  let getenv = function
-    | "TERM_PROGRAM" -> Some "iTerm.app"
-    | _ -> None
-  in
+  let getenv = function "TERM_PROGRAM" -> Some "iTerm.app" | _ -> None in
   let caps = Terminal_capabilities.detect ~getenv () in
   Alcotest.(check bool)
     "detects iterm" true
     (caps.image_protocol = Terminal_capabilities.ITerm)
 
 let test_terminal_capabilities_detect_ghostty_term_program () =
-  let getenv = function
-    | "TERM_PROGRAM" -> Some "ghostty"
-    | _ -> None
-  in
+  let getenv = function "TERM_PROGRAM" -> Some "ghostty" | _ -> None in
   let caps = Terminal_capabilities.detect ~getenv () in
   Alcotest.(check bool)
     "detects ghostty via TERM_PROGRAM" true
     (caps.image_protocol = Terminal_capabilities.Kitty)
 
 let test_terminal_capabilities_detect_ghostty_term () =
-  let getenv = function
-    | "TERM" -> Some "xterm-ghostty"
-    | _ -> None
-  in
+  let getenv = function "TERM" -> Some "xterm-ghostty" | _ -> None in
   let caps = Terminal_capabilities.detect ~getenv () in
   Alcotest.(check bool)
     "detects ghostty via TERM" true
     (caps.image_protocol = Terminal_capabilities.Kitty)
 
 let test_plot_policy_auto_in_ide () =
-  let caps = { Terminal_capabilities.image_protocol = Terminal_capabilities.No_image } in
+  let caps =
+    { Terminal_capabilities.image_protocol = Terminal_capabilities.No_image }
+  in
   let mode =
     Plot_policy.resolve ~running_in_ide:true ~terminal_caps:caps
       ~plot_mode:User_options.Auto
@@ -273,40 +291,48 @@ let test_plot_policy_auto_in_ide () =
   Alcotest.(check bool) "auto in ide" true (mode = Plot_policy.Use_ide)
 
 let test_plot_policy_auto_with_inline_support () =
-  let caps = { Terminal_capabilities.image_protocol = Terminal_capabilities.Kitty } in
+  let caps =
+    { Terminal_capabilities.image_protocol = Terminal_capabilities.Kitty }
+  in
   let mode =
     Plot_policy.resolve ~running_in_ide:false ~terminal_caps:caps
       ~plot_mode:User_options.Auto
   in
-  Alcotest.(check bool) "auto with inline" true
+  Alcotest.(check bool)
+    "auto with inline" true
     (mode = Plot_policy.Use_raoui_png)
 
 let test_plot_policy_auto_without_inline_support () =
-  let caps = { Terminal_capabilities.image_protocol = Terminal_capabilities.No_image } in
+  let caps =
+    { Terminal_capabilities.image_protocol = Terminal_capabilities.No_image }
+  in
   let mode =
     Plot_policy.resolve ~running_in_ide:false ~terminal_caps:caps
       ~plot_mode:User_options.Auto
   in
-  Alcotest.(check bool) "auto without inline" true
+  Alcotest.(check bool)
+    "auto without inline" true
     (mode = Plot_policy.Use_httpgd)
 
 let test_plot_policy_explicit_png () =
-  let caps = { Terminal_capabilities.image_protocol = Terminal_capabilities.No_image } in
+  let caps =
+    { Terminal_capabilities.image_protocol = Terminal_capabilities.No_image }
+  in
   let mode =
     Plot_policy.resolve ~running_in_ide:false ~terminal_caps:caps
       ~plot_mode:User_options.Png
   in
-  Alcotest.(check bool) "explicit png" true
-    (mode = Plot_policy.Use_raoui_png)
+  Alcotest.(check bool) "explicit png" true (mode = Plot_policy.Use_raoui_png)
 
 let test_plot_policy_explicit_httpgd () =
-  let caps = { Terminal_capabilities.image_protocol = Terminal_capabilities.Kitty } in
+  let caps =
+    { Terminal_capabilities.image_protocol = Terminal_capabilities.Kitty }
+  in
   let mode =
     Plot_policy.resolve ~running_in_ide:false ~terminal_caps:caps
       ~plot_mode:User_options.Httpgd
   in
-  Alcotest.(check bool) "explicit httpgd" true
-    (mode = Plot_policy.Use_httpgd)
+  Alcotest.(check bool) "explicit httpgd" true (mode = Plot_policy.Use_httpgd)
 
 let test_paths_plot_session_dir_name_roundtrip () =
   let name = Paths.plot_session_dir_name ~pid:1234 ~started_at:1_700_000_000. in
@@ -341,7 +367,8 @@ let pp_span fmt (style, text) =
 
 let printed_rows model =
   let model =
-    if model.prompt_top_row < 1 then { model with prompt_top_row = 1 }
+    if model.layout.prompt_top_row < 1 then
+      model |> with_layout (fun layout -> { layout with prompt_top_row = 1 })
     else model
   in
   let rows_rev = ref [] in
@@ -353,7 +380,8 @@ let printed_rows model =
 
 let view_ops_list model =
   let model =
-    if model.prompt_top_row < 1 then { model with prompt_top_row = 1 }
+    if model.layout.prompt_top_row < 1 then
+      model |> with_layout (fun layout -> { layout with prompt_top_row = 1 })
     else model
   in
   Queue.fold (fun acc op -> op :: acc) [] (V.view_ops model) |> List.rev
@@ -403,8 +431,8 @@ let spans_of_cache cache =
     cache
 
 let check_lex_cache ~msg model =
-  let expected = R_lex_cache.create model.lines |> spans_of_cache in
-  let actual = spans_of_cache model.lex_cache in
+  let expected = R_lex_cache.create model.input.lines |> spans_of_cache in
+  let actual = spans_of_cache model.input.lex_cache in
   let span_testable = Alcotest.testable pp_span ( = ) in
   let spans_testable = Alcotest.list span_testable in
   Alcotest.(check (list spans_testable)) msg expected actual
@@ -459,7 +487,7 @@ let test_exact_width_wrap () =
   let model = initial_model width in
   let model = insert_many model 8 in
 
-  let wrapped = wrap_lines (effective_width model) model.lines in
+  let wrapped = wrap_lines (effective_width model) model.input.lines in
   let total_rows = List.length wrapped in
 
   Alcotest.(check int) "exact width rows" 2 total_rows;
@@ -484,7 +512,8 @@ let test_resize_crash () =
   try
     let res =
       update (Update.Key (Tty_listener.Char "b"))
-        { model with term_width = new_width }
+        (model
+        |> with_layout (fun layout -> { layout with term_width = new_width }))
     in
     match res with
     | Continue _ -> Alcotest.(check bool) "Resize and insert success" true true
@@ -507,7 +536,8 @@ let test_resize_narrower_crash () =
   try
     let res =
       update (Update.Key (Tty_listener.Char "b"))
-        { model with term_width = new_width }
+        (model
+        |> with_layout (fun layout -> { layout with term_width = new_width }))
     in
     match res with
     | Continue _ ->
@@ -564,7 +594,8 @@ let test_submit_basic () =
   match submit model with
   | Submit (text, new_model) ->
       Alcotest.(check string) "submitted text" "aaaaa" text;
-      Alcotest.(check bool) "awaiting_response" true new_model.awaiting_response;
+      Alcotest.(check bool)
+        "awaiting_response" true new_model.repl.awaiting_response;
       Alcotest.(check string) "lines reset" "" (first_line_str new_model);
       Alcotest.(check int) "cursor_row reset" 0 (cursor_row new_model);
       Alcotest.(check int) "cursor_col reset" 0 (cursor_col new_model)
@@ -578,126 +609,140 @@ let test_submit_clears_completion_state () =
   let model =
     with_lines (initial_model width) [ us "print" ] |> fun model ->
     with_cursor_internal model ~line:0 ~pos:5 |> fun model ->
-    { model with completion = Some completion }
+    model |> with_completion (Some completion)
   in
   match submit model with
   | Submit (_, new_model) ->
       Alcotest.(check bool)
         "completion cleared on submit" true
-        (Option.is_none new_model.completion)
+        (Option.is_none new_model.input.completion)
   | _ -> Alcotest.fail "Expected Submit result"
 
 let test_submit_prompt_position () =
   let width = 10 in
-  let model = { (initial_model width) with prompt_top_row = 5 } in
+  let model =
+    initial_model width
+    |> with_layout (fun layout -> { layout with prompt_top_row = 5 })
+  in
   let model = insert_many model 5 in
 
   (* Single line of 5 chars, so 1 row *)
   match submit model with
   | Submit (_, new_model) ->
       (* repl_cursor should be at row after the prompt box *)
-      let repl_row, _ = new_model.repl_cursor in
+      let repl_row, _ = new_model.repl.repl_cursor in
       Alcotest.(check int) "repl_cursor row" 6 repl_row;
       (* prompt_top_row should be one below repl_cursor to leave room for output *)
-      Alcotest.(check int) "prompt_top_row" 7 new_model.prompt_top_row
+      Alcotest.(check int) "prompt_top_row" 7 new_model.layout.prompt_top_row
   | _ -> Alcotest.fail "Expected Submit result"
 
 let test_process_response_done () =
   let width = 10 in
   let model =
-    {
-      (initial_model width) with
-      backend_response = Some Ffi_backend.Done;
-      awaiting_response = true;
-    }
+    initial_model width
+    |> with_repl (fun repl ->
+        {
+          repl with
+          backend_response = Some Ffi_backend.Done;
+          awaiting_response = true;
+        })
   in
 
   let new_model = Update.process_response model in
 
   Alcotest.(check (option string))
     "repl_output" (Some "")
-    (output_to_text new_model.repl_output);
-  Alcotest.(check bool) "awaiting_response" false new_model.awaiting_response;
+    (output_to_text new_model.repl.repl_output);
+  Alcotest.(check bool)
+    "awaiting_response" false new_model.repl.awaiting_response;
   Alcotest.(check bool)
     "backend_response cleared" true
-    (new_model.backend_response = None)
+    (new_model.repl.backend_response = None)
 
 let test_process_response_stdout () =
   let width = 10 in
   let model =
-    {
-      (initial_model width) with
-      backend_response = Some (Ffi_backend.Stdout "hello\n");
-      awaiting_response = true;
-    }
+    initial_model width
+    |> with_repl (fun repl ->
+        {
+          repl with
+          backend_response = Some (Ffi_backend.Stdout "hello\n");
+          awaiting_response = true;
+        })
   in
 
   let new_model = Update.process_response model in
 
   Alcotest.(check (option string))
     "repl_output" (Some "hello\n")
-    (output_to_text new_model.repl_output);
+    (output_to_text new_model.repl.repl_output);
   Alcotest.(check bool)
-    "awaiting_response stays true" true new_model.awaiting_response
+    "awaiting_response stays true" true new_model.repl.awaiting_response
 
 let test_process_response_result () =
   let width = 10 in
   let model =
-    {
-      (initial_model width) with
-      backend_response = Some (Ffi_backend.Result "[1] 42");
-      awaiting_response = true;
-    }
+    initial_model width
+    |> with_repl (fun repl ->
+        {
+          repl with
+          backend_response = Some (Ffi_backend.Result "[1] 42");
+          awaiting_response = true;
+        })
   in
 
   let new_model = Update.process_response model in
 
   Alcotest.(check (option string))
     "repl_output" (Some "[1] 42")
-    (output_to_text new_model.repl_output);
+    (output_to_text new_model.repl.repl_output);
   Alcotest.(check bool)
-    "awaiting_response stays true" true new_model.awaiting_response
+    "awaiting_response stays true" true new_model.repl.awaiting_response
 
 let test_process_response_r_error () =
   let width = 10 in
   let model =
-    {
-      (initial_model width) with
-      backend_response =
-        Some (Ffi_backend.R_error "Error: object 'x' not found");
-      awaiting_response = true;
-    }
+    initial_model width
+    |> with_repl (fun repl ->
+        {
+          repl with
+          backend_response =
+            Some (Ffi_backend.R_error "Error: object 'x' not found");
+          awaiting_response = true;
+        })
   in
 
   let new_model = Update.process_response model in
 
   Alcotest.(check (option string))
     "repl_output" (Some "Error: object 'x' not found")
-    (output_to_text new_model.repl_output);
+    (output_to_text new_model.repl.repl_output);
   (* KEY: R_error is NOT terminal - we keep awaiting_response=true until Done *)
   Alcotest.(check bool)
     "awaiting_response stays true after R_error" true
-    new_model.awaiting_response
+    new_model.repl.awaiting_response
 
 let test_process_response_internal_error () =
   let width = 10 in
   let model =
-    {
-      (initial_model width) with
-      backend_response = Some (Ffi_backend.Internal_error "kernel crashed");
-      awaiting_response = true;
-    }
+    initial_model width
+    |> with_repl (fun repl ->
+        {
+          repl with
+          backend_response = Some (Ffi_backend.Internal_error "kernel crashed");
+          awaiting_response = true;
+        })
   in
 
   let new_model = Update.process_response model in
 
   Alcotest.(check (option string))
     "repl_output" (Some "Internal error: kernel crashed")
-    (output_to_text new_model.repl_output);
+    (output_to_text new_model.repl.repl_output);
   (* Internal_error IS terminal *)
   Alcotest.(check bool)
     "awaiting_response false after Internal_error" false
-    new_model.awaiting_response
+    new_model.repl.awaiting_response
 
 let test_process_response_image () =
   let width = 10 in
@@ -711,16 +756,18 @@ let test_process_response_image () =
     }
   in
   let model =
-    {
-      (initial_model width) with
-      backend_response = Some (Ffi_backend.Image image);
-      awaiting_response = true;
-    }
+    initial_model width
+    |> with_repl (fun repl ->
+        {
+          repl with
+          backend_response = Some (Ffi_backend.Image image);
+          awaiting_response = true;
+        })
   in
 
   let new_model = Update.process_response model in
 
-  (match new_model.repl_output with
+  (match new_model.repl.repl_output with
   | Some (Output_image out) ->
       Alcotest.(check string) "source path" image.source_path out.source_path;
       Alcotest.(check string) "preview path" image.preview_path out.preview_path;
@@ -728,10 +775,11 @@ let test_process_response_image () =
   | _ -> Alcotest.fail "expected image output");
   Alcotest.(check bool)
     "awaiting_response stays true after Image" true
-    new_model.awaiting_response
+    new_model.repl.awaiting_response
 
 let test_parse_image_empty () =
-  Alcotest.(check bool) "empty payload" true
+  Alcotest.(check bool)
+    "empty payload" true
     (Ffi_backend.parse_image_payload "" = None)
 
 let test_parse_image_path_only () =
@@ -747,7 +795,11 @@ let test_parse_image_path_only () =
 
 let test_parse_image_full_payload () =
   let payload =
-    "source_path = /tmp/plot.svg\npreview_path = /tmp/plot.png\nmime = image/png\nwidth = 800\nheight = 600"
+    "source_path = /tmp/plot.svg\n\
+     preview_path = /tmp/plot.png\n\
+     mime = image/png\n\
+     width = 800\n\
+     height = 600"
   in
   let result = Ffi_backend.parse_image_payload payload in
   match result with
@@ -775,7 +827,8 @@ let test_parse_image_aliased_preview_payload () =
 
 let test_parse_image_missing_path () =
   let payload = "mime = image/png\nwidth = 800" in
-  Alcotest.(check bool) "no path key" true
+  Alcotest.(check bool)
+    "no path key" true
     (Ffi_backend.parse_image_payload payload = None)
 
 let test_parse_image_value_with_equals () =
@@ -785,30 +838,37 @@ let test_parse_image_value_with_equals () =
   let result = Ffi_backend.parse_image_payload payload in
   match result with
   | Some img ->
-      Alcotest.(check string) "source path with =" "/tmp/a=b.svg" img.source_path;
-      Alcotest.(check string) "preview path with =" "/tmp/a=b.png" img.preview_path
+      Alcotest.(check string)
+        "source path with =" "/tmp/a=b.svg" img.source_path;
+      Alcotest.(check string)
+        "preview path with =" "/tmp/a=b.png" img.preview_path
   | None -> Alcotest.fail "expected Some image"
 
 let test_scroll_when_cursor_below_screen () =
   let width = 10 in
   (* term_height = 10, but prompt starts at row 15 (below screen) *)
   let model =
-    { (initial_model width) with prompt_top_row = 15; term_height = 10 }
+    initial_model width
+    |> with_layout (fun layout ->
+        { layout with prompt_top_row = 15; term_height = 10 })
   in
 
   (* Send any key to trigger universal_corrections *)
   match update (Update.Key (Tty_listener.Char "a")) model with
   | Continue new_model ->
       (* No physical scroll needed — just reposition the prompt *)
-      Alcotest.(check int) "scroll_amount" 0 new_model.scroll_amount;
-      Alcotest.(check int) "prompt_top_row adjusted" 10 new_model.prompt_top_row
+      Alcotest.(check int) "scroll_amount" 0 new_model.layout.scroll_amount;
+      Alcotest.(check int)
+        "prompt_top_row adjusted" 10 new_model.layout.prompt_top_row
   | _ -> Alcotest.fail "Expected Continue result"
 
 let test_submit_scrolls_when_at_bottom () =
   let width = 10 in
   (* prompt at row 10, term_height = 10, single line of text *)
   let model =
-    { (initial_model width) with prompt_top_row = 10; term_height = 10 }
+    initial_model width
+    |> with_layout (fun layout ->
+        { layout with prompt_top_row = 10; term_height = 10 })
   in
   let model = insert_many model 3 in
 
@@ -816,9 +876,9 @@ let test_submit_scrolls_when_at_bottom () =
   | Submit (_, new_model) ->
       (* Submit aligns the prompt up one row first, preserving a visible
          output row before moving the next prompt into place. *)
-      Alcotest.(check int) "scroll_amount" (-1) new_model.scroll_amount;
-      Alcotest.(check int) "prompt_top_row" 10 new_model.prompt_top_row;
-      let repl_row, _ = new_model.repl_cursor in
+      Alcotest.(check int) "scroll_amount" (-1) new_model.layout.scroll_amount;
+      Alcotest.(check int) "prompt_top_row" 10 new_model.layout.prompt_top_row;
+      let repl_row, _ = new_model.repl.repl_cursor in
       Alcotest.(check int) "repl_cursor row" 9 repl_row
   | _ -> Alcotest.fail "Expected Submit result"
 
@@ -826,48 +886,44 @@ let test_submit_aligns_tail_when_cursor_not_on_last_line () =
   let width = 40 in
   let model =
     with_cursor_internal
-      ({ (with_lines (initial_model width)
-            [ us "f <- function() {"; us "  1"; us "  "; us "}" ]) with
-         prompt_top_row = 8;
-         term_height = 10;
-       })
+      (with_lines (initial_model width)
+         [ us "f <- function() {"; us "  1"; us "  "; us "}" ]
+      |> with_layout (fun layout ->
+          { layout with prompt_top_row = 8; term_height = 10 }))
       ~line:2 ~pos:2
   in
   match submit model with
   | Submit (text, new_model) ->
       Alcotest.(check string)
-        "submitted text keeps closing brace"
-        "f <- function() {\n  1\n  \n}"
+        "submitted text keeps closing brace" "f <- function() {\n  1\n  \n}"
         text;
       Alcotest.(check int)
-        "tail-aligned submit only needs one scroll" (-1) new_model.scroll_amount;
-      let repl_row, _ = new_model.repl_cursor in
+        "tail-aligned submit only needs one scroll" (-1)
+        new_model.layout.scroll_amount;
+      let repl_row, _ = new_model.repl.repl_cursor in
       Alcotest.(check int) "repl cursor lands on reserved output row" 9 repl_row
   | _ -> Alcotest.fail "Expected Submit result"
 
 let test_process_response_clears_scroll () =
   let width = 10 in
   let model =
-    {
-      (initial_model width) with
-      backend_response = Some Ffi_backend.Done;
-      scroll_amount = -5;
-    }
+    initial_model width
+    |> with_repl (fun repl ->
+        { repl with backend_response = Some Ffi_backend.Done })
+    |> with_layout (fun layout -> { layout with scroll_amount = -5 })
   in
 
   let new_model = Update.process_response model in
 
-  Alcotest.(check int) "scroll_amount cleared" 0 new_model.scroll_amount
+  Alcotest.(check int) "scroll_amount cleared" 0 new_model.layout.scroll_amount
 
 let test_view_clears_reserved_output_row_before_first_chunk () =
   let width = 20 in
   let model =
-    {
-      (initial_model width) with
-      prompt_top_row = 5;
-      repl_cursor = (4, 1);
-      awaiting_response = true;
-    }
+    initial_model width
+    |> with_layout (fun layout -> { layout with prompt_top_row = 5 })
+    |> with_repl (fun repl ->
+        { repl with repl_cursor = (4, 1); awaiting_response = true })
   in
   Alcotest.(check bool)
     "reserved output row is cleared" true
@@ -876,12 +932,10 @@ let test_view_clears_reserved_output_row_before_first_chunk () =
 let test_view_preserves_streamed_output_row () =
   let width = 20 in
   let model =
-    {
-      (initial_model width) with
-      prompt_top_row = 5;
-      repl_cursor = (4, 10);
-      awaiting_response = true;
-    }
+    initial_model width
+    |> with_layout (fun layout -> { layout with prompt_top_row = 5 })
+    |> with_repl (fun repl ->
+        { repl with repl_cursor = (4, 10); awaiting_response = true })
   in
   Alcotest.(check bool)
     "streamed output row is not cleared" false
@@ -890,29 +944,31 @@ let test_view_preserves_streamed_output_row () =
 let test_view_clears_below_prompt_box_to_bottom () =
   let width = 20 in
   let model =
-    {
-      (with_lines (initial_model width) [ us "alpha"; us "beta"; us "gamma" ])
-      with
-      prompt_top_row = 6;
-      term_height = 10;
-      prompt_box_height = Frontend_types.min_prompt_height;
-      completion =
-        Some
-          (Completion.create ~token_start:0
-             (List.map Completion.backend_item [ "item0"; "item1"; "item2"; "item3" ]));
-    }
+    with_lines (initial_model width) [ us "alpha"; us "beta"; us "gamma" ]
+    |> with_layout (fun layout ->
+        {
+          layout with
+          prompt_top_row = 6;
+          term_height = 10;
+          prompt_box_height = Frontend_types.min_prompt_height;
+        })
+    |> with_completion
+         (Some
+            (Completion.create ~token_start:0
+               (List.map Completion.backend_item
+                  [ "item0"; "item1"; "item2"; "item3" ])))
     |> fun model -> with_cursor_internal model ~line:2 ~pos:5
   in
   let ops = view_ops_list model in
   Alcotest.(check bool)
-    "clears first row below prompt content" true
-    (clears_row 9 ops);
-  Alcotest.(check bool)
-    "clears terminal bottom row" true
-    (clears_row 10 ops)
+    "clears first row below prompt content" true (clears_row 9 ops);
+  Alcotest.(check bool) "clears terminal bottom row" true (clears_row 10 ops)
 
 let test_history_search_hides_cursor () =
-  let model = { (initial_model 20) with mode = History_search (us "as") } in
+  let model =
+    initial_model 20 |> fun model ->
+    { model with input = { model.input with mode = History_search (us "as") } }
+  in
   let ops = view_ops_list model in
   Alcotest.(check bool)
     "history search hides cursor" true (has_cursor_op `Hide ops);
@@ -927,24 +983,31 @@ let test_r_error_followed_by_done () =
 
   (* Simulate receiving R_error *)
   let model =
-    {
-      (initial_model width) with
-      backend_response = Some (Ffi_backend.R_error "Error: oops");
-      awaiting_response = true;
-    }
+    initial_model width
+    |> with_repl (fun repl ->
+        {
+          repl with
+          backend_response = Some (Ffi_backend.R_error "Error: oops");
+          awaiting_response = true;
+        })
   in
   let model = Update.process_response model in
 
   (* After R_error, we should STILL be awaiting (this is the fix) *)
   Alcotest.(check bool)
-    "still awaiting after R_error" true model.awaiting_response;
+    "still awaiting after R_error" true model.repl.awaiting_response;
 
   (* Then Done arrives *)
-  let model = { model with backend_response = Some Ffi_backend.Done } in
+  let model =
+    model
+    |> with_repl (fun repl ->
+        { repl with backend_response = Some Ffi_backend.Done })
+  in
   let model = Update.process_response model in
 
   (* NOW we're done awaiting *)
-  Alcotest.(check bool) "not awaiting after Done" false model.awaiting_response
+  Alcotest.(check bool)
+    "not awaiting after Done" false model.repl.awaiting_response
 
 (* Helper to convert wrapped result to string list for testing *)
 let to_strings us_list = List.map Unicode_string.to_string us_list
@@ -1070,7 +1133,10 @@ let test_coordinate_roundtrip () =
 (* Awaiting response behavior tests *)
 let test_typing_while_awaiting () =
   let width = 10 in
-  let model = { (initial_model width) with awaiting_response = true } in
+  let model =
+    initial_model width
+    |> with_repl (fun repl -> { repl with awaiting_response = true })
+  in
 
   match update (Update.Key (Tty_listener.Char "a")) model with
   | Continue new_model ->
@@ -1080,10 +1146,8 @@ let test_typing_while_awaiting () =
 let test_submit_blocked_while_awaiting () =
   let width = 10 in
   let model =
-    {
-      (with_lines (initial_model width) [ us "test" ]) with
-      awaiting_response = true;
-    }
+    with_lines (initial_model width) [ us "test" ]
+    |> with_repl (fun repl -> { repl with awaiting_response = true })
   in
 
   match update (Update.Key (Tty_listener.Ctrl 'p')) model with
@@ -1091,13 +1155,17 @@ let test_submit_blocked_while_awaiting () =
       (* Submit should be blocked, model unchanged *)
       Alcotest.(check string)
         "lines unchanged" "test" (first_line_str new_model);
-      Alcotest.(check bool) "still awaiting" true new_model.awaiting_response
+      Alcotest.(check bool)
+        "still awaiting" true new_model.repl.awaiting_response
   | Submit _ -> Alcotest.fail "Submit should be blocked while awaiting"
   | _ -> Alcotest.fail "Expected Continue"
 
 let test_cancel_while_awaiting () =
   let width = 10 in
-  let model = { (initial_model width) with awaiting_response = true } in
+  let model =
+    initial_model width
+    |> with_repl (fun repl -> { repl with awaiting_response = true })
+  in
 
   match update (Update.Key (Tty_listener.Ctrl 'c')) model with
   | Cancel -> Alcotest.(check bool) "cancel works" true true
@@ -1107,10 +1175,8 @@ let test_backspace_while_awaiting () =
   let width = 10 in
   let model =
     with_cursor_internal
-      {
-        (with_lines (initial_model width) [ us "ab" ]) with
-        awaiting_response = true;
-      }
+      (with_lines (initial_model width) [ us "ab" ]
+      |> with_repl (fun repl -> { repl with awaiting_response = true }))
       ~line:0 ~pos:2
   in
 
@@ -1215,7 +1281,7 @@ let test_backspace_merges_lines () =
 
   match update (Update.Key Tty_listener.Backspace) model with
   | Continue new_model ->
-      Alcotest.(check int) "lines merged" 1 (List.length new_model.lines);
+      Alcotest.(check int) "lines merged" 1 (List.length new_model.input.lines);
       Alcotest.(check string)
         "content merged" "helloworld" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected Continue"
@@ -1230,10 +1296,10 @@ let test_newline_splits_line () =
 
   match update (Update.Key (Tty_listener.Ctrl '\r')) model with
   | Continue new_model ->
-      Alcotest.(check int) "two lines" 2 (List.length new_model.lines);
+      Alcotest.(check int) "two lines" 2 (List.length new_model.input.lines);
       Alcotest.(check (list string))
         "split content" [ "hello"; "world" ]
-        (to_strings new_model.lines)
+        (to_strings new_model.input.lines)
   | _ -> Alcotest.fail "Expected Continue"
 
 let test_ctrl_d_exit_on_empty () =
@@ -1268,9 +1334,10 @@ let test_submit_multiline () =
   match submit model with
   | Submit (text, new_model) ->
       Alcotest.(check string) "submitted text" "c(1,\n2,\n3)" text;
-      Alcotest.(check bool) "awaiting_response" true new_model.awaiting_response;
+      Alcotest.(check bool)
+        "awaiting_response" true new_model.repl.awaiting_response;
       Alcotest.(check string) "lines reset" "" (first_line_str new_model);
-      Alcotest.(check int) "lines count" 1 (List.length new_model.lines)
+      Alcotest.(check int) "lines count" 1 (List.length new_model.input.lines)
   | _ -> Alcotest.fail "Expected Submit result"
 
 let test_submit_continuation_if_paren () =
@@ -1284,7 +1351,7 @@ let test_submit_continuation_if_paren () =
   in
   match submit model with
   | Continue new_model ->
-      Alcotest.(check int) "lines count" 2 (List.length new_model.lines);
+      Alcotest.(check int) "lines count" 2 (List.length new_model.input.lines);
       Alcotest.(check string)
         "first line preserved" "if (x)" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected Continue for if (x)"
@@ -1300,7 +1367,7 @@ let test_submit_continuation_function_paren () =
   in
   match submit model with
   | Continue new_model ->
-      Alcotest.(check int) "lines count" 2 (List.length new_model.lines);
+      Alcotest.(check int) "lines count" 2 (List.length new_model.input.lines);
       Alcotest.(check string)
         "first line preserved" "function(x)" (first_line_str new_model)
   | _ -> Alcotest.fail "Expected Continue for function(x)"
@@ -1340,7 +1407,7 @@ let test_paste_simple () =
   | Continue new_model ->
       Alcotest.(check (list string))
         "lines" [ "hello" ]
-        (to_strings new_model.lines);
+        (to_strings new_model.input.lines);
       Alcotest.(check int) "cursor col" 5 (cursor_col new_model)
   | _ -> Alcotest.fail "Expected Continue"
 
@@ -1354,7 +1421,7 @@ let test_paste_multiline () =
       Alcotest.(check (list string))
         "lines"
         [ "line1"; "line2"; "line3" ]
-        (to_strings new_model.lines);
+        (to_strings new_model.input.lines);
       Alcotest.(check int) "cursor row" 2 (cursor_row new_model);
       Alcotest.(check int) "cursor col" 5 (cursor_col new_model)
   | _ -> Alcotest.fail "Expected Continue"
@@ -1370,7 +1437,7 @@ let test_paste_at_cursor () =
   | Continue new_model ->
       Alcotest.(check (list string))
         "lines" [ "helloXXXworld" ]
-        (to_strings new_model.lines);
+        (to_strings new_model.input.lines);
       Alcotest.(check int) "cursor col" 8 (cursor_col new_model)
   | _ -> Alcotest.fail "Expected Continue"
 
@@ -1386,7 +1453,7 @@ let test_paste_multiline_at_cursor () =
       Alcotest.(check (list string))
         "lines"
         [ "helloA"; "B"; "Cworld" ]
-        (to_strings new_model.lines);
+        (to_strings new_model.input.lines);
       Alcotest.(check int) "cursor row" 2 (cursor_row new_model);
       Alcotest.(check int) "cursor col" 1 (cursor_col new_model)
   | _ -> Alcotest.fail "Expected Continue"
@@ -1399,7 +1466,7 @@ let test_paste_truncates_large () =
   | Continue new_model ->
       let total_len =
         List.fold_left ( + ) 0
-          (List.map Unicode_string.byte_length new_model.lines)
+          (List.map Unicode_string.byte_length new_model.input.lines)
       in
       Alcotest.(check bool) "truncated to 5kb" true (total_len <= 5 * 1024)
   | _ -> Alcotest.fail "Expected Continue"
@@ -1446,7 +1513,7 @@ let test_lex_delete_empty_line : unit -> unit =
         List.concat_map
           (fun (line : R_lex_cache.entry) ->
             List.map R_highlight.token_to_lexeme line.tokens)
-          new_model.lex_cache
+          new_model.input.lex_cache
       in
       Alcotest.(check string) "First letter is a" "a" (List.nth lexemes 0);
       Alcotest.(check string) "Second letter is b" "b" (List.nth lexemes 1);
@@ -1607,9 +1674,9 @@ let test_empty_brace_expands_on_enter () =
   | Continue new_model ->
       Alcotest.(check (list string))
         "expanded lines" [ "{"; "  "; "}" ]
-        (to_strings new_model.lines);
-      Alcotest.(check int) "cursor line" 1 new_model.cursor_line;
-      Alcotest.(check int) "cursor pos" 2 new_model.cursor_pos
+        (to_strings new_model.input.lines);
+      Alcotest.(check int) "cursor line" 1 new_model.input.cursor_line;
+      Alcotest.(check int) "cursor pos" 2 new_model.input.cursor_pos
   | _ -> Alcotest.fail "Expected Continue"
 
 let test_brace_continuation_keeps_indent () =
@@ -1624,9 +1691,9 @@ let test_brace_continuation_keeps_indent () =
       Alcotest.(check (list string))
         "lines after enter"
         [ "{"; "  foo <- 1"; "  "; "}" ]
-        (to_strings new_model.lines);
-      Alcotest.(check int) "cursor line" 2 new_model.cursor_line;
-      Alcotest.(check int) "cursor pos" 2 new_model.cursor_pos
+        (to_strings new_model.input.lines);
+      Alcotest.(check int) "cursor line" 2 new_model.input.cursor_line;
+      Alcotest.(check int) "cursor pos" 2 new_model.input.cursor_pos
   | _ -> Alcotest.fail "Expected Continue"
 
 (* Completion tests *)
@@ -1723,10 +1790,8 @@ let test_view_completion_rows_capped_at_4 () =
     Completion.create ~token_start:0 (make_completion_items 10)
   in
   let model =
-    {
-      (with_lines (initial_model 20) [ us "item" ]) with
-      completion = Some completion;
-    }
+    with_lines (initial_model 20) [ us "item" ]
+    |> with_completion (Some completion)
     |> fun model -> with_cursor_internal model ~line:0 ~pos:4
   in
   let rows = completion_rows model in
@@ -1820,8 +1885,9 @@ let test_backslash_token_at_start_of_line () =
     with_cursor_internal model ~line:0 ~pos:2
   in
   match
-    Backslash_command.token_in_line (List.hd model.lines)
-      ~cursor_pos:model.cursor_pos
+    Backslash_command.token_in_line
+      (List.hd model.input.lines)
+      ~cursor_pos:model.input.cursor_pos
   with
   | Some (token : Backslash_command.token) ->
       Alcotest.(check int) "token start" 0 token.token_start;
@@ -1835,8 +1901,9 @@ let test_backslash_token_after_punctuation () =
     with_cursor_internal model ~line:0 ~pos:7
   in
   match
-    Backslash_command.token_in_line (List.hd model.lines)
-      ~cursor_pos:model.cursor_pos
+    Backslash_command.token_in_line
+      (List.hd model.input.lines)
+      ~cursor_pos:model.input.cursor_pos
   with
   | Some (token : Backslash_command.token) ->
       Alcotest.(check int) "token start" 4 token.token_start;
@@ -1852,8 +1919,9 @@ let test_backslash_token_not_inside_word () =
     "no token inside word" None
     (Option.map
        (fun (token : Backslash_command.token) -> token.typed_text)
-       (Backslash_command.token_in_line (List.hd model.lines)
-          ~cursor_pos:model.cursor_pos))
+       (Backslash_command.token_in_line
+          (List.hd model.input.lines)
+          ~cursor_pos:model.input.cursor_pos))
 
 let test_backslash_completion_shows_frontend_commands () =
   let base_model =
@@ -1862,7 +1930,7 @@ let test_backslash_completion_shows_frontend_commands () =
   in
   match update (Update.Key Tty_listener.Right) base_model with
   | Continue model -> (
-      match model.completion with
+      match model.input.completion with
       | Some cs ->
           Alcotest.(check (list string))
             "shows matching backslash commands"
@@ -1880,7 +1948,7 @@ let test_backslash_completion_not_shown_for_bare_backslash () =
   | Continue model ->
       Alcotest.(check bool)
         "no completion for bare backslash" true
-        (Option.is_none model.completion)
+        (Option.is_none model.input.completion)
   | _ -> Alcotest.fail "Expected Continue"
 
 let test_backslash_completion_lists_common_greek_letters () =
@@ -1893,7 +1961,7 @@ let test_backslash_completion_lists_common_greek_letters () =
     | Continue model -> model
     | _ -> Alcotest.fail "Expected Continue"
   in
-  match model.completion with
+  match model.input.completion with
   | Some cs ->
       Alcotest.(check (list string))
         "shows common greek completions" [ "\\alpha" ]
@@ -1910,7 +1978,7 @@ let test_backslash_completion_filters_multiple_greek_matches () =
     | Continue model -> model
     | _ -> Alcotest.fail "Expected Continue"
   in
-  match model.completion with
+  match model.input.completion with
   | Some cs ->
       Alcotest.(check (list string))
         "shows greek matches sharing prefix"
@@ -1928,7 +1996,7 @@ let test_backslash_completion_shows_fzf_command () =
     | Continue model -> model
     | _ -> Alcotest.fail "Expected Continue"
   in
-  match model.completion with
+  match model.input.completion with
   | Some cs ->
       Alcotest.(check (list string))
         "shows fzf completion" [ "\\fzf" ]
@@ -1944,19 +2012,19 @@ let test_normal_completion_not_shown_for_single_character () =
   | Continue model ->
       Alcotest.(check bool)
         "no completion for one-character normal word" true
-        (Option.is_none model.completion)
+        (Option.is_none model.input.completion)
   | _ -> Alcotest.fail "Expected Continue"
 
 let test_history_search_typing_ignores_completions () =
   let stale_completion =
     Completion.create ~token_start:0 (make_completion_items 3)
   in
-  let model = { (initial_model 20) with completion = Some stale_completion } in
+  let model = initial_model 20 |> with_completion (Some stale_completion) in
   let model, effects =
     Update.update (Update.Key (Tty_listener.Ctrl 'r')) model
   in
   Alcotest.(check int) "ctrl-r has no effects" 0 (List.length effects);
-  (match model.mode with
+  (match model.input.mode with
   | History_search search ->
       Alcotest.(check string)
         "starts with empty search" ""
@@ -1964,13 +2032,13 @@ let test_history_search_typing_ignores_completions () =
   | _ -> Alcotest.fail "Expected history search mode");
   Alcotest.(check bool)
     "stale completion cleared on entry" true
-    (Option.is_none model.completion);
+    (Option.is_none model.input.completion);
   let model, effects =
     Update.update (Update.Key (Tty_listener.Char "a")) model
   in
   Alcotest.(check int)
     "typing in history search has no completion effect" 0 (List.length effects);
-  (match model.mode with
+  (match model.input.mode with
   | History_search search ->
       Alcotest.(check string)
         "search stores first char" "a"
@@ -1980,13 +2048,13 @@ let test_history_search_typing_ignores_completions () =
     "no history match leaves empty result" "" (first_line_str model);
   Alcotest.(check bool)
     "completion stays cleared after first char" true
-    (Option.is_none model.completion);
+    (Option.is_none model.input.completion);
   let model, effects =
     Update.update (Update.Key (Tty_listener.Char "s")) model
   in
   Alcotest.(check int)
     "second char also has no completion effect" 0 (List.length effects);
-  (match model.mode with
+  (match model.input.mode with
   | History_search search ->
       Alcotest.(check string)
         "search stores typed prefix" "as"
@@ -1995,7 +2063,7 @@ let test_history_search_typing_ignores_completions () =
   Alcotest.(check string) "result stays empty" "" (first_line_str model);
   Alcotest.(check bool)
     "completion stays cleared after second char" true
-    (Option.is_none model.completion)
+    (Option.is_none model.input.completion)
 
 let test_backslash_completion_enter_simple_inserts_text () =
   let base_model =
@@ -2018,7 +2086,7 @@ let test_backslash_completion_enter_simple_inserts_text () =
         "simple command inserts unicode" "π" (first_line_str new_model);
       Alcotest.(check (option int))
         "completion cleared" None
-        (Option.bind new_model.completion Completion.selected_index)
+        (Option.bind new_model.input.completion Completion.selected_index)
   | _ -> Alcotest.fail "Expected Continue"
 
 let test_backslash_completion_enter_effect_runs_command () =
@@ -2072,14 +2140,15 @@ let test_backslash_completion_enter_exact_simple_match_after_text () =
         "non-boundary backslash submits as R code" "sadfj\\pi" text
   | _ -> Alcotest.fail "Expected Submit"
 
-let test_backslash_completion_enter_exact_simple_match_after_text_with_backend_completion () =
+let test_backslash_completion_enter_exact_simple_match_after_text_with_backend_completion
+    () =
   let completion =
     Completion.create ~token_start:2 [ Completion.backend_item "pirnorm" ]
   in
   let base_model =
     with_lines (initial_model 20) [ us "a\\pi" ] |> fun model ->
     with_cursor_internal model ~line:0 ~pos:4 |> fun model ->
-    { model with completion = Some completion }
+    model |> with_completion (Some completion)
   in
   match update (Update.Key Tty_listener.Enter) base_model with
   | Submit (text, _) ->
@@ -2237,53 +2306,67 @@ let test_prompt_only_moves_down () =
   (* Prompt at row 8, after short output ending at row 6: prompt stays at 8 *)
   let width = 20 in
   let model =
-    {
-      (initial_model width) with
-      prompt_top_row = 8;
-      term_height = 25;
-      prompt_box_height = Frontend_types.min_prompt_height;
-    }
+    initial_model width
+    |> with_layout (fun layout ->
+        {
+          layout with
+          prompt_top_row = 8;
+          term_height = 25;
+          prompt_box_height = Frontend_types.min_prompt_height;
+        })
   in
   (* Simulate Done: next_prompt_row = 7 (below output at row 6) *)
   let next_prompt_row = 7 in
-  let natural = max model.prompt_top_row next_prompt_row in
-  let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
+  let natural = max model.layout.prompt_top_row next_prompt_row in
+  let clamped =
+    Frontend_types.clamp_prompt_top model.layout.term_height natural
+  in
   Alcotest.(check int) "prompt stays at 8" 8 clamped
 
 let test_prompt_moves_down_with_output () =
   (* Prompt at row 5, output pushes next prompt to row 10 *)
   let width = 20 in
   let model =
-    { (initial_model width) with prompt_top_row = 5; term_height = 25 }
+    initial_model width
+    |> with_layout (fun layout ->
+        { layout with prompt_top_row = 5; term_height = 25 })
   in
   let next_prompt_row = 10 in
-  let natural = max model.prompt_top_row next_prompt_row in
-  let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
+  let natural = max model.layout.prompt_top_row next_prompt_row in
+  let clamped =
+    Frontend_types.clamp_prompt_top model.layout.term_height natural
+  in
   Alcotest.(check int) "prompt moves to 10" 10 clamped
 
 let test_prompt_capped_at_bottom_zone () =
   (* Prompt at row 15, output pushes to row 24, capped at 21 *)
   let width = 20 in
   let model =
-    { (initial_model width) with prompt_top_row = 15; term_height = 25 }
+    initial_model width
+    |> with_layout (fun layout ->
+        { layout with prompt_top_row = 15; term_height = 25 })
   in
   let next_prompt_row = 24 in
-  let natural = max model.prompt_top_row next_prompt_row in
-  let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
+  let natural = max model.layout.prompt_top_row next_prompt_row in
+  let clamped =
+    Frontend_types.clamp_prompt_top model.layout.term_height natural
+  in
   Alcotest.(check int) "capped at 21" 21 clamped
 
 let test_submit_prompt_box_height () =
   (* After submit, prompt_box_height should be min_prompt_height *)
   let width = 20 in
   let model =
-    { (initial_model width) with prompt_top_row = 5; term_height = 25 }
+    initial_model width
+    |> with_layout (fun layout ->
+        { layout with prompt_top_row = 5; term_height = 25 })
   in
   let model = insert_many model 3 in
   match submit model with
   | Submit (_, new_model) ->
       Alcotest.(check int)
         "prompt_box_height is min_prompt_height"
-        Frontend_types.min_prompt_height new_model.prompt_box_height
+        Frontend_types.min_prompt_height new_model.layout.prompt_box_height
   | _ -> Alcotest.fail "Expected Submit"
 
 let test_vertical_movement_keeps_prompt_tail_visible_when_it_fits () =
@@ -2291,93 +2374,104 @@ let test_vertical_movement_keeps_prompt_tail_visible_when_it_fits () =
   let lines = [ us "a"; us "b"; us "c"; us "d"; us "e" ] in
   let model =
     with_cursor_internal
-      ({ (with_lines (initial_model width) lines) with
-         prompt_top_row = 8;
-         term_height = 10;
-       })
+      (with_lines (initial_model width) lines
+      |> with_layout (fun layout ->
+          { layout with prompt_top_row = 8; term_height = 10 }))
       ~line:1 ~pos:0
   in
   let new_model = Update.handle_vertical_cursor_movement model in
-  Alcotest.(check int) "prompt height stays at five rows" 5
-    new_model.prompt_box_height;
+  Alcotest.(check int)
+    "prompt height stays at five rows" 5 new_model.layout.prompt_box_height;
   Alcotest.(check int)
     "prompt top row shifts up so the tail stays visible" 6
-    new_model.prompt_top_row
+    new_model.layout.prompt_top_row
 
 let test_resize_clamps_prompt () =
   (* Prompt at row 15, terminal shrinks from 25 to 12 *)
   let width = 20 in
   let model =
-    { (initial_model width) with prompt_top_row = 15; term_height = 25 }
+    initial_model width
+    |> with_layout (fun layout ->
+        { layout with prompt_top_row = 15; term_height = 25 })
   in
   let new_model = Update.handle_resize 20 12 model in
   (* default_prompt_top 12 = max(2, 12-4) = 8. clamp(12, 15) = min(15, 8) = 8 *)
-  Alcotest.(check int) "prompt clamped on shrink" 8 new_model.prompt_top_row
+  Alcotest.(check int)
+    "prompt clamped on shrink" 8 new_model.layout.prompt_top_row
 
 let test_resize_preserves_prompt_in_zone () =
   (* Prompt at row 5, terminal stays 25: no change *)
   let width = 20 in
   let model =
-    { (initial_model width) with prompt_top_row = 5; term_height = 25 }
+    initial_model width
+    |> with_layout (fun layout ->
+        { layout with prompt_top_row = 5; term_height = 25 })
   in
   let new_model = Update.handle_resize 20 25 model in
   (* No change: 5 <= 21, so stays at 5 *)
-  Alcotest.(check int) "prompt stays at 5" 5 new_model.prompt_top_row
+  Alcotest.(check int) "prompt stays at 5" 5 new_model.layout.prompt_top_row
 
 let test_min_prompt_height_enforced () =
   (* handle_vertical_cursor_movement enforces min_prompt_height *)
   let width = 20 in
   let model =
-    {
-      (initial_model width) with
-      prompt_top_row = 5;
-      term_height = 25;
-      prompt_box_height = 1;
-    }
+    initial_model width
+    |> with_layout (fun layout ->
+        {
+          layout with
+          prompt_top_row = 5;
+          term_height = 25;
+          prompt_box_height = 1;
+        })
   in
   let new_model = Update.handle_vertical_cursor_movement model in
   Alcotest.(check int)
     "prompt_box_height at least min" Frontend_types.min_prompt_height
-    new_model.prompt_box_height
+    new_model.layout.prompt_box_height
 
 (* Readline mode tests *)
 
 let readline_model width prompt =
+  initial_model width |> fun model ->
   {
-    (initial_model width) with
-    mode = Frontend_types.Readline prompt;
-    awaiting_response = true;
+    model with
+    input = { model.input with mode = Frontend_types.Readline prompt };
+    repl = { model.repl with awaiting_response = true };
   }
 
 let test_readline_response_sets_mode () =
   let width = 20 in
   let model =
-    {
-      (initial_model width) with
-      backend_response = Some (Ffi_backend.Readline "Enter name: ");
-      awaiting_response = true;
-    }
+    initial_model width
+    |> with_repl (fun repl ->
+        {
+          repl with
+          backend_response = Some (Ffi_backend.Readline "Enter name: ");
+          awaiting_response = true;
+        })
   in
   let new_model = Update.process_response model in
   Alcotest.(check bool)
     "mode is Readline" true
-    (new_model.mode = Frontend_types.Readline "Enter name: ");
+    (new_model.input.mode = Frontend_types.Readline "Enter name: ");
   Alcotest.(check bool)
-    "awaiting_response stays true" true new_model.awaiting_response
+    "awaiting_response stays true" true new_model.repl.awaiting_response
 
 let test_readline_empty_prompt_normalized () =
   let width = 20 in
   let model =
-    {
-      (initial_model width) with
-      backend_response = Some (Ffi_backend.Readline "");
-      awaiting_response = true;
-    }
+    initial_model width
+    |> with_repl (fun repl ->
+        {
+          repl with
+          backend_response = Some (Ffi_backend.Readline "");
+          awaiting_response = true;
+        })
   in
   let new_model = Update.process_response model in
   Alcotest.(check bool)
     "empty prompt normalized to 'input'" true
-    (new_model.mode = Frontend_types.Readline "input")
+    (new_model.input.mode = Frontend_types.Readline "input")
 
 let test_readline_prompt_renders_bare () =
   let width = 30 in
@@ -2400,15 +2494,14 @@ let test_readline_empty_prompt_renders_input_colon () =
 let test_readline_done_resets_mode () =
   let width = 20 in
   let model =
-    {
-      (readline_model width "Enter name: ") with
-      backend_response = Some Ffi_backend.Done;
-    }
+    readline_model width "Enter name: "
+    |> with_repl (fun repl ->
+        { repl with backend_response = Some Ffi_backend.Done })
   in
   let new_model = Update.process_response model in
   Alcotest.(check bool)
     "mode reset to Normal" true
-    (new_model.mode = Frontend_types.Normal)
+    (new_model.input.mode = Frontend_types.Normal)
 
 let test_readline_typing_works () =
   let width = 20 in
@@ -2439,23 +2532,27 @@ let test_readline_down_blocked () =
 let test_readline_submit_preserves_line_on_screen () =
   let width = 30 in
   let model =
-    {
-      (with_lines (readline_model width "Enter name: ") [ us "Alice" ]) with
-      prompt_top_row = 4;
-      term_height = 20;
-      prompt_box_height = Frontend_types.min_prompt_height;
-    }
+    with_lines (readline_model width "Enter name: ") [ us "Alice" ]
+    |> with_layout (fun layout ->
+        {
+          layout with
+          prompt_top_row = 4;
+          term_height = 20;
+          prompt_box_height = Frontend_types.min_prompt_height;
+        })
   in
-  let new_model, effects = Update.update (Update.Key Tty_listener.Enter) model in
+  let new_model, effects =
+    Update.update (Update.Key Tty_listener.Enter) model
+  in
   Alcotest.(check bool)
     "switches back to normal mode" true
-    (new_model.mode = Frontend_types.Normal);
+    (new_model.input.mode = Frontend_types.Normal);
   Alcotest.(check bool)
-    "continues awaiting backend output" true new_model.awaiting_response;
+    "continues awaiting backend output" true new_model.repl.awaiting_response;
   Alcotest.(check string) "input cleared" "" (first_line_str new_model);
   Alcotest.(check bool)
     "prompt box moves below submitted line" true
-    (new_model.prompt_top_row > model.prompt_top_row);
+    (new_model.layout.prompt_top_row > model.layout.prompt_top_row);
   match effects with
   | [ Repl_effect.SubmitReadlineInput "Alice" ] -> ()
   | _ -> Alcotest.fail "Expected SubmitReadlineInput effect"
@@ -2556,11 +2653,12 @@ let () =
           test_case "Image response" `Quick test_process_response_image;
           test_case "Parse image: empty" `Quick test_parse_image_empty;
           test_case "Parse image: path only" `Quick test_parse_image_path_only;
-          test_case "Parse image: full payload" `Quick test_parse_image_full_payload;
-          test_case "Parse image: aliased preview payload" `Quick
-            test_parse_image_aliased_preview_payload;
-          test_case "Parse image: missing path" `Quick test_parse_image_missing_path;
-          test_case "Parse image: value with =" `Quick test_parse_image_value_with_equals;
+          test_case "Parse image: full payload" `Quick
+            test_parse_image_full_payload;
+          test_case "Parse image: missing path" `Quick
+            test_parse_image_missing_path;
+          test_case "Parse image: value with =" `Quick
+            test_parse_image_value_with_equals;
           test_case "R_error followed by Done" `Quick
             test_r_error_followed_by_done;
         ] );
@@ -2701,7 +2799,10 @@ let () =
             test_backslash_completion_enter_exact_simple_match;
           test_case "Backslash enter exact simple match after text" `Quick
             test_backslash_completion_enter_exact_simple_match_after_text;
-          test_case "Backslash enter exact simple match after text with backend completion" `Quick
+          test_case
+            "Backslash enter exact simple match after text with backend \
+             completion"
+            `Quick
             test_backslash_completion_enter_exact_simple_match_after_text_with_backend_completion;
           test_case "Backslash enter exact effect match" `Quick
             test_backslash_completion_enter_exact_effect_match;

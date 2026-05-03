@@ -40,7 +40,12 @@ let render_submit_snapshot model effects =
   in
   if should_render_snapshot then begin
     let snapshot_top = Mode_common.submit_aligned_prompt_top model in
-    print_string (V.view { model with prompt_top_row = snapshot_top });
+    print_string
+      (V.view
+         {
+           model with
+           layout = { model.layout with prompt_top_row = snapshot_top };
+         });
     flush stdout
   end
 
@@ -55,22 +60,30 @@ let enter_passthrough model backend orig_termios loop =
         Terminal_session.enable_bracketed_paste ();
         let new_row, new_col = Terminal_session.get_cursor_position () in
         let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
-        let natural = max model.prompt_top_row next_prompt_row in
+        let natural = max model.layout.prompt_top_row next_prompt_row in
         let clamped =
-          Frontend_types.clamp_prompt_top model.term_height natural
+          Frontend_types.clamp_prompt_top model.layout.term_height natural
         in
         let scroll_needed = natural - clamped in
         if scroll_needed > 0 then begin
           print_string
-            (Term.scroll_up ~term_height:model.term_height scroll_needed);
+            (Term.scroll_up ~term_height:model.layout.term_height scroll_needed);
           flush stdout
         end;
         loop
           {
             model with
-            prompt_top_row = clamped;
-            repl_cursor = (new_row - scroll_needed, new_col);
-            prompt_box_height = Frontend_types.min_prompt_height;
+            layout =
+              {
+                model.layout with
+                prompt_top_row = clamped;
+                prompt_box_height = Frontend_types.min_prompt_height;
+              };
+            repl =
+              {
+                model.repl with
+                repl_cursor = (new_row - scroll_needed, new_col);
+              };
           }
     | _ -> passthrough_loop ()
   in
@@ -79,9 +92,9 @@ let enter_passthrough model backend orig_termios loop =
 let run env backend ~orig_termios =
   let clock = Eio.Stdenv.clock env and stdin = Eio.Stdenv.stdin env in
   let init_model = make_init () in
-  let init_width = init_model.term_width in
+  let init_width = init_model.layout.term_width in
   let startup_mode =
-    Plot_policy.resolve ~running_in_ide:init_model.running_in_ide
+    Plot_policy.resolve ~running_in_ide:init_model.layout.running_in_ide
       ~terminal_caps:terminal_capabilities ~plot_mode:user_options.plot_mode
   in
   Logs.info (fun m ->
@@ -139,7 +152,7 @@ let run env backend ~orig_termios =
         [
           (fun () ->
             let escape_timeout_sec =
-              if model.running_in_ide then 0.2 else 0.05
+              if model.layout.running_in_ide then 0.2 else 0.05
             in
             Update.Key
               (Tty_listener.await_input_with_timeout
@@ -148,8 +161,9 @@ let run env backend ~orig_termios =
           (fun () -> Update.Response (Ffi_backend.await_response backend));
           (fun () ->
             let w, h =
-              Terminal_session.await_dim_change ~current_w:model.term_width
-                ~current_h:model.term_height
+              Terminal_session.await_dim_change
+                ~current_w:model.layout.term_width
+                ~current_h:model.layout.term_height
             in
             Update.TermResize (w, h));
         ]

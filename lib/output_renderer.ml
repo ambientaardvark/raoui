@@ -50,33 +50,43 @@ let image_output_spans ~terminal_capabilities (image : Ffi_backend.image) =
    This may not work correctly with output that uses cursor movement (e.g.
    progress bars with \r) - get_cursor_position won't reflect actual extent. *)
 let print_repl_output ~terminal_capabilities ~user_options model =
-  match model.repl_output with
+  match model.repl.repl_output with
   | None -> model
   | Some (Output_text []) ->
       let new_row, new_col = Terminal_session.get_cursor_position () in
       let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
-      let natural = max model.prompt_top_row next_prompt_row in
-      let clamped = Frontend_types.clamp_prompt_top model.term_height natural in
+      let natural = max model.layout.prompt_top_row next_prompt_row in
+      let clamped =
+        Frontend_types.clamp_prompt_top model.layout.term_height natural
+      in
       let scroll_needed = natural - clamped in
       if scroll_needed > 0 then begin
         print_string
-          (Term.scroll_up ~term_height:model.term_height scroll_needed);
+          (Term.scroll_up ~term_height:model.layout.term_height scroll_needed);
         flush stdout
       end;
       {
         model with
-        repl_output = None;
-        repl_cursor = (new_row - scroll_needed, new_col);
-        prompt_top_row = clamped;
-        prompt_box_height = Frontend_types.min_prompt_height;
+        repl =
+          {
+            model.repl with
+            repl_output = None;
+            repl_cursor = (new_row - scroll_needed, new_col);
+          };
+        layout =
+          {
+            model.layout with
+            prompt_top_row = clamped;
+            prompt_box_height = Frontend_types.min_prompt_height;
+          };
       }
   | Some ((Output_text _ | Output_image _) as output) ->
-      let row, col = model.repl_cursor in
+      let row, col = model.repl.repl_cursor in
       let rendered_image =
         match output with
         | Output_image image ->
             Terminal_image.render ~terminal_capabilities ~config:user_options
-              ~term_width:model.term_width ~image
+              ~term_width:model.layout.term_width ~image
         | Output_text _ -> None
       in
       let spans =
@@ -105,7 +115,15 @@ let print_repl_output ~terminal_capabilities ~user_options model =
       let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
       {
         model with
-        repl_output = None;
-        repl_cursor = (new_row, new_col);
-        prompt_top_row = max model.prompt_top_row next_prompt_row;
+        repl =
+          {
+            model.repl with
+            repl_output = None;
+            repl_cursor = (new_row, new_col);
+          };
+        layout =
+          {
+            model.layout with
+            prompt_top_row = max model.layout.prompt_top_row next_prompt_row;
+          };
       }

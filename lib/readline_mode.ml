@@ -4,7 +4,8 @@ open Text_editor
 let submit model =
   let text = Unicode_string.to_string (current_line model) in
   let new_model =
-    Mode_common.clear_model_for_submit { model with mode = Frontend_types.Normal }
+    Mode_common.clear_model_for_submit
+      { model with input = { model.input with mode = Frontend_types.Normal } }
   in
   (new_model, [ Repl_effect.SubmitReadlineInput text ])
 
@@ -12,7 +13,8 @@ let apply_key key model =
   let open Tty_listener in
   match key with
   | Ctrl 'c' ->
-      (Mode_common.set_mode_normal_blank model, [ Repl_effect.SubmitReadlineInput "" ])
+      ( Mode_common.set_mode_normal_blank model,
+        [ Repl_effect.SubmitReadlineInput "" ] )
   | Ctrl 'p' | Up | Down -> (model, [])
   | Enter -> submit model
   | _ -> (
@@ -20,9 +22,9 @@ let apply_key key model =
         match key with
         | Tab | Escape -> model
         | _ -> (
-            match model.completion with
+            match model.input.completion with
             | Some cs when Completion.is_in_completion_mode cs ->
-                { model with completion = None }
+                { model with input = { model.input with completion = None } }
             | _ -> model)
       in
       match key with
