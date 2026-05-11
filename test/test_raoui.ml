@@ -2655,6 +2655,8 @@ let () =
           test_case "Parse image: path only" `Quick test_parse_image_path_only;
           test_case "Parse image: full payload" `Quick
             test_parse_image_full_payload;
+          test_case "Parse image: aliased preview payload" `Quick
+            test_parse_image_aliased_preview_payload;
           test_case "Parse image: missing path" `Quick
             test_parse_image_missing_path;
           test_case "Parse image: value with =" `Quick
