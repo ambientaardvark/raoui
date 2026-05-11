@@ -2,6 +2,11 @@ open Alcotest
 module R_highlight = Raoui.R_highlight
 module Lexer = Raoui.R_lexer
 
+let us s =
+  match Raoui.Unicode_string.of_string s with
+  | Ok u -> u
+  | Error _ -> Alcotest.fail ("invalid unicode string: " ^ s)
+
 let span_to_string (style, text) =
   let style_name =
     match style with
@@ -29,6 +34,9 @@ let spans_to_string spans =
 
 let check_spans name expected actual =
   check string name (spans_to_string expected) (spans_to_string actual)
+
+let range_text source (range : R_highlight.styled_range) =
+  String.sub source range.start_byte (range.end_byte - range.start_byte)
 
 (* parse_glue_string tests *)
 
@@ -151,6 +159,48 @@ let test_glue_in_tokens_to_spans () =
   check bool "has bracket for interpolation" true
     (List.filter (fun s -> s = `Bracket) styles |> List.length >= 3)
 
+(* ranges_for_entry tests *)
+
+let test_ranges_cover_line () =
+  let source = "foo(x) + \"bar\"" in
+  let entry =
+    match Raoui.R_lex_cache.create [ us source ] with
+    | [ entry ] -> entry
+    | _ -> Alcotest.fail "expected one cache entry"
+  in
+  let ranges = R_highlight.ranges_for_entry entry in
+  let text = String.concat "" (List.map (range_text source) ranges) in
+  check string "ranges cover source" source text
+
+let test_ranges_function_detection () =
+  let source = "foo(x)" in
+  let entry =
+    match Raoui.R_lex_cache.create [ us source ] with
+    | [ entry ] -> entry
+    | _ -> Alcotest.fail "expected one cache entry"
+  in
+  let ranges = R_highlight.ranges_for_entry entry in
+  let styles =
+    List.map (fun (r : R_highlight.styled_range) -> r.style) ranges
+  in
+  check bool "function style detected" true (List.hd styles = `Function);
+  check bool "has bracket" true (List.mem `Bracket styles)
+
+let test_ranges_glue_interpolation () =
+  let source = "glue(\"hi {x + 1}\")" in
+  let entry =
+    match Raoui.R_lex_cache.create [ us source ] with
+    | [ entry ] -> entry
+    | _ -> Alcotest.fail "expected one cache entry"
+  in
+  let ranges = R_highlight.ranges_for_entry entry in
+  let styles =
+    List.map (fun (r : R_highlight.styled_range) -> r.style) ranges
+  in
+  check bool "has interpolation bracket style" true (List.mem `Bracket styles);
+  check bool "has interpolation ident style" true (List.mem `Ident styles);
+  check bool "has interpolation number style" true (List.mem `Number styles)
+
 (* highlight_line tests *)
 
 let test_highlight_simple () =
@@ -184,6 +234,12 @@ let () =
         [
           test_case "function detection" `Quick test_function_detection;
           test_case "glue detection" `Quick test_glue_in_tokens_to_spans;
+        ] );
+      ( "ranges_for_entry",
+        [
+          test_case "covers line" `Quick test_ranges_cover_line;
+          test_case "function detection" `Quick test_ranges_function_detection;
+          test_case "glue interpolation" `Quick test_ranges_glue_interpolation;
         ] );
       ( "highlight_line",
         [

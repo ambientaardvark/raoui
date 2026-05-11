@@ -23,6 +23,37 @@ let cluster_at t i =
 
 let width_at t i = t.widths.(i)
 
+let byte_offset_at t ~grapheme_index =
+  assert (grapheme_index >= 0);
+  assert (grapheme_index <= length t);
+  if grapheme_index = length t then String.length t.bytes
+  else t.offsets.(grapheme_index)
+
+let byte_range_at t i =
+  assert (i >= 0);
+  assert (i < length t);
+  let start = t.offsets.(i) in
+  let stop =
+    if i + 1 < length t then t.offsets.(i + 1) else String.length t.bytes
+  in
+  (start, stop)
+
+let grapheme_index_at_byte t ~byte_offset =
+  if byte_offset = String.length t.bytes then Some (length t)
+  else
+    let rec loop i =
+      if i >= length t then None
+      else if t.offsets.(i) = byte_offset then Some i
+      else loop (i + 1)
+    in
+    loop 0
+
+let slice_bytes t ~start_byte ~end_byte =
+  assert (start_byte >= 0);
+  assert (end_byte >= start_byte);
+  assert (end_byte <= String.length t.bytes);
+  String.sub t.bytes start_byte (end_byte - start_byte)
+
 let prefix_width t n =
   let len = min n (length t) in
   let rec sum acc i =

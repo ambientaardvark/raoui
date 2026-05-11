@@ -54,104 +54,80 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
     | None -> false
     | Some cs -> Completion.filtered_items cs <> []
 
-  let push_span acc style text =
-    if text = "" then acc
-    else
-      match acc with
-      | (prev_style, prev_text) :: rest when prev_style = style ->
-          (style, prev_text ^ text) :: rest
-      | _ -> (style, text) :: acc
+  type styled_segment = {
+    style : Terminal_ops.style;
+    start_byte : int;
+    end_byte : int;
+  }
 
-  let wrap_spans width spans =
-    if width <= 0 then [ spans ]
+  let add_segment row style start_byte end_byte =
+    if start_byte = end_byte then row
     else
-      let prepared =
-        List.filter_map
-          (fun (style, text) ->
-            if text = "" then None
-            else
-              match Unicode_string.of_string text with
-              | Ok us -> Some (style, us)
-              | Error _ -> Some (style, Unicode_string.empty))
-          spans
-      in
-      let total_width =
-        List.fold_left
-          (fun acc (_, us) -> acc + Unicode_string.display_width us)
-          0 prepared
-      in
+      match row with
+      | prev :: rest when prev.style = style && prev.end_byte = start_byte ->
+          { prev with end_byte } :: rest
+      | _ -> { style; start_byte; end_byte } :: row
+
+  let rec advance_ranges byte = function
+    | range :: rest when range.R_highlight.end_byte <= byte ->
+        advance_ranges byte rest
+    | ranges -> ranges
+
+  let style_at byte ranges =
+    match ranges with
+    | range :: _
+      when byte >= range.R_highlight.start_byte
+           && byte < range.R_highlight.end_byte ->
+        range.R_highlight.style
+    | _ -> `Plain
+
+  let ranges_to_segments ranges =
+    List.map
+      (fun (range : R_highlight.styled_range) ->
+        {
+          style = range.style;
+          start_byte = range.start_byte;
+          end_byte = range.end_byte;
+        })
+      ranges
+
+  let wrap_styled_line width line ranges =
+    if width <= 0 then [ ranges_to_segments ranges ]
+    else if Unicode_string.is_empty line then [ [] ]
+    else
+      let len = Unicode_string.length line in
+      let total_width = Unicode_string.display_width line in
       let rows_rev = ref [] in
       let row_rev = ref [] in
       let row_width = ref 0 in
+      let active_ranges = ref ranges in
       let flush_row () =
         rows_rev := List.rev !row_rev :: !rows_rev;
         row_rev := [];
         row_width := 0
       in
-      let add_piece style us start len =
-        if len > 0 then
-          let piece =
-            Unicode_string.sub us ~start ~len |> Unicode_string.to_string
-          in
-          row_rev := push_span !row_rev style piece
-      in
-      let add_wide_piece style us idx =
-        add_piece style us idx 1;
-        row_width := !row_width + Unicode_string.width_at us idx;
-        flush_row ()
-      in
-      List.iter
-        (fun (style, us) ->
-          let span_len = Unicode_string.length us in
-          let rec consume idx =
-            if idx >= span_len then ()
-            else if !row_width = width then begin
-              flush_row ();
-              consume idx
-            end
-            else
-              let available = width - !row_width in
-              let rec find_end end_idx used_width =
-                if end_idx >= span_len then (end_idx, used_width)
-                else
-                  let cluster_width = Unicode_string.width_at us end_idx in
-                  if used_width + cluster_width > available then
-                    (end_idx, used_width)
-                  else find_end (end_idx + 1) (used_width + cluster_width)
-              in
-              let end_idx, used_width = find_end idx 0 in
-              if end_idx = idx then
-                if !row_width > 0 then begin
-                  flush_row ();
-                  consume idx
-                end
-                else begin
-                  add_wide_piece style us idx;
-                  consume (idx + 1)
-                end
-              else begin
-                add_piece style us idx (end_idx - idx);
-                row_width := !row_width + used_width;
-                if !row_width = width then flush_row ();
-                consume end_idx
-              end
-          in
-          consume 0)
-        prepared;
-      if !row_rev <> [] || prepared = [] then flush_row ();
+      for i = 0 to len - 1 do
+        let cluster_width = Unicode_string.width_at line i in
+        if !row_width = width then flush_row ();
+        if !row_width > 0 && !row_width + cluster_width > width then
+          flush_row ();
+        let start_byte, end_byte = Unicode_string.byte_range_at line i in
+        active_ranges := advance_ranges start_byte !active_ranges;
+        let style = style_at start_byte !active_ranges in
+        row_rev := add_segment !row_rev style start_byte end_byte;
+        row_width := !row_width + cluster_width;
+        if !row_width > width then flush_row ()
+      done;
+      if !row_rev <> [] then flush_row ();
       let rows = List.rev !rows_rev in
       if total_width > 0 && total_width mod width = 0 then rows @ [ [] ]
       else rows
 
-  let wrap_line_with_spans width line spans =
-    let wrapped_text = wrap_line width line in
-    let wrapped_spans = wrap_spans width spans in
-    if List.length wrapped_text = List.length wrapped_spans then
-      List.combine wrapped_text wrapped_spans
-    else
-      List.map
-        (fun chunk -> (chunk, [ (`Plain, Unicode_string.to_string chunk) ]))
-        wrapped_text
+  let spans_of_segments line segments =
+    List.map
+      (fun { style; start_byte; end_byte } ->
+        (style, Unicode_string.slice_bytes line ~start_byte ~end_byte))
+      segments
 
   let view_completions model ops ~cursor_abs_row ~cursor_abs_col =
     let add op = Queue.add op ops in
@@ -194,16 +170,21 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
       absolute_cursor_pos model ~cursor_row ~cursor_col
     in
 
-    (* Convert cached tokens to spans *)
-    let highlighted_lines =
+    (* Convert cached tokens to source byte ranges. Wrapping is driven by the
+       original Unicode_string.t line so we do not re-segment highlighted
+       strings. *)
+    let highlighted_ranges =
       List.map
-        (fun (entry : R_lex_cache.entry) -> R_highlight.render_entry entry)
+        (fun (entry : R_lex_cache.entry) -> R_highlight.ranges_for_entry entry)
         model.input.lex_cache
     in
 
-    (* Wrap each line's spans for display *)
     let wrapped_rows =
-      List.map2 (wrap_line_with_spans width) model.input.lines highlighted_lines
+      List.map2
+        (fun line ranges ->
+          wrap_styled_line width line ranges
+          |> List.map (fun segments -> (line, spans_of_segments line segments)))
+        model.input.lines highlighted_ranges
       |> List.concat
     in
     let total_rows = List.length wrapped_rows in
