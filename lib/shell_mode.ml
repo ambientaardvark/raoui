@@ -14,7 +14,7 @@ let submit model =
   in
   let guard = safe_guard 1 in
   let r_command = Printf.sprintf "system(r\"%s(%s)%s\")" guard text guard in
-  History.add_to_history model.input.history model.input.lines;
+  History.add_to_history ~mode:"shell" model.input.history model.input.lines;
   ( Mode_common.clear_model_for_submit
       { model with input = { model.input with mode = Normal } },
     [ Repl_effect.Submit r_command ] )

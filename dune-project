@@ -24,6 +24,7 @@
   eio
   eio_main
   logs
+  sqlite3
   terminal_size
   uutf
   uuseg

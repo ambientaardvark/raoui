@@ -138,6 +138,7 @@ let process_response model =
   match model.repl.backend_response with
   | None -> failwith "process_response called with no backend_response"
   | Some response ->
+      History.record_response model.input.history response;
       let repl_output =
         match response with
         | Ffi_backend.Stdout s -> Output_text [ (`Raw, s) ]

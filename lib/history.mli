@@ -1,10 +1,29 @@
 type t
 
+type output = {
+  kind : string;
+  text : string option;
+  image_path : string option;
+}
+
+type interaction = {
+  input : string;
+  mode : string;
+  submitted_at : float;
+  outputs : output list;
+}
+
 val init : string -> t
 val close : t -> unit
 
-val add_to_history : t -> Unicode_string.t list -> unit
+val add_to_history : ?mode:string -> t -> Unicode_string.t list -> unit
 (** to call after when submitting. Adds the command to the history *)
+
+val record_response : t -> Ffi_backend.response_chunk -> unit
+(** Records visible output for the active command, if any. *)
+
+val record_cancel : t -> unit
+(** Marks the active command interrupted, if any. *)
 
 val go_back :
   t ->
@@ -22,3 +41,4 @@ val go_forwards :
 
 val get_all : t -> string array
 val search_history : t -> string -> string
+val recent_interactions : t -> limit:int -> interaction list

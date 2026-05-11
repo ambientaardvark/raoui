@@ -17,3 +17,7 @@
 (test
  (name test_tty_listener)
  (libraries raoui alcotest))
+
+(test
+ (name test_history)
+ (libraries raoui alcotest))

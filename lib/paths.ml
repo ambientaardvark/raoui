@@ -76,7 +76,7 @@ let resolve () =
     state_dir;
     cache_dir;
     options_file = Filename.concat config_dir "config.toml";
-    history_file = Filename.concat state_dir "history";
+    history_file = Filename.concat state_dir "history.sqlite";
     log_file = Filename.concat state_dir "raoui.log";
     plots_dir;
     plot_session_dir;

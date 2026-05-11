@@ -173,6 +173,7 @@ let run env backend ~orig_termios =
     | [ Repl_effect.Quit ] -> ()
     | [ Repl_effect.Cancel ] ->
         execute_effects backend effects;
+        History.record_cancel model.input.history;
         loop (make_init ())
     | [ Repl_effect.Run_backslash_effect cmd ] ->
         let result_msg = Backslash_effect_runner.run ~orig_termios cmd in
