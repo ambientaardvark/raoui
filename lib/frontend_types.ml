@@ -126,8 +126,6 @@ let terminal_to_internal width lines (row, display_col) =
   loop 0 lines 0
 
 (* List helpers *)
-let get_line lines line_idx = List.nth lines line_idx
-
 let update_line lines line_idx new_line =
   List.mapi (fun i line -> if i = line_idx then new_line else line) lines
 

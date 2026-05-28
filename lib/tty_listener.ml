@@ -183,8 +183,3 @@ let drain_to_keys_with_timeouts ~prefetched ~escape_timeout_sec
           loop (key :: acc)
   in
   loop []
-
-let drain_to_keys ~prefetched ~clock ~stdin =
-  drain_to_keys_with_timeouts ~prefetched
-    ~escape_timeout_sec:default_escape_timeout_sec
-    ~settle_timeout_sec:0.0 ~clock ~stdin

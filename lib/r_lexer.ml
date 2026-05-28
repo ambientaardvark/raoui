@@ -65,8 +65,6 @@ let complex_number =
     | imaginary_number, Chars "+-", real_number )]
 
 let r_number = [%sedlex.regexp? real_number | complex_number | imaginary_number]
-let double_quote_string = [%sedlex.regexp? '"', Star (Compl '"' | "\\\""), '"']
-let _raw_string_start = [%sedlex.regexp? "r\""]
 let whitespace = [%sedlex.regexp? Plus (Chars "\t ")]
 let punctuation = [%sedlex.regexp? Chars ",;_\\"]
 let wildcard_operator = [%sedlex.regexp? '%', Plus (Compl '%'), '%']

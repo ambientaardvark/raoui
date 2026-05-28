@@ -17,7 +17,7 @@ type t = {
   file_path : string;
   db : S.db;
   session_id : string;
-  mutable history : string array;
+  history : string Dynarray.t;
   mutable current_index : int;
   mutable saved_prompt : Unicode_string.t list option;
   mutable search_needle : Unicode_string.t list option;
@@ -51,48 +51,6 @@ let step_done db stmt =
   let rc = S.step stmt in
   match rc with S.Rc.DONE -> () | _ -> check db rc
 
-let collapse_empty_lines s =
-  let lines = String.split_on_char '\n' s in
-  let rec loop prev_empty acc = function
-    | [] -> List.rev acc
-    | "" :: rest ->
-        if prev_empty then loop true acc rest else loop true ("" :: acc) rest
-    | line :: rest -> loop false (line :: acc) rest
-  in
-  loop false [] lines |> String.concat "\n"
-
-let parse_entries contents =
-  if String.length contents = 0 then [||]
-  else
-    let len = String.length contents in
-    let entries = Dynarray.create () in
-    let buf = Buffer.create 256 in
-    let blank_count = ref 0 in
-    let i = ref 0 in
-    while !i < len do
-      let c = String.get contents !i in
-      if c = '\n' then begin
-        incr blank_count;
-        if !blank_count >= 2 then begin
-          let entry = Buffer.contents buf |> String.trim in
-          if String.length entry > 0 then Dynarray.add_last entries entry;
-          Buffer.clear buf;
-          while !i + 1 < len && String.get contents (!i + 1) = '\n' do
-            incr i
-          done
-        end
-        else Buffer.add_char buf '\n'
-      end
-      else begin
-        blank_count := 0;
-        Buffer.add_char buf c
-      end;
-      incr i
-    done;
-    let entry = Buffer.contents buf |> String.trim in
-    if String.length entry > 0 then Dynarray.add_last entries entry;
-    Dynarray.to_array entries
-
 let to_us s =
   String.split_on_char '\n' s
   |> List.map (fun s -> Unicode_string.of_string s |> Result.get_ok)
@@ -116,17 +74,21 @@ let matches_prompt prompt entry =
 let prompt_to_string p =
   List.map Unicode_string.to_string p |> String.concat "\n"
 
-let prompt_matches_entry prompt idx history =
+(* History is stored oldest-first so appending a new command is amortized O(1);
+   navigation indices count back from the newest entry. *)
+let nth_newest t i = Dynarray.get t.history (Dynarray.length t.history - 1 - i)
+
+let prompt_matches_entry t prompt idx =
   idx > 0
-  && idx - 1 < Array.length history
-  && prompt_to_string prompt = history.(idx - 1)
+  && idx - 1 < Dynarray.length t.history
+  && prompt_to_string prompt = nth_newest t (idx - 1)
 
 let update_search_needle t current_prompt =
-  if not (prompt_matches_entry current_prompt t.current_index t.history) then
+  if not (prompt_matches_entry t current_prompt t.current_index) then
     t.search_needle <- Some current_prompt
 
 let is_duplicate_of_previous t idx =
-  idx > 0 && t.history.(idx) = t.history.(idx - 1)
+  idx > 0 && nth_newest t idx = nth_newest t (idx - 1)
 
 let rec go_back t ?current_prompt () =
   (match current_prompt with
@@ -135,11 +97,11 @@ let rec go_back t ?current_prompt () =
       update_search_needle t p
   | None -> ());
   let idx = t.current_index in
-  if idx < Array.length t.history then begin
+  if idx < Dynarray.length t.history then begin
     t.current_index <- idx + 1;
     if is_duplicate_of_previous t idx then go_back t ()
-    else if matches_prompt t.search_needle t.history.(idx) then
-      Some (to_us t.history.(idx))
+    else if matches_prompt t.search_needle (nth_newest t idx) then
+      Some (to_us (nth_newest t idx))
     else go_back t ()
   end
   else None
@@ -153,12 +115,13 @@ let rec go_forwards t ?current_prompt () =
     else
       let idx = t.current_index - 1 in
       if is_duplicate_of_previous t idx then go_forwards t ()
-      else if matches_prompt t.search_needle t.history.(idx) then
-        Some (to_us t.history.(idx))
+      else if matches_prompt t.search_needle (nth_newest t idx) then
+        Some (to_us (nth_newest t idx))
       else go_forwards t ()
   end
 
-let get_all t = t.history
+let get_all t =
+  Array.init (Dynarray.length t.history) (fun i -> nth_newest t i)
 
 let search_history t pattern =
   let pattern = String.lowercase_ascii pattern in
@@ -176,8 +139,8 @@ let search_history t pattern =
   else
     let found = ref "" in
     let i = ref 0 in
-    while !found = "" && !i < Array.length t.history do
-      let entry = t.history.(!i) in
+    while !found = "" && !i < Dynarray.length t.history do
+      let entry = nth_newest t !i in
       if
         let lower = String.lowercase_ascii entry in
         let nlen = String.length needle in
@@ -252,53 +215,7 @@ let command_history_from_db db =
             | _ -> assert false)
       in
       check db rc;
-      rows |> List.rev |> Array.of_list)
-
-let legacy_history_path sqlite_path =
-  let suffix = ".sqlite" in
-  let suffix_len = String.length suffix in
-  let path_len = String.length sqlite_path in
-  if
-    path_len > suffix_len
-    && String.sub sqlite_path (path_len - suffix_len) suffix_len = suffix
-  then Some (String.sub sqlite_path 0 (path_len - suffix_len))
-  else None
-
-let table_is_empty db table =
-  with_stmt db
-    (Printf.sprintf "SELECT NOT EXISTS(SELECT 1 FROM %s LIMIT 1)" table)
-    (fun stmt ->
-      match S.step stmt with
-      | S.Rc.ROW -> S.column_int stmt 0 = 1
-      | rc ->
-          check db rc;
-          false)
-
-let insert_imported_command db session_id input =
-  with_stmt db
-    "INSERT INTO commands(session_id, submitted_at, mode, input, status) \
-     VALUES(?, ?, 'r', ?, 'done')" (fun stmt ->
-      bind_values db stmt
-        [ S.Data.TEXT session_id; S.Data.FLOAT (now ()); S.Data.TEXT input ];
-      step_done db stmt)
-
-let import_legacy_history db session_id sqlite_path =
-  match legacy_history_path sqlite_path with
-  | None -> ()
-  | Some legacy_path ->
-      if
-        Sys.file_exists legacy_path
-        && (not (Sys.is_directory legacy_path))
-        && table_is_empty db "commands"
-      then
-        let contents =
-          In_channel.with_open_text legacy_path In_channel.input_all
-        in
-        let entries = parse_entries contents in
-        Array.iter
-          (fun entry ->
-            insert_imported_command db session_id (collapse_empty_lines entry))
-          entries
+      Dynarray.of_list rows)
 
 let finish_active ?(status = "done") t =
   match t.active_command_id with
@@ -323,7 +240,7 @@ let add_to_history ?(mode = "r") t lines =
   t.current_index <- 0;
   t.saved_prompt <- None;
   t.search_needle <- None;
-  t.history <- Array.append [| command |] t.history;
+  Dynarray.add_last t.history command;
   with_stmt t.db
     "INSERT INTO commands(session_id, submitted_at, mode, input, status) \
      VALUES(?, ?, ?, ?, 'running')" (fun stmt ->
@@ -440,7 +357,6 @@ let init file =
   create_schema db;
   let session_id = Printf.sprintf "%d-%.6f" (Unix.getpid ()) (now ()) in
   add_session db session_id;
-  import_legacy_history db session_id file;
   let history = command_history_from_db db in
   {
     file_path = file;

@@ -47,8 +47,6 @@ let name = function
 
 let label command = "\\" ^ name command
 
-let completion_labels commands = List.map label commands
-
 let find_by_label registry needle =
   List.find_opt (fun command -> String.equal (label command) needle) registry
 

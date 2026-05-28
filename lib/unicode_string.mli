@@ -33,25 +33,14 @@ val cluster_at : t -> int -> string
 val width_at : t -> int -> int
 (** Display width of cluster at index *)
 
-val byte_offset_at : t -> grapheme_index:int -> int
-(** Byte offset where the grapheme at [grapheme_index] starts. Passing the
-    length returns the byte length. *)
-
 val byte_range_at : t -> int -> int * int
 (** Byte range occupied by the grapheme at index. *)
-
-val grapheme_index_at_byte : t -> byte_offset:int -> int option
-(** Return the grapheme index starting at a byte offset, if the byte offset is
-    on a grapheme boundary. The byte length maps to [length t]. *)
 
 val slice_bytes : t -> start_byte:int -> end_byte:int -> string
 (** Slice UTF-8 bytes by byte offsets. *)
 
 val prefix_width : t -> int -> int
 (** Display width of first n graphemes *)
-
-val truncate_to_display_width : t -> width:int -> t
-(** Truncate to display width *)
 
 val grapheme_at_width : t -> int -> int
 (** Grapheme index at or before display column. Returns the grapheme index whose

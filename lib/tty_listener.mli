@@ -29,12 +29,6 @@ val await_input_with_timeout :
   stdin:_ Eio.Flow.source ->
   key
 
-val drain_to_keys :
-  prefetched:char Queue.t option ->
-  clock:_ Eio.Time.clock ->
-  stdin:_ Eio.Flow.source ->
-  key list
-
 val drain_to_keys_with_timeouts :
   prefetched:char Queue.t option ->
   escape_timeout_sec:float ->

@@ -27,7 +27,6 @@ val token_in_line : Unicode_string.t -> cursor_pos:int -> token option
 val exact_command_before_cursor :
   registry -> Unicode_string.t -> cursor_pos:int -> (int * command) option
 val matching_commands : registry -> prefix:string -> command list
-val completion_labels : command list -> string list
 val find_by_label : registry -> string -> command option
 val name : command -> string
 val label : command -> string

@@ -98,8 +98,6 @@ let tokens_to_spans (tokens : Lexer.token list) : span list =
   in
   loop [] tokens
 
-let render_entry (entry : R_lex_cache.entry) = tokens_to_spans entry.tokens
-
 let merge_ranges ranges =
   let rec loop acc = function
     | [] -> List.rev acc
