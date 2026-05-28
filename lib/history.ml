@@ -235,26 +235,29 @@ let close t =
   if not closed then failwith ("failed to close sqlite history: " ^ t.file_path)
 
 let add_to_history ?(mode = "r") t lines =
-  finish_active ~status:"interrupted" t;
   let command = List.map Unicode_string.to_string lines |> String.concat "\n" in
-  t.current_index <- 0;
-  t.saved_prompt <- None;
-  t.search_needle <- None;
-  Dynarray.add_last t.history command;
-  with_stmt t.db
-    "INSERT INTO commands(session_id, submitted_at, mode, input, status) \
-     VALUES(?, ?, ?, ?, 'running')" (fun stmt ->
-      bind_values t.db stmt
-        [
-          S.Data.TEXT t.session_id;
-          S.Data.FLOAT (now ());
-          S.Data.TEXT mode;
-          S.Data.TEXT command;
-        ];
-      step_done t.db stmt);
-  t.active_command_id <- Some (S.last_insert_rowid t.db);
-  t.active_command_had_error <- false;
-  t.active_output_ordinal <- 0
+  if String.trim command = "" then ()
+  else begin
+    finish_active ~status:"interrupted" t;
+    t.current_index <- 0;
+    t.saved_prompt <- None;
+    t.search_needle <- None;
+    Dynarray.add_last t.history command;
+    with_stmt t.db
+      "INSERT INTO commands(session_id, submitted_at, mode, input, status) \
+       VALUES(?, ?, ?, ?, 'running')" (fun stmt ->
+        bind_values t.db stmt
+          [
+            S.Data.TEXT t.session_id;
+            S.Data.FLOAT (now ());
+            S.Data.TEXT mode;
+            S.Data.TEXT command;
+          ];
+        step_done t.db stmt);
+    t.active_command_id <- Some (S.last_insert_rowid t.db);
+    t.active_command_had_error <- false;
+    t.active_output_ordinal <- 0
+  end
 
 let response_output = function
   | Ffi_backend.Stdout text -> Some ("stdout", Some text, None)

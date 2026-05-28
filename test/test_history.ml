@@ -60,6 +60,17 @@ let test_recent_interactions_include_outputs () =
     output_texts;
   close history
 
+let test_empty_submission_is_not_recorded () =
+  with_temp_history @@ fun path ->
+  let history = History.init path in
+  History.add_to_history history [ us "real" ];
+  History.add_to_history history [ us "" ];
+  History.add_to_history history [ us "   " ];
+  History.add_to_history history [ us ""; us "  " ];
+  Alcotest.(check (array string))
+    "blank submissions skipped" [| "real" |] (History.get_all history);
+  close history
+
 let () =
   Alcotest.run "history"
     [
@@ -67,6 +78,8 @@ let () =
         [
           Alcotest.test_case "persists navigation order" `Quick
             test_history_persists_navigation_order;
+          Alcotest.test_case "empty submission is not recorded" `Quick
+            test_empty_submission_is_not_recorded;
           Alcotest.test_case "search matches existing behavior" `Quick
             test_history_search_matches_existing_behavior;
           Alcotest.test_case "recent interactions include outputs" `Quick
