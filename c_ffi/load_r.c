@@ -247,6 +247,14 @@ static void safe_eval(void *data) {
     d->result = R_tryEval(d->expr, d->env, d->error);
 }
 
+/* Autoprint a value under R_ToplevelExec. An S3 print method can itself error
+   (e.g. print.ggplot opens a device then its stat aborts); without a live
+   top-level context here that error longjmps to the dangling jump buffer left
+   by setup_Rmainloop and crashes the process. */
+static void safe_print(void *data) {
+    Rf_PrintValue(*(SEXP *)data);
+}
+
 static void run_after_top_level_hook(void) {
     /* Only call after the startup script has defined the function */
     SEXP fn = Rf_findVar(raoui_after_top_level_sym, *R_GlobalEnv_ptr);
@@ -558,7 +566,12 @@ static int eval_code(const char *code) {
 
         if (Rf_asLogical(visible)) {
             Rf_protect(value);
-            Rf_PrintValue(value);
+            if (!toplevel_exec(safe_print, &value)) {
+                error_occurred = 1;
+                Rf_unprotect(3);
+                rb_push(&g_rb, RB_MSG_R_ERROR, 0, "", 0);
+                break;
+            }
             Rf_unprotect(1);
         }
 
@@ -744,7 +757,14 @@ int rffi_start(const char *r_home) {
     if (rb_init(&g_rb, 1024 * 1024) != 0)
         return -1;
 
-    pthread_create(&r_thread, NULL, r_thread_func, strdup(r_home));
+    /* Run R on a large stack. macOS gives secondary threads only 512 KB by
+       default, far too little for R's deep recursion (e.g. rlang/cli error
+       backtraces), which overflows and crashes the process. */
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 64 * 1024 * 1024);
+    pthread_create(&r_thread, &attr, r_thread_func, strdup(r_home));
+    pthread_attr_destroy(&attr);
 
     /* Block until R initialization completes on the worker thread */
     pthread_mutex_lock(&init_mutex);
