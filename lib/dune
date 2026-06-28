@@ -6,6 +6,7 @@
   eio
   eio.unix
   eio_main
+  cohttp-eio
   yojson
   logs
   ptime

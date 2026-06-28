@@ -1,23 +1,31 @@
-(* Phase 1 AI backend.
+(* AI backend.
 
    Spawns `claude -p` as a subprocess per query and streams its stdout
    (newline-delimited JSON events from --output-format stream-json) back
    through an Eio stream, so the main event loop can race [await_response] as a
    fourth fiber alongside the R backend.
 
-   Phase 1 = talk to the AI, no tools: we disable Claude Code's built-in tools
-   (--tools ""), ignore all globally-configured MCP servers (--strict-mcp-config
-   with no --mcp-config), and replace the heavy default Claude Code system
-   prompt with a focused one. The AI answers purely from the prompt text. *)
+   Tools come solely from raoui's in-process MCP server (see [Mcp_server]),
+   reached over loopback at [mcp_port]: we disable Claude Code's built-in tools
+   (--tools ""), ignore all globally-configured MCP servers (--strict-mcp-config),
+   point claude at our server (--mcp-config), pre-approve its read-only tools
+   (--allowedTools) so the non-interactive `-p` run never blocks on a prompt,
+   and replace the heavy default Claude Code system prompt with a focused one. *)
 
 let system_prompt =
   "You are an assistant embedded in raoui, an interactive R REPL. The user \
    asks about their R session, output, and data analysis. Answer concisely and \
-   practically. You have no tools available; reason only from what the user \
-   tells you."
+   practically. Use the get_history tool to see the user's recent commands and \
+   output when that context would help answer them."
 
-(* claude -p argv for a tool-less, MCP-less, streaming query. *)
-let claude_args query =
+(* Inline --mcp-config JSON pointing claude at our loopback MCP server. *)
+let mcp_config mcp_port =
+  Printf.sprintf
+    {|{"mcpServers":{"raoui":{"type":"http","url":"http://127.0.0.1:%d/mcp"}}}|}
+    mcp_port
+
+(* claude -p argv: built-ins off, only raoui's MCP tools, streaming. *)
+let claude_args ~mcp_port query =
   [
     "claude";
     "-p";
@@ -27,9 +35,14 @@ let claude_args query =
     "--verbose";
     "--tools";
     "";
-    (* disable all built-in tools *)
+    (* disable all built-in tools (Bash/Read/Write/...) *)
+    "--mcp-config";
+    mcp_config mcp_port;
     "--strict-mcp-config";
-    (* ignore globally-configured MCP servers *)
+    (* ignore globally-configured MCP servers; use only ours *)
+    "--allowedTools";
+    "mcp__raoui__get_history";
+    (* pre-approve our read-only tools so -p never blocks on a prompt *)
     "--system-prompt";
     system_prompt;
   ]
@@ -79,14 +92,14 @@ let handle_line chunks line =
           Eio.Stream.add chunks (Ffi_backend.Ai_output text)
       | _ -> ())
 
-let run_claude ~process_mgr ~chunks query =
+let run_claude ~process_mgr ~chunks ~mcp_port query =
   Eio.Switch.run @@ fun sw ->
   (* Merge the child's stdout and stderr into one pipe: stream-json lands on
      stdout, diagnostics on stderr, and non-JSON lines are simply ignored. *)
   let source, sink = Eio_unix.pipe sw in
   let _child =
     Eio.Process.spawn ~sw process_mgr ~stdout:sink ~stderr:sink
-      (claude_args query)
+      (claude_args ~mcp_port query)
   in
   (* Close our copy of the write end so [source] sees EOF when the child exits. *)
   Eio.Flow.close sink;
@@ -100,13 +113,13 @@ let run_claude ~process_mgr ~chunks query =
   in
   read_lines ()
 
-let create ~sw ~process_mgr () =
+let create ~sw ~process_mgr ~mcp_port () =
   let chunks = Eio.Stream.create 1024 in
   let submit query =
     Eio.Fiber.fork ~sw (fun () ->
         (* Subprocess boundary: surface any failure as AI output rather than
            letting the fiber's exception tear down the switch (and the REPL). *)
-        (try run_claude ~process_mgr ~chunks query
+        (try run_claude ~process_mgr ~chunks ~mcp_port query
          with exn ->
            Eio.Stream.add chunks
              (Ffi_backend.Ai_output

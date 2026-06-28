@@ -207,8 +207,14 @@ let () =
     Eio.Switch.run @@ fun sw ->
     let clock = Eio.Stdenv.clock env in
     let backend = Ffi_backend.create ~sw ~clock () in
+    (* In-process MCP server exposing session history to the AI subprocess. *)
+    let mcp_port =
+      Mcp_server.start ~sw ~net:(Eio.Stdenv.net env)
+        ~history:(Lazy.force history)
+    in
     let ai_backend =
-      Ai_backend.create ~sw ~process_mgr:(Eio.Stdenv.process_mgr env) ()
+      Ai_backend.create ~sw ~process_mgr:(Eio.Stdenv.process_mgr env) ~mcp_port
+        ()
     in
     let orig = Terminal_session.set_raw_mode () in
     Terminal_session.set_solid_cursor ();

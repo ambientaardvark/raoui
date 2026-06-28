@@ -336,9 +336,10 @@ let outputs_for_command db command_id =
 let recent_interactions t ~limit =
   assert (limit >= 0);
   with_stmt t.db
-    "SELECT id, input, mode, submitted_at FROM commands ORDER BY id DESC LIMIT \
-     ?" (fun stmt ->
-      bind_values t.db stmt [ S.Data.INT (Int64.of_int limit) ];
+    "SELECT id, input, mode, submitted_at FROM commands WHERE session_id = ? \
+     ORDER BY id DESC LIMIT ?" (fun stmt ->
+      bind_values t.db stmt
+        [ S.Data.TEXT t.session_id; S.Data.INT (Int64.of_int limit) ];
       let rc, rows =
         S.fold stmt ~init:[] ~f:(fun acc row ->
             match (row.(0), row.(1), row.(2), row.(3)) with
