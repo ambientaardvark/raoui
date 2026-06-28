@@ -4,7 +4,9 @@
   unix
   terminal_size
   eio
+  eio.unix
   eio_main
+  yojson
   logs
   ptime
   sqlite3

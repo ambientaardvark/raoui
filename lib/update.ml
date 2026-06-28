@@ -97,6 +97,7 @@ let submit model =
     match model.input.mode with
     | Readline _ -> Readline_mode.submit model
     | Shell -> Shell_mode.submit model
+    | Ai -> Ai_mode.submit model
     | Normal -> Normal_mode.submit model
     | History_search _ ->
         ({ model with input = { model.input with mode = Normal } }, [])
@@ -109,6 +110,7 @@ let apply_key key model =
   match model.input.mode with
   | Readline _ -> Readline_mode.apply_key key model
   | Shell -> Shell_mode.apply_key key model
+  | Ai -> Ai_mode.apply_key key model
   | Normal -> Normal_mode.apply_key key model
   | History_search _ -> History_search.apply_key key model
 
@@ -148,6 +150,8 @@ let process_response model =
             Output_text [ (`Error, "Internal error: " ^ s) ]
         | Ffi_backend.Restarted s -> Output_text [ (`Error, s) ]
         | Ffi_backend.Image image -> Output_image image
+        | Ffi_backend.Ai_output s -> Output_text [ (`Raw, s) ]
+        | Ffi_backend.Ai_done -> Output_text []
         | Ffi_backend.Done -> Output_text []
         | Ffi_backend.Shutdown -> Output_text []
         | Ffi_backend.Passthrough | Ffi_backend.Passthrough_end
@@ -158,12 +162,14 @@ let process_response model =
         match response with
         (* Keep waiting for more output until we get a terminal response *)
         | Ffi_backend.Stdout _ | Ffi_backend.Result _ | Ffi_backend.R_error _
-        | Ffi_backend.Readline _ | Ffi_backend.Image _ ->
+        | Ffi_backend.Readline _ | Ffi_backend.Image _ | Ffi_backend.Ai_output _
+          ->
             model.repl.awaiting_response
         (* Terminal responses *)
         | Ffi_backend.Done | Ffi_backend.Shutdown | Ffi_backend.Internal_error _
         | Ffi_backend.Restarted _ | Ffi_backend.Passthrough
-        | Ffi_backend.Passthrough_end | Ffi_backend.Completions _ ->
+        | Ffi_backend.Passthrough_end | Ffi_backend.Completions _
+        | Ffi_backend.Ai_done ->
             false
       in
       let mode =

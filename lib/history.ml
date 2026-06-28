@@ -268,7 +268,7 @@ let response_output = function
   | Ffi_backend.Image image -> Some ("image", None, Some image.preview_path)
   | Ffi_backend.Done | Ffi_backend.Shutdown | Ffi_backend.Passthrough
   | Ffi_backend.Passthrough_end | Ffi_backend.Completions _
-  | Ffi_backend.Readline _ ->
+  | Ffi_backend.Readline _ | Ffi_backend.Ai_output _ | Ffi_backend.Ai_done ->
       None
 
 let record_output t kind text image_path =

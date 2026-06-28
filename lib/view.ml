@@ -5,6 +5,7 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
   let readline_prompt_max_length = 20
   let input_prompt = "input: "
   let shell_prompt = "shell> "
+  let ai_prompt = "ai> "
   let search_prompt_prefix = "r-search: "
   let search_prompt_suffix = "| >"
 
@@ -17,6 +18,7 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
     match mode with
     | Readline rl_prompt -> String.length (rendered_readline_prompt rl_prompt)
     | Shell -> String.length shell_prompt
+    | Ai -> String.length ai_prompt
     | Normal -> String.length prompt
     | History_search s ->
         String.length search_prompt_prefix
@@ -216,7 +218,10 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
             match (model.input.mode, i, model.repl.awaiting_response) with
             | Readline rl_prompt, 0, _ -> rendered_readline_prompt rl_prompt
             | Shell, 0, _ -> shell_prompt
-            | Readline _, _, _ | Frontend_types.Shell, _, _ -> assert false
+            | Ai, 0, _ -> ai_prompt
+            | Readline _, _, _ | Frontend_types.Shell, _, _
+            | Frontend_types.Ai, _, _ ->
+                assert false
             | History_search search_input, 0, _ ->
                 let search_str = Unicode_string.to_string search_input in
                 search_prompt_prefix ^ search_str ^ search_prompt_suffix
@@ -227,7 +232,7 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
             | Normal, 0, true -> pending_prompt
             | Normal, _, _ -> continued_prompt
           in
-          if model.input.mode = Shell then
+          if model.input.mode = Shell || model.input.mode = Ai then
             add (Print ((`Shell_prompt, p) :: content))
           else add (Print ((`Accent, p) :: content));
           if i < skip_rows + model.layout.term_height - 1 && i < total_rows - 1
@@ -268,6 +273,7 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
         (* Readline mode: cursor in input area even if awaiting *)
         add (Cursor_to (cursor_abs_row, cursor_abs_col))
     | Shell, _ -> add (Cursor_to (cursor_abs_row, cursor_abs_col))
+    | Ai, _ -> add (Cursor_to (cursor_abs_row, cursor_abs_col))
     | History_search _, _ ->
         (* History search: cursor in the search input within the prompt *)
         let cursor_abs_row = model.layout.prompt_top_row in

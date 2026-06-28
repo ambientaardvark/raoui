@@ -19,6 +19,8 @@ type response_chunk =
   | Passthrough_end
   | Completions of string * string list  (* token * items *)
   | Readline of string  (* prompt *)
+  | Ai_output of string  (* a chunk of AI assistant text *)
+  | Ai_done  (* AI response stream complete *)
 
 type completion = string
 

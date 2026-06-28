@@ -14,6 +14,7 @@ type t =
   | RequestCompletions of string * int
   | SubmitReadlineInput of string
   | BackgroundSubmit of string
+  | SubmitAiQuery of string
   | Run_backslash_effect of backslash_effect
   | EnterPassthrough
   | Quit

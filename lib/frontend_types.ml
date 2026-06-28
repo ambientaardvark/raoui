@@ -6,6 +6,7 @@ type mode =
   | Normal
   | Readline of string
   | Shell
+  | Ai
   | History_search of Unicode_string.t
 
 type repl_output =
@@ -149,5 +150,5 @@ let assert_model_invariants model =
   match model.input.mode with
   | History_search search ->
       assert (model.input.cursor_pos <= Unicode_string.length search)
-  | Normal | Readline _ | Shell ->
+  | Normal | Readline _ | Shell | Ai ->
       assert (model.input.cursor_pos <= Unicode_string.length line)
