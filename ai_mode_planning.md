@@ -101,13 +101,16 @@ The AI's `stream-json` events are parsed by block type (`Ai_backend.assistant_ch
 
 1. **Fork the R process** — `fork()` gives instant copy-on-write of the R environment. The child has the exact same R memory state, so the AI's code sees the live session's variables for free. The fork happens on the R worker thread (where R's eval context lives).
 
-2. **Apply macOS seatbelt — in-process, not `sandbox-exec`.** Because we fork *without* re-exec (to keep the COW R memory), the child calls `sandbox_init()` directly with an SBPL profile. Posture is "allow default, deny the dangerous classes":
+2. **Apply macOS seatbelt — in-process, not `sandbox-exec`.** Because we fork *without* re-exec (to keep the COW R memory), the child calls `sandbox_init()` directly with an SBPL profile. The profile (assembled per call by `build_runr_profile`) is `allow default` then a series of denies — SBPL is last-match-wins, so each `deny` overrides the default and a following scoped `allow` overrides the deny:
    - Deny network (`network*`)
    - Deny file writes except a scratch dir + `/dev/null` (`file-write*`)
    - Deny process execution (`process-exec*`) — blocks `system()`
+   - **Deny file reads, then re-allow only R's machinery + the working dir** (`file-read*`). This closes the exfiltration path: `run_r`'s whole job is to feed output back to the model, so an unrestricted read would let the AI `readLines("~/.ssh/id_rsa")` straight into its (API-bound) response. The read allow-list is generated at fork time from the *live* R — `R.home()`, every `.libPaths()` entry, `tempdir()`, `getwd()` — plus a fixed set of system roots (`/usr`, `/System`, `/Library`, `/opt/homebrew`, `/private/var`, `/etc`, `/dev`) that dyld/locale/timezone need. Secrets elsewhere under `$HOME` (`~/.ssh`, `~/.aws`, keychains, `.Renviron`) are denied. This is cheap because the child forks an *already-initialized* R: the base session is in memory COW, so the read paths only need to cover what AI code triggers *after* the fork (lazy `library()` loads, locale/tz data, cwd data files) — anything else is a clean `EPERM` and `run_r` fails safe.
    - `setrlimit(RLIMIT_CPU)` caps runaway loops (SIGXCPU)
 
    Validated on macOS 26.5: every denial is a clean `EPERM` / non-zero return, **never a `SIGKILL`** — so the child's failures are capturable as text and handed back to the AI. `sandbox_init` is deprecated since ~2016 but still works; `sandbox-exec` would have re-exec'd and lost the fork's memory, so the in-process API is the right fit here.
+
+   Read scoping verified with a smoke test: `1+1` and `library(Matrix)` still work, `/etc/hosts` and a cwd file read fine, while an *existing* file in `$HOME` (outside the allow-list) is blocked — proving the denial is the sandbox (EPERM), not a missing file.
 
 3. **Capture output, discard child** — output is captured by repointing R's `WriteConsoleEx` callback at a pipe in the child; the parent (worker thread) drains the pipe and `waitpid`s. Parent R session is completely untouched (verified: child mutations don't leak, parent keeps evaluating).
 
@@ -120,7 +123,8 @@ The "read-only sandbox" model is realized as the `run_r` / `suggest_code` split 
 - **Multithreaded fork hazard** — the spikes forked a single-threaded process; raoui is multithreaded (Eio + R worker + systhreads). If another thread holds the malloc lock at fork, the child can deadlock on its first allocation. Low probability (worker forks at a quiescent point), accepted for now, tracked in [#32](https://github.com/ambientaardvark/raoui/issues/32).
 - R isn't fully fork-safe around file descriptors, DB connections, and threaded packages. Fine for pure computation; the strict write profile means R operations needing temp-file writes can fail.
 - macOS-only. Linux deployment would use seccomp/Landlock instead.
-- The "allow default" posture is permissive (so R can run); tightening toward "deny default" is a later hardening pass.
+- Reads are now deny-default (scoped to R + cwd), but writes/network/exec still use the allow-default-then-deny structure. The read allow-list is a *blocklist's inverse* and could still be widened by a path R reports (e.g. a `.libPaths()` entry that itself sits next to secrets); acceptable given the threat model. A user-configurable extra-read-paths knob (for data outside cwd) is a natural follow-on.
+- Remaining hardening (not yet done): a wall-clock watchdog to `SIGKILL` a child that *blocks* rather than burns CPU (RLIMIT_CPU misses deadlocks/hung I/O, including the #32 fork hazard), and a memory cap (`RLIMIT_AS`) to stop an accidental huge allocation from thrashing the machine.
 
 ## Mode System Design
 

@@ -652,17 +652,91 @@ static void cb_runr_capture(const char *s, int len, int otype) {
         (void)!write(g_runr_pipe_fd, s, (size_t)len);
 }
 
-/* Seatbelt profile (validated by c_ffi/seatbelt_test): allow-default, then deny
-   the effects AI code must not have — file writes (except a scratch dir and
-   /dev/null), network, and exec. Reads and pure computation stay allowed. */
-static const char *RUNR_SANDBOX_PROFILE =
-    "(version 1)\n"
-    "(allow default)\n"
-    "(deny file-write*)\n"
-    "(allow file-write* (subpath \"/private/tmp/raoui-sandbox\") "
-    "(literal \"/dev/null\"))\n"
-    "(deny network*)\n"
-    "(deny process-exec*)\n";
+/* Growable string buffer used to assemble the SBPL profile. */
+typedef struct {
+    char *buf;   /* heap buffer, always NUL-terminated */
+    size_t len;  /* bytes used, excluding the NUL */
+    size_t cap;  /* allocated capacity */
+} sbuf;
+
+/* Ensure room for [extra] more bytes plus the NUL. */
+static void sb_reserve(sbuf *s, size_t extra) {
+    if (s->len + extra + 1 > s->cap) {
+        s->cap = (s->len + extra + 1) * 2;
+        s->buf = realloc(s->buf, s->cap);
+    }
+}
+
+static void sb_puts(sbuf *s, const char *str) {
+    size_t l = strlen(str);
+    sb_reserve(s, l);
+    memcpy(s->buf + s->len, str, l);
+    s->len += l;
+    s->buf[s->len] = '\0';
+}
+
+/* Append a `  (subpath "<path>")` rule, escaping " and \ for SBPL. */
+static void sb_put_subpath(sbuf *s, const char *path) {
+    sb_puts(s, "  (subpath \"");
+    sb_reserve(s, 2 * strlen(path));
+    for (const char *p = path; *p; p++) {
+        if (*p == '"' || *p == '\\') s->buf[s->len++] = '\\';
+        s->buf[s->len++] = *p;
+    }
+    s->buf[s->len] = '\0';
+    sb_puts(s, "\")\n");
+}
+
+/* Build the seatbelt profile for one run_r call (malloc'd; caller frees).
+   Runs pre-fork on the worker thread with R live, so the read allow-list can be
+   pinned to R's own machinery + the working directory rather than hardcoded.
+
+   Posture (SBPL is last-match-wins, mirroring the existing write rule):
+     - allow default, then deny the effects AI code must not have:
+       file writes (bar a scratch dir + /dev/null), network, exec;
+     - deny file reads by default, then re-allow R's machinery and the cwd, so
+       the model can't read (and thus exfiltrate via its output) secrets like
+       ~/.ssh or ~/.aws that live elsewhere under $HOME.
+
+   The child forks an already-initialized R, so the base session is in memory
+   copy-on-write — these read paths only need to cover what AI code triggers
+   *after* the fork: lazy library() loads (.libPaths()), locale/timezone data
+   (/usr, /private/var), and data files (cwd). Anything else is a clean EPERM. */
+static char *build_runr_profile(void) {
+    /* Ask the live R where its machinery lives (newline-joined). */
+    char *dyn = eval_for_string(
+        "paste(unique(c(R.home(), .libPaths(), tempdir(), getwd())), "
+        "collapse=\"\\n\")");
+
+    /* System roots R/dyld touch lazily after the fork. */
+    static const char *roots[] = {
+        "/usr", "/System", "/Library", "/opt/homebrew",
+        "/private/var", "/etc", "/private/etc", "/dev",
+    };
+
+    sbuf s = { malloc(4096), 0, 4096 };
+    s.buf[0] = '\0';
+    sb_puts(&s, "(version 1)\n(allow default)\n");
+    /* writes: deny all but the scratch dir and /dev/null */
+    sb_puts(&s,
+        "(deny file-write*)\n"
+        "(allow file-write* (subpath \"/private/tmp/raoui-sandbox\") "
+        "(literal \"/dev/null\"))\n");
+    sb_puts(&s, "(deny network*)\n(deny process-exec*)\n");
+    /* reads: deny by default, then re-allow R's machinery + cwd */
+    sb_puts(&s, "(deny file-read*)\n(allow file-read*\n");
+    for (size_t i = 0; i < sizeof roots / sizeof roots[0]; i++)
+        sb_put_subpath(&s, roots[i]);
+    if (dyn) {
+        char *save = NULL;
+        for (char *tok = strtok_r(dyn, "\n", &save); tok;
+             tok = strtok_r(NULL, "\n", &save))
+            if (*tok) sb_put_subpath(&s, tok);
+    }
+    sb_puts(&s, ")\n");
+    free(dyn);
+    return s.buf;
+}
 
 /* Parse + eval R in the child, autoprinting visible values, just like the REPL
    but with output already routed to the capture pipe. R_tryEval prints any
@@ -705,12 +779,16 @@ static void eval_in_sandbox(const char *code) {
    parent, and return it malloc'd (caller frees). See issue #32: forking this
    multithreaded process carries a low-probability allocator-lock hazard. */
 static char *run_r_on_worker(const char *code) {
+    /* Built pre-fork while R is live so the read allow-list tracks R's paths. */
+    char *profile = build_runr_profile();
+
     int pipefd[2];
-    if (pipe(pipefd) != 0) return strdup("[run_r] pipe() failed\n");
+    if (pipe(pipefd) != 0) { free(profile); return strdup("[run_r] pipe() failed\n"); }
 
     pid_t pid = fork();
     if (pid < 0) {
         close(pipefd[0]); close(pipefd[1]);
+        free(profile);
         return strdup("[run_r] fork() failed\n");
     }
 
@@ -723,7 +801,7 @@ static char *run_r_on_worker(const char *code) {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
         char *sberr = NULL;
-        if (sandbox_init(RUNR_SANDBOX_PROFILE, 0, &sberr) != 0) {
+        if (sandbox_init(profile, 0, &sberr) != 0) {
             const char *m = "[run_r] sandbox_init failed\n";
             (void)!write(pipefd[1], m, strlen(m));
             _exit(98);
@@ -752,6 +830,8 @@ static char *run_r_on_worker(const char *code) {
         len += (size_t)n;
     }
     close(pipefd[0]);
+
+    free(profile);  /* parent's copy; the child has its own COW copy */
 
     int st = 0;
     waitpid(pid, &st, 0);
