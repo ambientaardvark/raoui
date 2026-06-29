@@ -60,6 +60,34 @@ let test_recent_interactions_include_outputs () =
     output_texts;
   close history
 
+let test_search_interactions_matches_input_and_output () =
+  with_temp_history @@ fun path ->
+  let history = History.init path in
+  (* A command whose input mentions the keyword. *)
+  History.add_to_history history [ us "summary(widgets)" ];
+  History.record_response history Ffi_backend.Done;
+  (* A command whose input does NOT mention it but whose output does. *)
+  History.add_to_history history [ us "names(df)" ];
+  History.record_response history (Ffi_backend.Result "[1] \"widgets\"\n");
+  History.record_response history Ffi_backend.Done;
+  (* A command that mentions neither. *)
+  History.add_to_history history [ us "rnorm(10)" ];
+  History.record_response history Ffi_backend.Done;
+  let inputs =
+    History.search_interactions history ~keyword:"widgets" ~limit:20
+    |> List.map (fun it -> it.History.input)
+  in
+  (* Raw result is oldest-first, like recent_interactions; the MCP layer
+     reverses for display. *)
+  Alcotest.(check (list string))
+    "matches input and output, excludes non-matches"
+    [ "summary(widgets)"; "names(df)" ]
+    inputs;
+  Alcotest.(check int)
+    "no match yields empty" 0
+    (List.length (History.search_interactions history ~keyword:"zzz" ~limit:20));
+  close history
+
 let test_empty_submission_is_not_recorded () =
   with_temp_history @@ fun path ->
   let history = History.init path in
@@ -84,5 +112,7 @@ let () =
             test_history_search_matches_existing_behavior;
           Alcotest.test_case "recent interactions include outputs" `Quick
             test_recent_interactions_include_outputs;
+          Alcotest.test_case "search interactions match input and output" `Quick
+            test_search_interactions_matches_input_and_output;
         ] );
     ]

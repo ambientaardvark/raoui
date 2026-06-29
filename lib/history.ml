@@ -356,6 +356,50 @@ let recent_interactions t ~limit =
       check t.db rc;
       rows)
 
+(* Escape SQL LIKE wildcards so a user keyword matches literally (paired with
+   ESCAPE '\' in the query below). *)
+let like_escape s =
+  let buf = Buffer.create (String.length s + 8) in
+  String.iter
+    (fun c ->
+      (match c with '\\' | '%' | '_' -> Buffer.add_char buf '\\' | _ -> ());
+      Buffer.add_char buf c)
+    s;
+  Buffer.contents buf
+
+(* Like [recent_interactions] but filtered to commands whose input OR any output
+   text contains [keyword] (case-insensitive ASCII LIKE), scoped to this session.
+   The LEFT JOIN + DISTINCT collapses the one-row-per-output fan-out back to one
+   row per command. *)
+let search_interactions t ~keyword ~limit =
+  assert (limit >= 0);
+  let pattern = "%" ^ like_escape keyword ^ "%" in
+  with_stmt t.db
+    "SELECT DISTINCT c.id, c.input, c.mode, c.submitted_at FROM commands c LEFT \
+     JOIN outputs o ON o.command_id = c.id WHERE c.session_id = ? AND (c.input \
+     LIKE ? ESCAPE '\\' OR o.text LIKE ? ESCAPE '\\') ORDER BY c.id DESC LIMIT ?"
+    (fun stmt ->
+      bind_values t.db stmt
+        [
+          S.Data.TEXT t.session_id;
+          S.Data.TEXT pattern;
+          S.Data.TEXT pattern;
+          S.Data.INT (Int64.of_int limit);
+        ];
+      let rc, rows =
+        S.fold stmt ~init:[] ~f:(fun acc row ->
+            match (row.(0), row.(1), row.(2), row.(3)) with
+            | ( S.Data.INT id,
+                S.Data.TEXT input,
+                S.Data.TEXT mode,
+                S.Data.FLOAT submitted_at ) ->
+                let outputs = outputs_for_command t.db id in
+                { input; mode; submitted_at; outputs } :: acc
+            | _ -> assert false)
+      in
+      check t.db rc;
+      rows)
+
 let init file =
   let db =
     if file = "/dev/null" then S.db_open ":memory:" else S.db_open file

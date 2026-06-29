@@ -61,6 +61,49 @@ let get_history_schema =
           ] );
     ]
 
+(* Schema for full-text search over the session's history. *)
+let search_history_schema =
+  `Assoc
+    [
+      ("name", `String "search_history");
+      ( "description",
+        `String
+          "Search the user's raoui REPL history (this session) for a keyword \
+           across both the commands they submitted and the output those \
+           commands produced. Returns matching interactions, most recent \
+           first. Use this to find where the user worked with a particular \
+           variable, function, dataset, or value instead of scanning all of \
+           get_history." );
+      ( "inputSchema",
+        `Assoc
+          [
+            ("type", `String "object");
+            ( "properties",
+              `Assoc
+                [
+                  ( "keyword",
+                    `Assoc
+                      [
+                        ("type", `String "string");
+                        ( "description",
+                          `String
+                            "Substring to search for in commands and output \
+                             (case-insensitive)." );
+                      ] );
+                  ( "limit",
+                    `Assoc
+                      [
+                        ("type", `String "integer");
+                        ( "description",
+                          `String
+                            "Maximum number of matching interactions to return \
+                             (default 20)." );
+                      ] );
+                ] );
+            ("required", `List [ `String "keyword" ]);
+          ] );
+    ]
+
 (* Schema for the sandboxed R evaluator. *)
 let run_r_schema =
   `Assoc
@@ -151,6 +194,17 @@ let get_history history ~limit =
              Printf.sprintf "%d. %s" (i + 1) (format_interaction it))
       |> String.concat "\n\n"
 
+(* The search_history tool body: same formatting as get_history, over the
+   keyword-filtered interactions. *)
+let search_history history ~keyword ~limit =
+  match History.search_interactions history ~keyword ~limit |> List.rev with
+  | [] -> Printf.sprintf "(no interactions matching %S)" keyword
+  | interactions ->
+      interactions
+      |> List.mapi (fun i it ->
+             Printf.sprintf "%d. %s" (i + 1) (format_interaction it))
+      |> String.concat "\n\n"
+
 (* Pull the integer [limit] argument out of a tools/call request. *)
 let call_limit json =
   match field "params" json with
@@ -213,7 +267,12 @@ let handle_rpc history on_suggestion json =
               [
                 ( "tools",
                   `List
-                    [ get_history_schema; run_r_schema; suggest_code_schema ] );
+                    [
+                      get_history_schema;
+                      search_history_schema;
+                      run_r_schema;
+                      suggest_code_schema;
+                    ] );
               ]))
   | Some (`String "tools/call") -> (
       match field "params" json with
@@ -224,6 +283,18 @@ let handle_rpc history on_suggestion json =
               Some
                 (ok_result id
                    (tool_text_result (get_history history ~limit)))
+          | Some (`String "search_history") -> (
+              match call_string_arg "keyword" json with
+              | Some keyword ->
+                  let limit = call_limit json in
+                  Some
+                    (ok_result id
+                       (tool_text_result
+                          (search_history history ~keyword ~limit)))
+              | None ->
+                  Some
+                    (error_result id (-32602)
+                       "search_history requires a 'keyword' string argument"))
           | Some (`String "run_r") -> (
               match call_string_arg "code" json with
               | Some code -> Some (ok_result id (tool_text_result (run_r code)))

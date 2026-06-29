@@ -20,7 +20,7 @@ Add an AI mode to the REPL, similar to Julia's mode system (`;` for shell, `?` f
 - ✅ **Tool-call split** — tool turns render a dim `→ tool` line; narration suppressed.
 - ✅ **Persistent conversation** — one claude session per raoui run (`--session-id` / `--resume`); `/new` resets it.
 - ✅ **Markdown rendering** — AI prose rendered via `cmarkit` → terminal styles, wrapped at live width (`md_layout` / `md_tty`).
-- ⬜ **search_history** — planned (same MCP pattern as `get_history`).
+- ✅ **search_history** — keyword search over this session's command inputs and output text.
 - ⬜ **Fork hardening** — multithreaded-fork allocator hazard accepted for now, tracked in [#32](https://github.com/ambientaardvark/raoui/issues/32).
 
 ## Architecture
@@ -45,7 +45,7 @@ Don't dump everything into the AI's context. Instead, expose MCP tools and let t
 - `get_history(limit)` — recent input/output pairs, scoped to the current session ✅
 - `run_r(code)` — evaluate R in a sandboxed fork of the live session (read-only) ✅
 - `suggest_code(code)` — place effectful R code in the user's prompt for them to run ✅
-- `search_history(keyword)` — full-text search over inputs and outputs (planned)
+- `search_history(keyword)` — substring search over this session's inputs and output text ✅
 
 `get_environment()` (an `ls.str()` snapshot) from the original plan is dropped — `run_r` subsumes it: the AI can run `ls.str()` itself, and the sandbox fork sees the live session copy-on-write.
 
@@ -53,7 +53,7 @@ Don't dump everything into the AI's context. Instead, expose MCP tools and let t
 
 **Phase 1 — CLI subprocess** *(done)*: Shell out to `claude -p` per query, streaming its `stream-json` output back through a fourth Eio fiber. Built-in tools and all globally-configured MCP servers are disabled (`--tools ""`, `--strict-mcp-config`); a focused `--system-prompt` replaces Claude Code's heavy default. Started with no baked context — the AI answers purely from the user's prompt text.
 
-**Phase 2 — MCP server** *(largely done)*: Expose the tools above to the `claude -p` subprocess via MCP. Because the tools must operate on raoui's *live* state (fork its R worker, read its already-open SQLite handle), the MCP server lives **in-process in raoui**, not as a separate binary the agent spawns. raoui serves a minimal MCP streamable-HTTP endpoint on a loopback port (`cohttp-eio`); claude connects out to it via `--mcp-config`, with the tools pre-approved through `--allowedTools` so the non-interactive `-p` run never blocks on a permission prompt. Done: `get_history`, `run_r`, `suggest_code`. Still to do: `search_history`.
+**Phase 2 — MCP server** *(largely done)*: Expose the tools above to the `claude -p` subprocess via MCP. Because the tools must operate on raoui's *live* state (fork its R worker, read its already-open SQLite handle), the MCP server lives **in-process in raoui**, not as a separate binary the agent spawns. raoui serves a minimal MCP streamable-HTTP endpoint on a loopback port (`cohttp-eio`); claude connects out to it via `--mcp-config`, with the tools pre-approved through `--allowedTools` so the non-interactive `-p` run never blocks on a permission prompt. Done: `get_history`, `search_history`, `run_r`, `suggest_code`.
 
 ```
 ┌──────────────────────┐
@@ -62,7 +62,7 @@ Don't dump everything into the AI's context. Instead, expose MCP tools and let t
 │  R session           │                     │
 │  SQLite DB           │◀─ MCP over ─────────┘
 │  in-proc MCP server ─┼─  loopback HTTP
-│  (cohttp-eio fiber)  │   get_history, run_r, suggest_code
+│  (cohttp-eio fiber)  │   get_history, search_history, run_r, suggest_code
 └──────────────────────┘
 ```
 

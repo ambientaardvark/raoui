@@ -42,3 +42,6 @@ val go_forwards :
 val get_all : t -> string array
 val search_history : t -> string -> string
 val recent_interactions : t -> limit:int -> interaction list
+
+val search_interactions : t -> keyword:string -> limit:int -> interaction list
+(** Interactions in this session whose input or output text contains [keyword]. *)

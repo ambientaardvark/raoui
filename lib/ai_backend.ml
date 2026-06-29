@@ -16,7 +16,8 @@ let system_prompt =
   "You are an assistant embedded in raoui, an interactive R REPL. The user \
    asks about their R session, output, and data analysis. Answer concisely and \
    practically. Use the get_history tool to see the user's recent commands and \
-   output when that context would help. Use the run_r tool to evaluate R \
+   output when that context would help, or the search_history tool to find past \
+   commands and output matching a keyword. Use the run_r tool to evaluate R \
    against the user's live session in a read-only sandbox (changes do not \
    persist) to inspect data or compute. For code meant to change the session \
    (assignments to keep, writing files, plotting), do not run it — call \
@@ -56,6 +57,7 @@ let claude_args ~mcp_port ~session query =
       (* ignore globally-configured MCP servers; use only ours *)
       "--allowedTools";
       "mcp__raoui__get_history";
+      "mcp__raoui__search_history";
       "mcp__raoui__run_r";
       "mcp__raoui__suggest_code";
       (* pre-approve our tools so the non-interactive -p run never blocks *)
