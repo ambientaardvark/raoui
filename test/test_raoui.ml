@@ -120,6 +120,7 @@ let style_to_string = function
   | `Completion -> "Completion"
   | `Completion_selected -> "Completion_selected"
   | `Shell_prompt -> "Shell_prompt"
+  | `Ai_prompt -> "Ai_prompt"
   | `Face _ -> "Face"
 
 let string_contains s needle =

@@ -15,6 +15,7 @@ type style =
   | `Completion
   | `Completion_selected
   | `Shell_prompt
+  | `Ai_prompt
   | `Face of Theme.face   (* a fully-resolved face; markdown uses this to
                              express attribute combinations the named styles
                              above cannot (e.g. bold inside a heading) *)
@@ -83,6 +84,7 @@ let style_to_face theme = function
   | `Completion -> theme.Theme.completion
   | `Completion_selected -> theme.Theme.completion_selected
   | `Shell_prompt -> theme.Theme.shell_prompt
+  | `Ai_prompt -> theme.Theme.ai_prompt
   | `Face f -> f
   | `Raw -> theme.Theme.plain
 

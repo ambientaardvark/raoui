@@ -51,6 +51,7 @@ type t = {
   completion : face;
   completion_selected : face;
   shell_prompt : face;
+  ai_prompt : face;
 }
 
 val default : t

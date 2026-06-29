@@ -232,9 +232,10 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
             | Normal, 0, true -> pending_prompt
             | Normal, _, _ -> continued_prompt
           in
-          if model.input.mode = Shell || model.input.mode = Ai then
-            add (Print ((`Shell_prompt, p) :: content))
-          else add (Print ((`Accent, p) :: content));
+          (match model.input.mode with
+          | Shell -> add (Print ((`Shell_prompt, p) :: content))
+          | Ai -> add (Print ((`Ai_prompt, p) :: content))
+          | _ -> add (Print ((`Accent, p) :: content)));
           if i < skip_rows + model.layout.term_height - 1 && i < total_rows - 1
           then add Newline
         end)

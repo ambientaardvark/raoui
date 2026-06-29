@@ -20,6 +20,7 @@ type style =
   | `Completion
   | `Completion_selected
   | `Shell_prompt
+  | `Ai_prompt
   | `Face of Theme.face   (** a fully-resolved face; markdown uses this to
                               express attribute combinations the named styles
                               cannot (e.g. bold inside a heading) *)
