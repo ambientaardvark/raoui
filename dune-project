@@ -32,6 +32,8 @@
   ptime
   sedlex
   cmarkit
+  cohttp-eio
+  yojson
   (alcotest :with-test))
  (tags
   ("r" "repl" "terminal" "ocaml")))
