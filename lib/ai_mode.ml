@@ -1,12 +1,21 @@
 open Frontend_types
 open Text_editor
 
+(* Client-side commands intercepted before anything is sent to the AI. *)
+let reset_commands = [ "/new"; "/reset"; "/clear" ]
+
 let submit model =
   let text = Unicode_string.to_string (current_line model) in
-  History.add_to_history ~mode:"ai" model.input.history model.input.lines;
-  ( Mode_common.clear_model_for_submit
-      { model with input = { model.input with mode = Normal } },
-    [ Repl_effect.SubmitAiQuery text ] )
+  let cleared =
+    Mode_common.clear_model_for_submit
+      { model with input = { model.input with mode = Normal } }
+  in
+  if List.mem (String.trim text) reset_commands then
+    (cleared, [ Repl_effect.ResetAiSession ])
+  else begin
+    History.add_to_history ~mode:"ai" model.input.history model.input.lines;
+    (cleared, [ Repl_effect.SubmitAiQuery text ])
+  end
 
 let apply_key key model =
   let open Tty_listener in

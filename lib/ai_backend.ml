@@ -28,36 +28,51 @@ let mcp_config mcp_port =
     {|{"mcpServers":{"raoui":{"type":"http","url":"http://127.0.0.1:%d/mcp"}}}|}
     mcp_port
 
-(* claude -p argv: built-ins off, only raoui's MCP tools, streaming. *)
-let claude_args ~mcp_port query =
-  [
-    "claude";
-    "-p";
-    query;
-    "--output-format";
-    "stream-json";
-    "--verbose";
-    "--tools";
-    "";
-    (* disable all built-in tools (Bash/Read/Write/...) *)
-    "--mcp-config";
-    mcp_config mcp_port;
-    "--strict-mcp-config";
-    (* ignore globally-configured MCP servers; use only ours *)
-    "--allowedTools";
-    "mcp__raoui__get_history";
-    "mcp__raoui__run_r";
-    "mcp__raoui__suggest_code";
-    (* pre-approve our tools so the non-interactive -p run never blocks *)
-    "--system-prompt";
-    system_prompt;
-  ]
+(* Random v4 UUID for the claude session id. *)
+let random_uuid () =
+  let b = Bytes.create 16 in
+  for i = 0 to 15 do
+    Bytes.set_uint8 b i (Random.int 256)
+  done;
+  Bytes.set_uint8 b 6 ((Bytes.get_uint8 b 6 land 0x0f) lor 0x40);
+  Bytes.set_uint8 b 8 ((Bytes.get_uint8 b 8 land 0x3f) lor 0x80);
+  let h i = Printf.sprintf "%02x" (Bytes.get_uint8 b i) in
+  Printf.sprintf "%s%s%s%s-%s%s-%s%s-%s%s-%s%s%s%s%s%s" (h 0) (h 1) (h 2) (h 3)
+    (h 4) (h 5) (h 6) (h 7) (h 8) (h 9) (h 10) (h 11) (h 12) (h 13) (h 14) (h 15)
+
+(* claude -p argv: built-ins off, only raoui's MCP tools, streaming. [session]
+   carries the session flags (--session-id on the first query, --resume after),
+   so the conversation persists across queries within this raoui run. *)
+let claude_args ~mcp_port ~session query =
+  [ "claude"; "-p"; query; "--output-format"; "stream-json"; "--verbose" ]
+  @ session
+  @ [
+      "--tools";
+      "";
+      (* disable all built-in tools (Bash/Read/Write/...) *)
+      "--mcp-config";
+      mcp_config mcp_port;
+      "--strict-mcp-config";
+      (* ignore globally-configured MCP servers; use only ours *)
+      "--allowedTools";
+      "mcp__raoui__get_history";
+      "mcp__raoui__run_r";
+      "mcp__raoui__suggest_code";
+      (* pre-approve our tools so the non-interactive -p run never blocks *)
+      "--system-prompt";
+      system_prompt;
+    ]
 
 type t = {
   (* Pending AI output chunks awaiting render by the event loop. *)
   chunks : Ffi_backend.response_chunk Eio.Stream.t;
   (* Spawn `claude -p` for a query and stream its output into [chunks]. *)
   submit : string -> unit;
+  (* Current conversation's claude session id. *)
+  session_id : string ref;
+  (* Whether the session has been created yet (first query) — picks
+     --session-id vs --resume. *)
+  started : bool ref;
 }
 
 (* Look up [key] in a JSON object; None for non-objects or missing keys. *)
@@ -126,14 +141,14 @@ let handle_line chunks line =
   | exception _ -> ()
   | json -> List.iter (Eio.Stream.add chunks) (assistant_chunks json)
 
-let run_claude ~process_mgr ~chunks ~mcp_port query =
+let run_claude ~process_mgr ~chunks ~mcp_port ~session query =
   Eio.Switch.run @@ fun sw ->
   (* Merge the child's stdout and stderr into one pipe: stream-json lands on
      stdout, diagnostics on stderr, and non-JSON lines are simply ignored. *)
   let source, sink = Eio_unix.pipe sw in
   let _child =
     Eio.Process.spawn ~sw process_mgr ~stdout:sink ~stderr:sink
-      (claude_args ~mcp_port query)
+      (claude_args ~mcp_port ~session query)
   in
   (* Close our copy of the write end so [source] sees EOF when the child exits. *)
   Eio.Flow.close sink;
@@ -148,18 +163,36 @@ let run_claude ~process_mgr ~chunks ~mcp_port query =
   read_lines ()
 
 let create ~sw ~process_mgr ~mcp_port ~chunks () =
+  Random.self_init ();
+  let session_id = ref (random_uuid ()) in
+  let started = ref false in
   let submit query =
+    (* First query creates the session; later ones resume it for continuity. *)
+    let session =
+      if !started then [ "--resume"; !session_id ]
+      else [ "--session-id"; !session_id ]
+    in
+    started := true;
     Eio.Fiber.fork ~sw (fun () ->
         (* Subprocess boundary: surface any failure as AI output rather than
            letting the fiber's exception tear down the switch (and the REPL). *)
-        (try run_claude ~process_mgr ~chunks ~mcp_port query
+        (try run_claude ~process_mgr ~chunks ~mcp_port ~session query
          with exn ->
            Eio.Stream.add chunks
              (Ffi_backend.Ai_output
                 (Printf.sprintf "[ai error] %s\n" (Printexc.to_string exn))));
         Eio.Stream.add chunks Ffi_backend.Ai_done)
   in
-  { chunks; submit }
+  { chunks; submit; session_id; started }
 
 let submit_query t query = t.submit query
+
+(* Start a fresh conversation: new session id, and a notice the loop renders. *)
+let reset t =
+  t.session_id := random_uuid ();
+  t.started := false;
+  Eio.Stream.add t.chunks
+    (Ffi_backend.Ai_output "[started a new AI conversation]\n");
+  Eio.Stream.add t.chunks Ffi_backend.Ai_done
+
 let await_response t = Eio.Stream.take t.chunks

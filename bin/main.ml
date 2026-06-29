@@ -25,6 +25,7 @@ let execute_one backend ai_backend = function
   | Repl_effect.BackgroundSubmit text ->
       Ffi_backend.background_submit backend text
   | Repl_effect.SubmitAiQuery query -> Ai_backend.submit_query ai_backend query
+  | Repl_effect.ResetAiSession -> Ai_backend.reset ai_backend
   | Repl_effect.Run_backslash_effect _ -> ()
   | Repl_effect.EnterPassthrough -> ()
   | Repl_effect.Quit -> ()
@@ -37,7 +38,7 @@ let render_submit_snapshot model effects =
     List.exists
       (function
         | Repl_effect.Submit _ | Repl_effect.SubmitReadlineInput _
-        | Repl_effect.SubmitAiQuery _ ->
+        | Repl_effect.SubmitAiQuery _ | Repl_effect.ResetAiSession ->
             true
         | _ -> false)
       effects
