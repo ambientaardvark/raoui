@@ -8,6 +8,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/time.h>
+#include <sys/wait.h>
+#include <sys/resource.h>
+#include <sandbox.h>
 
 #if defined(__APPLE__)
 #define LIBR_BASENAME "libR.dylib"
@@ -52,6 +55,20 @@ static char *pending_completion_line = NULL;
 static int   pending_completion_pos  = 0;
 static char *pending_column_object = NULL;
 static atomic_int shutdown_flag = 0;
+
+/* Sandboxed run_r request/response. Its own channel, separate from the REPL
+   ring buffer: the AI's sandboxed eval output goes back to the caller as a
+   string, never onto the user's screen. pending_runr/runr_result are guarded
+   by cmd_mutex; runr_call_mutex serializes concurrent callers (claude issues
+   tool calls one at a time, but be safe). */
+static char *pending_runr = NULL;   /* code awaiting sandboxed eval on worker */
+static char *runr_result = NULL;    /* malloc'd captured output for the caller */
+static int   runr_done = 0;         /* response-ready flag */
+static pthread_cond_t  runr_done_cond  = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t runr_call_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Child-only: fd that R console output is routed to during sandboxed eval. */
+static int g_runr_pipe_fd = -1;
 
 /* ---- Crash logging ---- */
 
@@ -624,6 +641,134 @@ static char *eval_for_string(const char *code) {
     return out;
 }
 
+/* ---- Sandboxed run_r (fork + seatbelt; runs on the R worker thread) ---- */
+
+/* Console callback used only inside the forked child: route R's output to the
+   capture pipe instead of the ring buffer. The override is COW-private to the
+   child, so the parent's callback is untouched. */
+static void cb_runr_capture(const char *s, int len, int otype) {
+    (void)otype;
+    if (g_runr_pipe_fd >= 0)
+        (void)!write(g_runr_pipe_fd, s, (size_t)len);
+}
+
+/* Seatbelt profile (validated by c_ffi/seatbelt_test): allow-default, then deny
+   the effects AI code must not have — file writes (except a scratch dir and
+   /dev/null), network, and exec. Reads and pure computation stay allowed. */
+static const char *RUNR_SANDBOX_PROFILE =
+    "(version 1)\n"
+    "(allow default)\n"
+    "(deny file-write*)\n"
+    "(allow file-write* (subpath \"/private/tmp/raoui-sandbox\") "
+    "(literal \"/dev/null\"))\n"
+    "(deny network*)\n"
+    "(deny process-exec*)\n";
+
+/* Parse + eval R in the child, autoprinting visible values, just like the REPL
+   but with output already routed to the capture pipe. R_tryEval prints any
+   error text through the (repointed) console callback, so errors land in the
+   captured output too; we just stop the loop. */
+static void eval_in_sandbox(const char *code) {
+    *R_interrupts_pending_ptr = 0;
+    SEXP code_sexp = Rf_protect(Rf_mkString(code));
+    ParseStatus ps = PARSE_ERROR;
+    parse_data_t pd = { code_sexp, -1, &ps, *R_NilValue_ptr, NULL };
+    toplevel_exec(safe_parse, &pd);
+    SEXP parsed = Rf_protect(pd.result ? pd.result : *R_NilValue_ptr);
+    if (ps != PARSE_OK) {
+        const char *msg = "Parse error\n";
+        if (g_runr_pipe_fd >= 0) (void)!write(g_runr_pipe_fd, msg, strlen(msg));
+        Rf_unprotect(2);
+        return;
+    }
+    int n = Rf_length_fn(parsed);
+    for (int i = 0; i < n; i++) {
+        SEXP wv_call = Rf_protect(Rf_lang2(withVisible_sym, VECTOR_ELT_fn(parsed, i)));
+        int err = 0;
+        eval_data_t ed = { wv_call, *R_GlobalEnv_ptr, &err, NULL };
+        if (!toplevel_exec(safe_eval, &ed)) err = 1;
+        SEXP wv_result = Rf_protect(ed.result ? ed.result : *R_NilValue_ptr);
+        if (err) { Rf_unprotect(2); break; }  /* error text already on the pipe */
+        SEXP value   = VECTOR_ELT_fn(wv_result, 0);
+        SEXP visible = VECTOR_ELT_fn(wv_result, 1);
+        if (Rf_asLogical(visible)) {
+            Rf_protect(value);
+            if (!toplevel_exec(safe_print, &value)) { Rf_unprotect(3); break; }
+            Rf_unprotect(1);
+        }
+        Rf_unprotect(2);
+    }
+    Rf_unprotect(2);
+}
+
+/* Fork the worker, sandbox + eval in the child, capture its output in the
+   parent, and return it malloc'd (caller frees). See issue #32: forking this
+   multithreaded process carries a low-probability allocator-lock hazard. */
+static char *run_r_on_worker(const char *code) {
+    int pipefd[2];
+    if (pipe(pipefd) != 0) return strdup("[run_r] pipe() failed\n");
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(pipefd[0]); close(pipefd[1]);
+        return strdup("[run_r] fork() failed\n");
+    }
+
+    if (pid == 0) {
+        /* ---- Child: only the worker thread survives the fork ---- */
+        close(pipefd[0]);
+        /* Runaway guard: a CPU-bound infinite loop dies with SIGXCPU. */
+        struct rlimit rl = { 10, 10 };
+        setrlimit(RLIMIT_CPU, &rl);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        char *sberr = NULL;
+        if (sandbox_init(RUNR_SANDBOX_PROFILE, 0, &sberr) != 0) {
+            const char *m = "[run_r] sandbox_init failed\n";
+            (void)!write(pipefd[1], m, strlen(m));
+            _exit(98);
+        }
+#pragma clang diagnostic pop
+        g_runr_pipe_fd = pipefd[1];
+        *ptr_R_WriteConsoleEx = cb_runr_capture;
+        *ptr_R_WriteConsole = NULL;
+        eval_in_sandbox(code);
+        close(pipefd[1]);
+        _exit(0);
+    }
+
+    /* ---- Parent (worker thread): drain the pipe, then reap ---- */
+    close(pipefd[1]);
+    size_t cap = 8192, len = 0;
+    char *buf = malloc(cap);
+    char tmp[4096];
+    ssize_t n;
+    while ((n = read(pipefd[0], tmp, sizeof tmp)) > 0) {
+        if (len + (size_t)n + 1 > cap) {
+            cap = (len + (size_t)n + 1) * 2;
+            buf = realloc(buf, cap);
+        }
+        memcpy(buf + len, tmp, (size_t)n);
+        len += (size_t)n;
+    }
+    close(pipefd[0]);
+
+    int st = 0;
+    waitpid(pid, &st, 0);
+    if (WIFSIGNALED(st)) {
+        /* Annotate abnormal death so the AI understands truncated output. */
+        int sig = WTERMSIG(st);
+        char note[128];
+        int m = snprintf(note, sizeof note, "\n[run_r: child killed by signal %d%s]\n",
+                         sig, sig == SIGXCPU ? " — CPU limit" : "");
+        if (len + (size_t)m + 1 > cap) { cap = len + (size_t)m + 1; buf = realloc(buf, cap); }
+        memcpy(buf + len, note, (size_t)m);
+        len += (size_t)m;
+    }
+    buf[len] = '\0';
+    return buf;
+}
+
 /* ---- Completions ---- */
 
 static void run_completions(const char *line, int cursor_pos) {
@@ -701,7 +846,7 @@ static void *r_thread_func(void *arg) {
     while (!atomic_load(&shutdown_flag)) {
         pthread_mutex_lock(&cmd_mutex);
         if (!pending_cmd && !pending_completion_line && !pending_column_object
-            && !atomic_load(&shutdown_flag)) {
+            && !pending_runr && !atomic_load(&shutdown_flag)) {
             struct timeval tv;
             gettimeofday(&tv, NULL);
             struct timespec ts;
@@ -726,6 +871,17 @@ static void *r_thread_func(void *arg) {
             rb_reset(&g_rb);
             eval_code(code);
             free(code);
+        } else if (pending_runr) {
+            char *code = pending_runr;
+            pending_runr = NULL;
+            pthread_mutex_unlock(&cmd_mutex);
+            char *out = run_r_on_worker(code);  /* fork + sandbox + capture */
+            free(code);
+            pthread_mutex_lock(&cmd_mutex);
+            runr_result = out;
+            runr_done = 1;
+            pthread_cond_signal(&runr_done_cond);
+            pthread_mutex_unlock(&cmd_mutex);
         } else if (pending_completion_line) {
             char *line = pending_completion_line;
             int pos = pending_completion_pos;
@@ -782,6 +938,26 @@ void rffi_submit(const char *code) {
     pending_cmd = strdup(code);
     pthread_cond_signal(&cmd_cond);
     pthread_mutex_unlock(&cmd_mutex);
+}
+
+/* Synchronously run AI-supplied R in a sandboxed fork and return its captured
+   output (caller frees). Blocks until the worker thread has forked, evaluated,
+   and reaped the child — call from a systhread so the UI loop stays live. */
+char *rffi_run_r_sandboxed(const char *code) {
+    pthread_mutex_lock(&runr_call_mutex);   /* one sandboxed eval at a time */
+    pthread_mutex_lock(&cmd_mutex);
+    free(pending_runr);
+    pending_runr = strdup(code);
+    runr_done = 0;
+    runr_result = NULL;
+    pthread_cond_signal(&cmd_cond);
+    while (!runr_done)
+        pthread_cond_wait(&runr_done_cond, &cmd_mutex);
+    char *res = runr_result;
+    runr_result = NULL;
+    pthread_mutex_unlock(&cmd_mutex);
+    pthread_mutex_unlock(&runr_call_mutex);
+    return res;
 }
 
 void rffi_request_completions(const char *line, int cursor_pos) {

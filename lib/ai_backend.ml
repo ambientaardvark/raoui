@@ -16,7 +16,11 @@ let system_prompt =
   "You are an assistant embedded in raoui, an interactive R REPL. The user \
    asks about their R session, output, and data analysis. Answer concisely and \
    practically. Use the get_history tool to see the user's recent commands and \
-   output when that context would help answer them."
+   output when that context would help. Use the run_r tool to evaluate R \
+   against the user's live session in a read-only sandbox (changes do not \
+   persist) to inspect data or compute. For code meant to change the session \
+   (assignments to keep, writing files, plotting), do not run it — present it \
+   for the user to run themselves."
 
 (* Inline --mcp-config JSON pointing claude at our loopback MCP server. *)
 let mcp_config mcp_port =
@@ -42,7 +46,8 @@ let claude_args ~mcp_port query =
     (* ignore globally-configured MCP servers; use only ours *)
     "--allowedTools";
     "mcp__raoui__get_history";
-    (* pre-approve our read-only tools so -p never blocks on a prompt *)
+    "mcp__raoui__run_r";
+    (* pre-approve our read-only/sandboxed tools so -p never blocks on a prompt *)
     "--system-prompt";
     system_prompt;
   ]

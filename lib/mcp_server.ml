@@ -61,6 +61,38 @@ let get_history_schema =
           ] );
     ]
 
+(* Schema for the sandboxed R evaluator. *)
+let run_r_schema =
+  `Assoc
+    [
+      ("name", `String "run_r");
+      ( "description",
+        `String
+          "Evaluate R code in a sandboxed fork of the user's live session and \
+           return its printed output. The fork sees the user's current \
+           variables, but it is read-only: file writes, network, and system() \
+           are blocked, and any changes do NOT persist to the real session. \
+           Use this to inspect data and compute. For code meant to CHANGE the \
+           session (assignments to keep, writing files, plots), do not run it \
+           — propose it for the user to run instead." );
+      ( "inputSchema",
+        `Assoc
+          [
+            ("type", `String "object");
+            ( "properties",
+              `Assoc
+                [
+                  ( "code",
+                    `Assoc
+                      [
+                        ("type", `String "string");
+                        ("description", `String "R code to evaluate.");
+                      ] );
+                ] );
+            ("required", `List [ `String "code" ]);
+          ] );
+    ]
+
 (* Render one output chunk for the model; plots collapse to a placeholder. *)
 let format_output (o : History.output) =
   match o.text with
@@ -102,6 +134,22 @@ let call_limit json =
       | None -> default_limit)
   | None -> default_limit
 
+(* Pull a required string argument [key] out of a tools/call request. *)
+let call_string_arg key json =
+  match field "params" json with
+  | Some params -> (
+      match field "arguments" params with
+      | Some args -> (
+          match field key args with Some (`String s) -> Some s | _ -> None)
+      | None -> None)
+  | None -> None
+
+(* Evaluate R code in the sandboxed fork. Run on a systhread so the blocking
+   wait for the worker's fork/eval/reap doesn't freeze the Eio event loop. *)
+let run_r code =
+  let output = Eio_unix.run_in_systhread (fun () -> Rffi.run_r_sandboxed code) in
+  if output = "" then "(no output)" else output
+
 (* Wrap a tool's text output as an MCP tools/call result. *)
 let tool_text_result text =
   `Assoc
@@ -129,7 +177,9 @@ let handle_rpc history json =
               ]))
   | Some (`String "notifications/initialized") -> None
   | Some (`String "tools/list") ->
-      Some (ok_result id (`Assoc [ ("tools", `List [ get_history_schema ]) ]))
+      Some
+        (ok_result id
+           (`Assoc [ ("tools", `List [ get_history_schema; run_r_schema ]) ]))
   | Some (`String "tools/call") -> (
       match field "params" json with
       | Some params -> (
@@ -139,6 +189,13 @@ let handle_rpc history json =
               Some
                 (ok_result id
                    (tool_text_result (get_history history ~limit)))
+          | Some (`String "run_r") -> (
+              match call_string_arg "code" json with
+              | Some code -> Some (ok_result id (tool_text_result (run_r code)))
+              | None ->
+                  Some
+                    (error_result id (-32602)
+                       "run_r requires a 'code' string argument"))
           | Some (`String other) ->
               Some (error_result id (-32602) ("unknown tool: " ^ other))
           | _ -> Some (error_result id (-32602) "missing tool name"))
