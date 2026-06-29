@@ -7,6 +7,9 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
+#include <poll.h>
+#include <time.h>
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <sys/resource.h>
@@ -643,6 +646,15 @@ static char *eval_for_string(const char *code) {
 
 /* ---- Sandboxed run_r (fork + seatbelt; runs on the R worker thread) ---- */
 
+/* Wall-clock watchdog: kill a child that *blocks* (deadlock, hung I/O) rather
+   than burning CPU — RLIMIT_CPU only catches busy loops, and a wedged child
+   would otherwise freeze the R worker thread. Set above the 10s CPU limit so a
+   CPU-bound loop dies on RLIMIT_CPU first and gets the more specific message. */
+#define RUNR_WALL_TIMEOUT_MS 30000
+/* R vector-heap ceiling: macOS rejects RLIMIT_AS, so cap allocations inside R
+   instead — an oversized alloc fails with a clean R error, not OS thrash. */
+#define RUNR_MAX_VSIZE_MB "4096"
+
 /* Console callback used only inside the forked child: route R's output to the
    capture pipe instead of the ring buffer. The override is COW-private to the
    child, so the parent's callback is untouched. */
@@ -810,37 +822,72 @@ static char *run_r_on_worker(const char *code) {
         g_runr_pipe_fd = pipefd[1];
         *ptr_R_WriteConsoleEx = cb_runr_capture;
         *ptr_R_WriteConsole = NULL;
+        /* Cap R's vector heap (guarded for R < 4.2 where mem.maxVSize is absent);
+           an oversized allocation then fails with a clean R error. */
+        free(eval_for_string(
+            "if (exists('mem.maxVSize')) invisible(mem.maxVSize(" RUNR_MAX_VSIZE_MB "))"));
         eval_in_sandbox(code);
         close(pipefd[1]);
         _exit(0);
     }
 
-    /* ---- Parent (worker thread): drain the pipe, then reap ---- */
+    /* ---- Parent (worker thread): drain with a wall-clock watchdog, reap ---- */
     close(pipefd[1]);
     size_t cap = 8192, len = 0;
     char *buf = malloc(cap);
-    char tmp[4096];
-    ssize_t n;
-    while ((n = read(pipefd[0], tmp, sizeof tmp)) > 0) {
-        if (len + (size_t)n + 1 > cap) {
-            cap = (len + (size_t)n + 1) * 2;
-            buf = realloc(buf, cap);
+    int timed_out = 0;
+    struct timespec t0;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (;;) {
+        struct timespec tn;
+        clock_gettime(CLOCK_MONOTONIC, &tn);
+        long elapsed_ms = (tn.tv_sec - t0.tv_sec) * 1000
+                        + (tn.tv_nsec - t0.tv_nsec) / 1000000;
+        long remaining = RUNR_WALL_TIMEOUT_MS - elapsed_ms;
+        if (remaining <= 0) { timed_out = 1; break; }
+        struct pollfd pfd = { pipefd[0], POLLIN, 0 };
+        int pr = poll(&pfd, 1, (int)remaining);
+        if (pr == 0) { timed_out = 1; break; }       /* watchdog fired */
+        if (pr < 0) { if (errno == EINTR) continue; break; }
+        char tmp[4096];
+        ssize_t n = read(pipefd[0], tmp, sizeof tmp);
+        if (n > 0) {
+            if (len + (size_t)n + 1 > cap) {
+                cap = (len + (size_t)n + 1) * 2;
+                buf = realloc(buf, cap);
+            }
+            memcpy(buf + len, tmp, (size_t)n);
+            len += (size_t)n;
+        } else if (n == 0) {
+            break;                                    /* child closed pipe (EOF) */
+        } else if (errno != EINTR) {
+            break;
         }
-        memcpy(buf + len, tmp, (size_t)n);
-        len += (size_t)n;
     }
     close(pipefd[0]);
+
+    /* Watchdog fired: the child is wedged on something RLIMIT_CPU can't catch
+       (deadlock, blocked I/O, the #32 fork hazard) — kill it so the worker
+       thread doesn't hang. */
+    if (timed_out) kill(pid, SIGKILL);
 
     free(profile);  /* parent's copy; the child has its own COW copy */
 
     int st = 0;
     waitpid(pid, &st, 0);
-    if (WIFSIGNALED(st)) {
-        /* Annotate abnormal death so the AI understands truncated output. */
+
+    /* Annotate abnormal termination so the AI understands truncated output. */
+    char note[128];
+    int m = 0;
+    if (timed_out)
+        m = snprintf(note, sizeof note, "\n[run_r: timed out after %ds — killed]\n",
+                     RUNR_WALL_TIMEOUT_MS / 1000);
+    else if (WIFSIGNALED(st)) {
         int sig = WTERMSIG(st);
-        char note[128];
-        int m = snprintf(note, sizeof note, "\n[run_r: child killed by signal %d%s]\n",
-                         sig, sig == SIGXCPU ? " — CPU limit" : "");
+        m = snprintf(note, sizeof note, "\n[run_r: child killed by signal %d%s]\n",
+                     sig, sig == SIGXCPU ? " — CPU limit" : "");
+    }
+    if (m > 0) {
         if (len + (size_t)m + 1 > cap) { cap = len + (size_t)m + 1; buf = realloc(buf, cap); }
         memcpy(buf + len, note, (size_t)m);
         len += (size_t)m;

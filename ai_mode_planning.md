@@ -106,11 +106,14 @@ The AI's `stream-json` events are parsed by block type (`Ai_backend.assistant_ch
    - Deny file writes except a scratch dir + `/dev/null` (`file-write*`)
    - Deny process execution (`process-exec*`) — blocks `system()`
    - **Deny file reads, then re-allow only R's machinery + the working dir** (`file-read*`). This closes the exfiltration path: `run_r`'s whole job is to feed output back to the model, so an unrestricted read would let the AI `readLines("~/.ssh/id_rsa")` straight into its (API-bound) response. The read allow-list is generated at fork time from the *live* R — `R.home()`, every `.libPaths()` entry, `tempdir()`, `getwd()` — plus a fixed set of system roots (`/usr`, `/System`, `/Library`, `/opt/homebrew`, `/private/var`, `/etc`, `/dev`) that dyld/locale/timezone need. Secrets elsewhere under `$HOME` (`~/.ssh`, `~/.aws`, keychains, `.Renviron`) are denied. This is cheap because the child forks an *already-initialized* R: the base session is in memory COW, so the read paths only need to cover what AI code triggers *after* the fork (lazy `library()` loads, locale/tz data, cwd data files) — anything else is a clean `EPERM` and `run_r` fails safe.
-   - `setrlimit(RLIMIT_CPU)` caps runaway loops (SIGXCPU)
+   - **Resource guards** layered on the sandbox so a misbehaving child can't wedge or thrash the host:
+     - `setrlimit(RLIMIT_CPU, 10s)` — a CPU-bound loop dies with `SIGXCPU`.
+     - **Wall-clock watchdog (30s)** — the parent drains the pipe via `poll()` against a deadline and `SIGKILL`s the child if it elapses. This catches what `RLIMIT_CPU` *can't*: a child that **blocks** rather than burns CPU (a deadlock, hung I/O, or the #32 fork hazard) — which would otherwise freeze the R worker thread, since the parent runs on it.
+     - **Memory cap** via R's own `mem.maxVSize(4096 Mb)`, set in the child before eval. macOS rejects `RLIMIT_AS` (verified: `setrlimit` returns -1), so an OS address-space cap is unavailable; R's vector-heap ceiling instead turns an oversized allocation into a clean R error rather than OS thrash.
 
-   Validated on macOS 26.5: every denial is a clean `EPERM` / non-zero return, **never a `SIGKILL`** — so the child's failures are capturable as text and handed back to the AI. `sandbox_init` is deprecated since ~2016 but still works; `sandbox-exec` would have re-exec'd and lost the fork's memory, so the in-process API is the right fit here.
+   Validated on macOS 26.5: every denial is a clean `EPERM` / non-zero return, **never a `SIGKILL`** from the sandbox itself — so the child's failures are capturable as text and handed back to the AI. `sandbox_init` is deprecated since ~2016 but still works; `sandbox-exec` would have re-exec'd and lost the fork's memory, so the in-process API is the right fit here.
 
-   Read scoping verified with a smoke test: `1+1` and `library(Matrix)` still work, `/etc/hosts` and a cwd file read fine, while an *existing* file in `$HOME` (outside the allow-list) is blocked — proving the denial is the sandbox (EPERM), not a missing file.
+   Smoke-tested end to end: read scoping (`1+1` and `library(Matrix)` work; `/etc/hosts` and a cwd file read; an *existing* `$HOME` file is blocked — EPERM, not a missing file), the memory cap (an 80 MB alloc works, a >4 GB alloc fails with "vector memory limit of 4.0 Gb reached"), the CPU limit (a busy loop dies on SIGXCPU at ~10s), and the watchdog (`Sys.sleep(60)` is killed at 30s with a "timed out" note).
 
 3. **Capture output, discard child** — output is captured by repointing R's `WriteConsoleEx` callback at a pipe in the child; the parent (worker thread) drains the pipe and `waitpid`s. Parent R session is completely untouched (verified: child mutations don't leak, parent keeps evaluating).
 
@@ -120,11 +123,11 @@ The "read-only sandbox" model is realized as the `run_r` / `suggest_code` split 
 
 ### Limitations
 
-- **Multithreaded fork hazard** — the spikes forked a single-threaded process; raoui is multithreaded (Eio + R worker + systhreads). If another thread holds the malloc lock at fork, the child can deadlock on its first allocation. Low probability (worker forks at a quiescent point), accepted for now, tracked in [#32](https://github.com/ambientaardvark/raoui/issues/32).
+- **Multithreaded fork hazard** — the spikes forked a single-threaded process; raoui is multithreaded (Eio + R worker + systhreads). If another thread holds the malloc lock at fork, the child can deadlock on its first allocation. Low probability (worker forks at a quiescent point); now *survivable* rather than fatal thanks to the 30s watchdog, which kills the wedged child so the worker thread recovers. Lowering the probability itself (quiesce threads / `pthread_atfork`) is still tracked in [#32](https://github.com/ambientaardvark/raoui/issues/32).
 - R isn't fully fork-safe around file descriptors, DB connections, and threaded packages. Fine for pure computation; the strict write profile means R operations needing temp-file writes can fail.
 - macOS-only. Linux deployment would use seccomp/Landlock instead.
 - Reads are now deny-default (scoped to R + cwd), but writes/network/exec still use the allow-default-then-deny structure. The read allow-list is a *blocklist's inverse* and could still be widened by a path R reports (e.g. a `.libPaths()` entry that itself sits next to secrets); acceptable given the threat model. A user-configurable extra-read-paths knob (for data outside cwd) is a natural follow-on.
-- Remaining hardening (not yet done): a wall-clock watchdog to `SIGKILL` a child that *blocks* rather than burns CPU (RLIMIT_CPU misses deadlocks/hung I/O, including the #32 fork hazard), and a memory cap (`RLIMIT_AS`) to stop an accidental huge allocation from thrashing the machine.
+- The memory cap covers R's vector heap (the dominant consumer for data), not arbitrary C-level allocations inside packages; the watchdog backstops the rest. The 10s CPU / 30s wall limits suit quick exploration — a genuinely long read-only computation should go through `suggest_code` instead.
 
 ## Mode System Design
 
