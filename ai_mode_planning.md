@@ -10,6 +10,19 @@ Add an AI mode to the REPL, similar to Julia's mode system (`;` for shell, `?` f
 - **Exploratory queries**: "Which of these three columns has the most variance?"
 - **Session summarization**: "Write the main code I wrote to a script/rmarkdown file"
 
+## Status
+
+- ✅ **Phase 1** — `ai>` mode (`:` trigger) talks to `claude -p`, output streamed.
+- ✅ **MCP server** — in-process loopback-HTTP (`cohttp-eio`); tools pre-approved via `--allowedTools`.
+- ✅ **get_history** — recent interactions, scoped to the current session.
+- ✅ **run_r** — sandboxed fork+seatbelt eval of the live session (read-only).
+- ✅ **suggest_code** — effectful code dropped into the user's prompt to run.
+- ✅ **Tool-call split** — tool turns render a dim `→ tool` line; narration suppressed.
+- ✅ **Persistent conversation** — one claude session per raoui run (`--session-id` / `--resume`); `/new` resets it.
+- ✅ **Markdown rendering** — AI prose rendered via `cmarkit` → terminal styles, wrapped at live width (`md_layout` / `md_tty`).
+- ⬜ **search_history** — planned (same MCP pattern as `get_history`).
+- ⬜ **Fork hardening** — multithreaded-fork allocator hazard accepted for now, tracked in [#32](https://github.com/ambientaardvark/raoui/issues/32).
+
 ## Architecture
 
 ### Context Management
@@ -27,18 +40,20 @@ CREATE TABLE history (
 );
 ```
 
-Don't dump everything into the AI's context. Instead, expose retrieval tools and let the AI pull what it needs:
+Don't dump everything into the AI's context. Instead, expose MCP tools and let the AI pull or compute what it needs:
 
-- `get_recent(n)` — last N input/output pairs (output truncated to ~200 lines each)
-- `search_history(keyword)` — full-text search over inputs and outputs
-- `get_environment()` — runs `ls.str()` to see current R state
-- `run_r(code)` — execute R in a sandboxed fork and return output
+- `get_history(limit)` — recent input/output pairs, scoped to the current session ✅
+- `run_r(code)` — evaluate R in a sandboxed fork of the live session (read-only) ✅
+- `suggest_code(code)` — place effectful R code in the user's prompt for them to run ✅
+- `search_history(keyword)` — full-text search over inputs and outputs (planned)
+
+`get_environment()` (an `ls.str()` snapshot) from the original plan is dropped — `run_r` subsumes it: the AI can run `ls.str()` itself, and the sandbox fork sees the live session copy-on-write.
 
 ### Integration Approach
 
 **Phase 1 — CLI subprocess** *(done)*: Shell out to `claude -p` per query, streaming its `stream-json` output back through a fourth Eio fiber. Built-in tools and all globally-configured MCP servers are disabled (`--tools ""`, `--strict-mcp-config`); a focused `--system-prompt` replaces Claude Code's heavy default. Started with no baked context — the AI answers purely from the user's prompt text.
 
-**Phase 2 — MCP server** *(in progress)*: Expose the retrieval tools above to the `claude -p` subprocess via MCP. Because the tools must operate on raoui's *live* state (fork its R worker, read its already-open SQLite handle), the MCP server lives **in-process in raoui**, not as a separate binary the agent spawns. raoui serves a minimal MCP streamable-HTTP endpoint on a loopback port (`cohttp-eio`); claude connects out to it via `--mcp-config`, with the read-only tools pre-approved through `--allowedTools` so the non-interactive `-p` run never blocks on a permission prompt. Implemented so far: `get_history` (session-scoped). Still to do: `search_history`, sandboxed `run_r`.
+**Phase 2 — MCP server** *(largely done)*: Expose the tools above to the `claude -p` subprocess via MCP. Because the tools must operate on raoui's *live* state (fork its R worker, read its already-open SQLite handle), the MCP server lives **in-process in raoui**, not as a separate binary the agent spawns. raoui serves a minimal MCP streamable-HTTP endpoint on a loopback port (`cohttp-eio`); claude connects out to it via `--mcp-config`, with the tools pre-approved through `--allowedTools` so the non-interactive `-p` run never blocks on a permission prompt. Done: `get_history`, `run_r`, `suggest_code`. Still to do: `search_history`.
 
 ```
 ┌──────────────────────┐
@@ -47,47 +62,65 @@ Don't dump everything into the AI's context. Instead, expose retrieval tools and
 │  R session           │                     │
 │  SQLite DB           │◀─ MCP over ─────────┘
 │  in-proc MCP server ─┼─  loopback HTTP
-│  (cohttp-eio fiber)  │   get_history, (run_r)
+│  (cohttp-eio fiber)  │   get_history, run_r, suggest_code
 └──────────────────────┘
 ```
 
-Hosting the server inside raoui collapses the old plan's two-hop design: read-only tools (`get_history`, `search_history`) read the in-process SQLite handle directly, and `run_r` can fork raoui's R worker directly — no separate server binary and no unix-socket bridge back to the REPL.
+Hosting the server inside raoui collapses the old plan's two-hop design: `get_history` reads the in-process SQLite handle directly, and `run_r` forks raoui's R worker directly — no separate server binary and no unix-socket bridge back to the REPL. `suggest_code` pushes its code to the frontend as an `Ai_suggestion` chunk on the same Eio stream the AI's output travels on.
+
+### Execution model: explore vs. change
+
+The AI splits R work by side effects, which maps onto the two execution tools:
+
+- **Read-only / exploration → `run_r`.** Sandboxed (fork + seatbelt), so the AI runs it freely with no approval — nothing it does persists or escapes. This is the agent's exploration loop: run, observe, refine.
+- **Effectful / persistent → `suggest_code`.** Code that should change the session (assignments to keep, file writes, plots) can't be sandboxed (the whole point is to persist), so the AI doesn't run it — it drops the code into the user's prompt, and the user running it is the approval.
+
+The sandbox doubles as a safety net: even if the AI misjudges and runs effectful code via `run_r`, the effect dies with the fork, so "AI runs it" is always safe. `suggest_code` is only for changes the user actually wants to keep.
+
+### Conversation continuity
+
+The backend mints a session UUID per raoui run: the first `ai>` query passes `--session-id`, later ones `--resume`, so claude replays the conversation and follow-ups keep context. `/new` (or `/reset`, `/clear`) starts a fresh session. The cache is server-side and time-keyed (5-min TTL), so continuity costs the usual growing-context tokens per turn but the per-call process/MCP init is the only thing a long-lived process would save.
 
 ### UI Rendering
 
 Only the prompt box gets re-rendered. AI responses render into the output area above the prompt box, same as R output, possibly with a different color to distinguish AI text. The prompt shows `ai>` when in AI mode.
 
-For Phase 1 (CLI subprocess), capture stdout and feed it through the existing rendering pipeline. For Phase 2 (MCP + full agent), same approach — the agent's output stream gets rendered as output chunks in the prompt box.
+The AI's `stream-json` events are parsed by block type (`Ai_backend.assistant_chunks`) into response chunks the event loop renders:
 
-**TODO — render AI markdown in the terminal.** AI responses come back as markdown but are currently shown as raw text. No turnkey markdown→ANSI renderer exists in opam (no equivalent of Glow/`rich`). Plan: parse with `cmarkit` (pure OCaml, CommonMark, extensible renderer API) and write a small backend that maps the AST onto our existing `Terminal_ops` styles/theme — headings→bold, emphasis→italic/dim, code spans→color, lists→bullets. Special-case fenced ```r blocks through the existing `R_highlight` rather than a flat code style. Open sub-question: markdown rendering needs a complete block (can't style a fenced block until its closing fence arrives), so this pushes toward buffering the full response before rendering rather than the current chunk-by-chunk streaming — which also aligns with the "place suggested code in the prompt" feature that needs the whole response anyway. `omd` is the fallback parser if `cmarkit` doesn't fit.
+- **`Ai_output`** — user-facing assistant text → rendered as prose (markdown, see below).
+- **`Ai_tool_call name`** — emitted per `tool_use` block; renders as a dim `→ run_r` line. A message that contains a `tool_use` is a "tool turn": its narration text blocks are suppressed (so "I'll now check…" preambles don't scroll), and only the compact indicator shows. The indicator is a deliberately simple hook to refine per-tool later.
+- **`Ai_suggestion code`** — from `suggest_code`; stashed and dropped into the input prompt when the response finalizes.
 
-## Sandboxing
+**Markdown rendering** *(done)*. AI prose comes back as markdown. No turnkey markdown→ANSI renderer exists in opam (no equivalent of Glow/`rich`), so we parse with `cmarkit` (pure OCaml, CommonMark, extensible renderer API) and map the AST onto terminal styles — headings→bold, emphasis→italic/dim, code spans/blocks→color, lists→bullets. It's a dedicated `Output_markdown` repl_output, laid out by `md_layout` and emitted as styled spans by `md_tty`, re-rendered and wrapped at the live terminal width on each render. Possible refinement: route fenced ```r blocks through the existing `R_highlight` for real R syntax highlighting (currently a flat code style).
 
-AI-executed R commands should run in a sandbox to avoid requiring user approval for every command.
+## Sandboxing *(implemented)*
 
-### Approach: Fork + Seatbelt
+`run_r` runs AI code in a sandbox so it needs no per-command approval. Both halves were proven in isolation first (`c_ffi/seatbelt_test.*`, `c_ffi/rfork_test.*`) before wiring into the FFI.
 
-1. **Fork the R process** — `fork()` gives instant copy-on-write of the R environment. No serialization, near-zero latency. The child has the exact same R memory state.
+### Approach: Fork + Seatbelt (on the R worker thread)
 
-2. **Apply macOS seatbelt** — Run the forked child under `sandbox-exec` with a restrictive profile:
-   - Deny network access
-   - Deny file writes outside tmpdir
-   - Deny process execution (`system()` calls blocked)
-   - Apply rlimits: CPU time cap (~30s), memory cap, file size cap
+1. **Fork the R process** — `fork()` gives instant copy-on-write of the R environment. The child has the exact same R memory state, so the AI's code sees the live session's variables for free. The fork happens on the R worker thread (where R's eval context lives).
 
-3. **Capture output, discard child** — The child runs the R command, output is captured, child exits. Parent R session is completely untouched.
+2. **Apply macOS seatbelt — in-process, not `sandbox-exec`.** Because we fork *without* re-exec (to keep the COW R memory), the child calls `sandbox_init()` directly with an SBPL profile. Posture is "allow default, deny the dangerous classes":
+   - Deny network (`network*`)
+   - Deny file writes except a scratch dir + `/dev/null` (`file-write*`)
+   - Deny process execution (`process-exec*`) — blocks `system()`
+   - `setrlimit(RLIMIT_CPU)` caps runaway loops (SIGXCPU)
 
-This is the same approach OpenAI Codex uses for macOS sandboxing (seatbelt profiles). `sandbox-exec` has been "deprecated" since ~2016 but still works on macOS 15.4, is used by Apple's internal systems, and has no CLI replacement. Risk of removal is low since App Sandbox depends on the same kernel infrastructure.
+   Validated on macOS 26.5: every denial is a clean `EPERM` / non-zero return, **never a `SIGKILL`** — so the child's failures are capturable as text and handed back to the AI. `sandbox_init` is deprecated since ~2016 but still works; `sandbox-exec` would have re-exec'd and lost the fork's memory, so the in-process API is the right fit here.
 
-### "Accept changes" model
+3. **Capture output, discard child** — output is captured by repointing R's `WriteConsoleEx` callback at a pipe in the child; the parent (worker thread) drains the pipe and `waitpid`s. Parent R session is completely untouched (verified: child mutations don't leak, parent keeps evaluating).
 
-The sandbox is read-only by design. The AI explores in the fork, reports findings as text. If the user wants to apply a mutation (e.g., create a new variable), they run the command themselves in the real session, or explicitly approve the AI running it outside the sandbox.
+### Explore vs. change (realized)
+
+The "read-only sandbox" model is realized as the `run_r` / `suggest_code` split (see Execution model above): the AI explores in the fork via `run_r` and, for changes the user wants to keep, hands the code over via `suggest_code` rather than running it — the user running it is the approval.
 
 ### Limitations
 
-- R isn't fully fork-safe around file descriptors, database connections, and threaded packages. Fine for pure computation, needs care around connections.
-- `sandbox-exec` is macOS-only. Linux deployment would use seccomp/Landlock instead.
-- Overriding R functions (`system <- function(...) stop("disabled")`) adds defense-in-depth but isn't bulletproof — R has many escape hatches.
+- **Multithreaded fork hazard** — the spikes forked a single-threaded process; raoui is multithreaded (Eio + R worker + systhreads). If another thread holds the malloc lock at fork, the child can deadlock on its first allocation. Low probability (worker forks at a quiescent point), accepted for now, tracked in [#32](https://github.com/ambientaardvark/raoui/issues/32).
+- R isn't fully fork-safe around file descriptors, DB connections, and threaded packages. Fine for pure computation; the strict write profile means R operations needing temp-file writes can fail.
+- macOS-only. Linux deployment would use seccomp/Landlock instead.
+- The "allow default" posture is permissive (so R can run); tightening toward "deny default" is a later hardening pass.
 
 ## Mode System Design
 
@@ -98,14 +131,14 @@ Modes follow the Julia REPL pattern. Each mode has its own input buffer, history
 | R       | default | `>`        | R FFI                |
 | stdin   | from R  | `input>`   | R readline callback  |
 | shell   | `;`     | `shell>`   | `system()` via R     |
-| AI      | `:`     | `ai>`      | `claude -p` CLI      |
+| AI      | `:`     | `ai>`      | `claude -p` CLI (persistent session) |
 
 Each mode carries its own `lines`/`cursor_pos`/history state so half-typed input is preserved across mode switches.
 
 ## Open Questions
 
-- What token/cost budget is acceptable per AI invocation?
-- Should AI conversation persist across mode switches within a session?
+- What token/cost budget is acceptable per AI invocation? (A tool-using turn costs ~$0.04 with the lean system prompt + `--tools ""`; cache is server-side with a 5-min TTL, so spaced-out turns re-pay cache creation.)
 - Should the AI mode support images (plots)? Would require rendering or opening externally.
 - ~~MCP server in OCaml or Python?~~ Resolved: in-process OCaml (`cohttp-eio`), so tools reach raoui's live R session and SQLite handle directly.
-- Streaming rendering: show tokens as they arrive, or wait for complete response? (See the markdown-rendering TODO above — markdown styling and the place-in-prompt feature both pull toward buffering the full response.)
+- ~~Should AI conversation persist across queries?~~ Resolved: yes, one claude session per raoui run (`--session-id` / `--resume`), reset with `/new`.
+- Streaming rendering: show tokens as they arrive, or wait for complete response? Markdown rendering needs a complete block (can't style a fenced block until its closing fence arrives), so it pulls toward buffering the full response — which also suits `suggest_code` (needs the whole response anyway).
