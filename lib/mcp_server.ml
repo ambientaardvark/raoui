@@ -1,10 +1,12 @@
 (* In-process MCP server exposing raoui's session to the `claude -p` subprocess
    over loopback HTTP (MCP streamable-HTTP transport).
 
-   Phase-2 read-only start: a single [get_history] tool backed by
-   [History.recent_interactions]. The server lives as a fiber on the caller's
-   switch for the whole session and serves every `claude -p` invocation; the
-   chosen port is handed to [Ai_backend] so it can point claude at us.
+   It exposes four tools over JSON-RPC — get_history and search_history (read
+   the session's SQLite history), run_r (sandboxed eval of the live R session),
+   and suggest_code (push effectful code to the prompt). The server lives as a
+   fiber on the caller's switch for the whole session and serves every
+   `claude -p` invocation; the chosen port is handed to [Ai_backend] so it can
+   point claude at us.
 
    The transport is deliberately minimal: each JSON-RPC request is answered with
    a single application/json body (no server->client SSE stream); notifications
@@ -19,6 +21,11 @@ let default_limit = 20
 let field key = function
   | `Assoc fields -> List.assoc_opt key fields
   | _ -> None
+
+(* JSON-RPC 2.0 error codes (spec section 5.1). *)
+let err_invalid_request = -32600
+let err_method_not_found = -32601
+let err_invalid_params = -32602
 
 let ok_result id result =
   `Assoc [ ("jsonrpc", `String "2.0"); ("id", id); ("result", result) ]
@@ -293,14 +300,14 @@ let handle_rpc history on_suggestion json =
                           (search_history history ~keyword ~limit)))
               | None ->
                   Some
-                    (error_result id (-32602)
+                    (error_result id err_invalid_params
                        "search_history requires a 'keyword' string argument"))
           | Some (`String "run_r") -> (
               match call_string_arg "code" json with
               | Some code -> Some (ok_result id (tool_text_result (run_r code)))
               | None ->
                   Some
-                    (error_result id (-32602)
+                    (error_result id err_invalid_params
                        "run_r requires a 'code' string argument"))
           | Some (`String "suggest_code") -> (
               match call_string_arg "code" json with
@@ -312,15 +319,15 @@ let handle_rpc history on_suggestion json =
                           "Code placed in the user's input prompt."))
               | None ->
                   Some
-                    (error_result id (-32602)
+                    (error_result id err_invalid_params
                        "suggest_code requires a 'code' string argument"))
           | Some (`String other) ->
-              Some (error_result id (-32602) ("unknown tool: " ^ other))
-          | _ -> Some (error_result id (-32602) "missing tool name"))
-      | None -> Some (error_result id (-32602) "missing params"))
+              Some (error_result id err_invalid_params ("unknown tool: " ^ other))
+          | _ -> Some (error_result id err_invalid_params "missing tool name"))
+      | None -> Some (error_result id err_invalid_params "missing params"))
   | Some (`String other) ->
-      Some (error_result id (-32601) ("method not found: " ^ other))
-  | _ -> Some (error_result id (-32600) "invalid request")
+      Some (error_result id err_method_not_found ("method not found: " ^ other))
+  | _ -> Some (error_result id err_invalid_request "invalid request")
 
 let json_headers =
   Http.Header.of_list
