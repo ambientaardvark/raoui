@@ -95,7 +95,7 @@ The AI's `stream-json` events are parsed by block type (`Ai_backend.assistant_ch
 
 ## Sandboxing *(implemented)*
 
-`run_r` runs AI code in a sandbox so it needs no per-command approval. Both halves were proven in isolation first (`c_ffi/seatbelt_test.*`, `c_ffi/rfork_test.*`) before wiring into the FFI.
+`run_r` runs AI code in a sandbox so it needs no per-command approval. Both halves were proven in isolation first with standalone spikes (the seatbelt profile and the R-fork COW behaviour, commits `61e30ac` / `2f20620`) before wiring into the FFI.
 
 ### Approach: Fork + Seatbelt (on the R worker thread)
 
