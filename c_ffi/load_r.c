@@ -708,7 +708,9 @@ static void sb_put_subpath(sbuf *s, const char *path) {
        file writes (bar a scratch dir + /dev/null), network, exec;
      - deny file reads by default, then re-allow R's machinery and the cwd, so
        the model can't read (and thus exfiltrate via its output) secrets like
-       ~/.ssh or ~/.aws that live elsewhere under $HOME.
+       ~/.ssh or ~/.aws that live elsewhere under $HOME; finally a trailing deny
+       re-closes well-known credential stores under $HOME even if an allowed
+       path (e.g. cwd == $HOME) would otherwise cover them.
 
    The child forks an already-initialized R, so the base session is in memory
    copy-on-write — these read paths only need to cover what AI code triggers
@@ -746,6 +748,26 @@ static char *build_runr_profile(void) {
             if (*tok) sb_put_subpath(&s, tok);
     }
     sb_puts(&s, ")\n");
+    /* Belt-and-suspenders secret deny: a path allowed above can still cover a
+       credential store — most importantly when raoui is launched from $HOME, so
+       getwd() == $HOME re-allows the whole home tree, but also a .libPaths()
+       entry sitting next to secrets. Trailing deny wins under last-match-wins,
+       so re-close the well-known credential locations under $HOME regardless. */
+    const char *home = getenv("HOME");
+    if (home && *home) {
+        static const char *secrets[] = {
+            "/.ssh", "/.aws", "/.gnupg", "/.config", "/.netrc",
+            "/.Renviron", "/.Rhistory", "/.bash_history", "/.zsh_history",
+            "/.docker", "/.kube", "/Library/Keychains",
+        };
+        sb_puts(&s, "(deny file-read*\n");
+        for (size_t i = 0; i < sizeof secrets / sizeof secrets[0]; i++) {
+            char path[4096];
+            snprintf(path, sizeof path, "%s%s", home, secrets[i]);
+            sb_put_subpath(&s, path);
+        }
+        sb_puts(&s, ")\n");
+    }
     free(dyn);
     return s.buf;
 }
