@@ -26,6 +26,7 @@ let span_to_string (style, text) =
     | `Completion -> "Completion"
     | `Completion_selected -> "Completion_selected"
     | `Shell_prompt -> "Shell_prompt"
+    | `Face _ -> "Face"
   in
   Printf.sprintf "(%s, %S)" style_name text
 

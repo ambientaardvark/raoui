@@ -46,7 +46,15 @@ let to_ansi256 = function
   | Rgb (r, g, b) -> Some (16 + (36 * r) + (6 * g) + b)
   | Greyscale n -> Some (232 + n)
 
-type face = { fg : color; bg : color option; bold : bool }
+type face = {
+  fg : color;                (* foreground color *)
+  bg : color option;         (* background color, None = terminal default *)
+  bold : bool;               (* SGR 1 *)
+  dim : bool;                (* SGR 2 (faint) *)
+  italic : bool;             (* SGR 3 *)
+  underline : bool;          (* SGR 4 *)
+  strike : bool;             (* SGR 9 (crossed out) *)
+}
 
 type t = {
   name : string;
@@ -67,7 +75,9 @@ type t = {
   shell_prompt : face;
 }
 
-let face ?bg ?(bold = false) fg = { fg; bg; bold }
+let face ?bg ?(bold = false) ?(dim = false) ?(italic = false)
+    ?(underline = false) ?(strike = false) fg =
+  { fg; bg; bold; dim; italic; underline; strike }
 
 let default =
   {

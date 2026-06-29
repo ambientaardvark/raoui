@@ -23,6 +23,7 @@ depends: [
   "uucp"
   "ptime"
   "sedlex"
+  "cmarkit"
   "alcotest" {with-test}
   "odoc" {with-doc}
 ]

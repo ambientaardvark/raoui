@@ -15,6 +15,7 @@
   uuseg
   uucp
   sedlex
+  cmarkit
   otoml)
  (foreign_stubs
   (language c)

@@ -31,6 +31,7 @@
   uucp
   ptime
   sedlex
+  cmarkit
   (alcotest :with-test))
  (tags
   ("r" "repl" "terminal" "ocaml")))

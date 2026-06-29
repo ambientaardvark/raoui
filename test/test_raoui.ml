@@ -34,6 +34,7 @@ let output_to_text = function
   | None -> None
   | Some (Output_text spans) -> Some (String.concat "" (List.map snd spans))
   | Some (Output_image _) -> None
+  | Some (Output_markdown s) -> Some s
 
 (* Helper to convert string to Unicode_string, failing on error *)
 let us s =
@@ -119,6 +120,7 @@ let style_to_string = function
   | `Completion -> "Completion"
   | `Completion_selected -> "Completion_selected"
   | `Shell_prompt -> "Shell_prompt"
+  | `Face _ -> "Face"
 
 let string_contains s needle =
   let s_len = String.length s in
@@ -136,7 +138,7 @@ let test_default_theme_ansi_uses_standard_reset_codes () =
   in
   Alcotest.(check bool)
     "uses standard default fg code" true
-    (string_contains rendered "[39;49m");
+    (string_contains rendered "[0;39;49m");
   Alcotest.(check bool)
     "does not emit invalid default token" false
     (string_contains rendered "default")

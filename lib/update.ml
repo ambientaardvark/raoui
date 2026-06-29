@@ -169,7 +169,7 @@ let process_response model =
             Output_text [ (`Error, "Internal error: " ^ s) ]
         | Ffi_backend.Restarted s -> Output_text [ (`Error, s) ]
         | Ffi_backend.Image image -> Output_image image
-        | Ffi_backend.Ai_output s -> Output_text [ (`Raw, s) ]
+        | Ffi_backend.Ai_output s -> Output_markdown s
         | Ffi_backend.Ai_tool_call name ->
             Output_text [ (`Comment, "→ " ^ name ^ "\n") ]
         | Ffi_backend.Ai_suggestion _ -> Output_text []  (* no output-area change *)

@@ -10,8 +10,10 @@ type mode =
   | History_search of Unicode_string.t
 
 type repl_output =
-  | Output_text of Terminal_ops.span list
-  | Output_image of Ffi_backend.image
+  | Output_text of Terminal_ops.span list   (* pre-styled spans; terminal wraps *)
+  | Output_image of Ffi_backend.image        (* inline plot/image *)
+  | Output_markdown of string                (* AI markdown; rendered + wrapped
+                                                at display time (live width) *)
 
 let min_prompt_height = 5
 let default_prompt_top term_height = max 2 (term_height - min_prompt_height + 1)
