@@ -207,14 +207,20 @@ let () =
     Eio.Switch.run @@ fun sw ->
     let clock = Eio.Stdenv.clock env in
     let backend = Ffi_backend.create ~sw ~clock () in
-    (* In-process MCP server exposing session history to the AI subprocess. *)
+    (* The AI subprocess's output and its suggest_code deposits share one
+       stream, which the event loop races via Ai_backend.await_response. *)
+    let ai_chunks = Eio.Stream.create 1024 in
+    let on_suggestion code =
+      Eio.Stream.add ai_chunks (Ffi_backend.Ai_suggestion code)
+    in
+    (* In-process MCP server exposing session tools to the AI subprocess. *)
     let mcp_port =
       Mcp_server.start ~sw ~net:(Eio.Stdenv.net env)
-        ~history:(Lazy.force history)
+        ~history:(Lazy.force history) ~on_suggestion
     in
     let ai_backend =
       Ai_backend.create ~sw ~process_mgr:(Eio.Stdenv.process_mgr env) ~mcp_port
-        ()
+        ~chunks:ai_chunks ()
     in
     let orig = Terminal_session.set_raw_mode () in
     Terminal_session.set_solid_cursor ();

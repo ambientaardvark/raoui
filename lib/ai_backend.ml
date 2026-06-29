@@ -19,8 +19,8 @@ let system_prompt =
    output when that context would help. Use the run_r tool to evaluate R \
    against the user's live session in a read-only sandbox (changes do not \
    persist) to inspect data or compute. For code meant to change the session \
-   (assignments to keep, writing files, plotting), do not run it — present it \
-   for the user to run themselves."
+   (assignments to keep, writing files, plotting), do not run it — call \
+   suggest_code to place it in the user's prompt for them to run themselves."
 
 (* Inline --mcp-config JSON pointing claude at our loopback MCP server. *)
 let mcp_config mcp_port =
@@ -47,7 +47,8 @@ let claude_args ~mcp_port query =
     "--allowedTools";
     "mcp__raoui__get_history";
     "mcp__raoui__run_r";
-    (* pre-approve our read-only/sandboxed tools so -p never blocks on a prompt *)
+    "mcp__raoui__suggest_code";
+    (* pre-approve our tools so the non-interactive -p run never blocks *)
     "--system-prompt";
     system_prompt;
   ]
@@ -118,8 +119,7 @@ let run_claude ~process_mgr ~chunks ~mcp_port query =
   in
   read_lines ()
 
-let create ~sw ~process_mgr ~mcp_port () =
-  let chunks = Eio.Stream.create 1024 in
+let create ~sw ~process_mgr ~mcp_port ~chunks () =
   let submit query =
     Eio.Fiber.fork ~sw (fun () ->
         (* Subprocess boundary: surface any failure as AI output rather than

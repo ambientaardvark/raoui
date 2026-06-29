@@ -52,6 +52,7 @@ let make_model ?(width = bench_width) ?(height = 24) ?(cursor_line = 0)
         awaiting_response = false;
         backend_response = None;
         repl_output = None;
+        pending_suggestion = None;
         repl_cursor = (10, 1);
       };
     theme = Theme.tokyo_night;

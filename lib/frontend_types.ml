@@ -47,6 +47,9 @@ type repl_state = {
   awaiting_response : bool;
   backend_response : Ffi_backend.response_chunk option;
   repl_output : repl_output option;
+  (* R code the AI suggested via suggest_code, stashed until the response
+     completes, then dropped into the input prompt. *)
+  pending_suggestion : string option;
   repl_cursor : int * int;
 }
 

@@ -75,6 +75,7 @@ let initial_model width =
         awaiting_response = false;
         backend_response = None;
         repl_output = None;
+        pending_suggestion = None;
         repl_cursor = (0, 1);
       };
     theme = Theme.tokyo_night;

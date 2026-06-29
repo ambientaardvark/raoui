@@ -93,6 +93,36 @@ let run_r_schema =
           ] );
     ]
 
+(* Schema for staging effectful code into the user's prompt. *)
+let suggest_code_schema =
+  `Assoc
+    [
+      ("name", `String "suggest_code");
+      ( "description",
+        `String
+          "Place R code into the user's input prompt for them to review and run \
+           themselves. Use this for code that should CHANGE the session or have \
+           side effects (assignments to keep, writing files, plotting) — the \
+           opposite of run_r, which is for read-only exploration. The code is \
+           not executed; it is dropped into the prompt as editable text." );
+      ( "inputSchema",
+        `Assoc
+          [
+            ("type", `String "object");
+            ( "properties",
+              `Assoc
+                [
+                  ( "code",
+                    `Assoc
+                      [
+                        ("type", `String "string");
+                        ("description", `String "R code to place in the prompt.");
+                      ] );
+                ] );
+            ("required", `List [ `String "code" ]);
+          ] );
+    ]
+
 (* Render one output chunk for the model; plots collapse to a placeholder. *)
 let format_output (o : History.output) =
   match o.text with
@@ -161,7 +191,7 @@ let tool_text_result text =
 
 (* Build a JSON-RPC response for one request object. None => notification
    (no reply body, HTTP 202). *)
-let handle_rpc history json =
+let handle_rpc history on_suggestion json =
   let id = Option.value ~default:`Null (field "id" json) in
   match field "method" json with
   | Some (`String "initialize") ->
@@ -179,7 +209,12 @@ let handle_rpc history json =
   | Some (`String "tools/list") ->
       Some
         (ok_result id
-           (`Assoc [ ("tools", `List [ get_history_schema; run_r_schema ]) ]))
+           (`Assoc
+              [
+                ( "tools",
+                  `List
+                    [ get_history_schema; run_r_schema; suggest_code_schema ] );
+              ]))
   | Some (`String "tools/call") -> (
       match field "params" json with
       | Some params -> (
@@ -196,6 +231,18 @@ let handle_rpc history json =
                   Some
                     (error_result id (-32602)
                        "run_r requires a 'code' string argument"))
+          | Some (`String "suggest_code") -> (
+              match call_string_arg "code" json with
+              | Some code ->
+                  on_suggestion code;
+                  Some
+                    (ok_result id
+                       (tool_text_result
+                          "Code placed in the user's input prompt."))
+              | None ->
+                  Some
+                    (error_result id (-32602)
+                       "suggest_code requires a 'code' string argument"))
           | Some (`String other) ->
               Some (error_result id (-32602) ("unknown tool: " ^ other))
           | _ -> Some (error_result id (-32602) "missing tool name"))
@@ -208,12 +255,12 @@ let json_headers =
   Http.Header.of_list
     [ ("content-type", "application/json"); ("mcp-session-id", session_id) ]
 
-let handler history _socket request body =
+let handler history on_suggestion _socket request body =
   match Http.Request.meth request with
   | `POST -> (
       let raw = Eio.Buf_read.(parse_exn take_all) body ~max_size:max_int in
       let json = Yojson.Safe.from_string raw in
-      match handle_rpc history json with
+      match handle_rpc history on_suggestion json with
       | Some response ->
           Cohttp_eio.Server.respond_string ~headers:json_headers ~status:`OK
             ~body:(Yojson.Safe.to_string response) ()
@@ -224,7 +271,7 @@ let handler history _socket request body =
 
 (* Bind a loopback socket on an OS-assigned port, fork the server fiber on [sw],
    and return the chosen port. *)
-let start ~sw ~net ~history =
+let start ~sw ~net ~history ~on_suggestion =
   let socket =
     Eio.Net.listen net ~sw ~backlog:128 ~reuse_addr:true
       (`Tcp (Eio.Net.Ipaddr.V4.loopback, 0))
@@ -234,7 +281,9 @@ let start ~sw ~net ~history =
     | `Tcp (_, port) -> port
     | `Unix _ -> assert false
   in
-  let server = Cohttp_eio.Server.make ~callback:(handler history) () in
+  let server =
+    Cohttp_eio.Server.make ~callback:(handler history on_suggestion) ()
+  in
   (* Daemon, not a plain fiber: the accept loop never returns, so it must be
      cancelled when the session switch closes or shutdown would hang. *)
   Eio.Fiber.fork_daemon ~sw (fun () ->
