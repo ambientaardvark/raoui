@@ -20,6 +20,7 @@ type response_chunk =
   | Completions of string * string list  (* token * items *)
   | Readline of string  (* prompt *)
   | Ai_output of string  (* a chunk of AI assistant text *)
+  | Ai_tool_call of string  (* the AI invoked a tool; carries its short name *)
   | Ai_suggestion of string  (* R code the AI suggests dropping into the prompt *)
   | Ai_done  (* AI response stream complete *)
 

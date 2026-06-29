@@ -65,38 +65,66 @@ let field key = function
   | `Assoc fields -> List.assoc_opt key fields
   | _ -> None
 
-(* Concatenated assistant text from one stream-json event, or None when the
-   line is not an assistant message. *)
-let assistant_text json =
+let block_type b =
+  match field "type" b with Some (`String s) -> Some s | _ -> None
+
+(* mcp__raoui__run_r -> run_r; leave anything unexpected as-is. *)
+let short_tool_name name =
+  let prefix = "mcp__raoui__" in
+  let pl = String.length prefix in
+  if String.length name >= pl && String.sub name 0 pl = prefix then
+    String.sub name pl (String.length name - pl)
+  else name
+
+(* Split one assistant event into the chunks it should produce. A message that
+   invokes tools is a "tool turn": we surface a compact Ai_tool_call per tool
+   and SUPPRESS its accompanying narration text (the "I'll now check..."
+   preamble). A text-only message is the actual answer and renders as prose.
+   thinking blocks are dropped. *)
+let assistant_chunks json =
   match field "type" json with
   | Some (`String "assistant") -> (
       match field "message" json with
       | Some msg -> (
           match field "content" msg with
           | Some (`List blocks) ->
-              blocks
-              |> List.filter_map (fun b ->
-                     match (field "type" b, field "text" b) with
-                     | Some (`String "text"), Some (`String t) -> Some t
-                     | _ -> None)
-              |> String.concat "" |> Option.some
-          | _ -> None)
-      | None -> None)
-  | _ -> None
+              let tool_calls =
+                blocks
+                |> List.filter_map (fun b ->
+                       if block_type b = Some "tool_use" then
+                         match field "name" b with
+                         | Some (`String n) ->
+                             Some (Ffi_backend.Ai_tool_call (short_tool_name n))
+                         | _ -> None
+                       else None)
+              in
+              if tool_calls <> [] then tool_calls
+              else
+                let text =
+                  blocks
+                  |> List.filter_map (fun b ->
+                         match (block_type b, field "text" b) with
+                         | Some "text", Some (`String t) -> Some t
+                         | _ -> None)
+                  |> String.concat ""
+                in
+                if String.trim text = "" then []
+                else
+                  let text =
+                    if text.[String.length text - 1] = '\n' then text
+                    else text ^ "\n"
+                  in
+                  [ Ffi_backend.Ai_output text ]
+          | _ -> [])
+      | None -> [])
+  | _ -> []
 
-(* Parse one output line and push any assistant text as a chunk. Non-JSON lines
-   (e.g. merged stderr) and non-assistant events are ignored. *)
+(* Parse one output line and push its chunks. Non-JSON lines (e.g. merged
+   stderr) and non-assistant events yield nothing. *)
 let handle_line chunks line =
   match Yojson.Safe.from_string line with
   | exception _ -> ()
-  | json -> (
-      match assistant_text json with
-      | Some text when text <> "" ->
-          let text =
-            if text.[String.length text - 1] = '\n' then text else text ^ "\n"
-          in
-          Eio.Stream.add chunks (Ffi_backend.Ai_output text)
-      | _ -> ())
+  | json -> List.iter (Eio.Stream.add chunks) (assistant_chunks json)
 
 let run_claude ~process_mgr ~chunks ~mcp_port query =
   Eio.Switch.run @@ fun sw ->

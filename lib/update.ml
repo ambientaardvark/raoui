@@ -170,6 +170,8 @@ let process_response model =
         | Ffi_backend.Restarted s -> Output_text [ (`Error, s) ]
         | Ffi_backend.Image image -> Output_image image
         | Ffi_backend.Ai_output s -> Output_text [ (`Raw, s) ]
+        | Ffi_backend.Ai_tool_call name ->
+            Output_text [ (`Comment, "→ " ^ name ^ "\n") ]
         | Ffi_backend.Ai_suggestion _ -> Output_text []  (* no output-area change *)
         | Ffi_backend.Ai_done -> Output_text []
         | Ffi_backend.Done -> Output_text []
@@ -183,7 +185,7 @@ let process_response model =
         (* Keep waiting for more output until we get a terminal response *)
         | Ffi_backend.Stdout _ | Ffi_backend.Result _ | Ffi_backend.R_error _
         | Ffi_backend.Readline _ | Ffi_backend.Image _ | Ffi_backend.Ai_output _
-        | Ffi_backend.Ai_suggestion _ ->
+        | Ffi_backend.Ai_tool_call _ | Ffi_backend.Ai_suggestion _ ->
             model.repl.awaiting_response
         (* Terminal responses *)
         | Ffi_backend.Done | Ffi_backend.Shutdown | Ffi_backend.Internal_error _
