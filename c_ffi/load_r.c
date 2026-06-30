@@ -1067,7 +1067,13 @@ int rffi_start(const char *r_home) {
        backtraces), which overflows and crashes the process. */
     pthread_attr_t attr;
     pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, 64 * 1024 * 1024);
+    /* Fail loudly if the size is rejected rather than silently falling back to
+       the 512 KB default (which would later resurface as a confusing SIGBUS). */
+    if (pthread_attr_setstacksize(&attr, 64 * 1024 * 1024) != 0) {
+        fprintf(stderr, "pthread_attr_setstacksize(64MB) failed\n");
+        pthread_attr_destroy(&attr);
+        return -1;
+    }
     pthread_create(&r_thread, &attr, r_thread_func, strdup(r_home));
     pthread_attr_destroy(&attr);
 

@@ -88,6 +88,23 @@ let test_search_interactions_matches_input_and_output () =
     (List.length (History.search_interactions history ~keyword:"zzz" ~limit:20));
   close history
 
+let test_search_interactions_escapes_like_wildcards () =
+  with_temp_history @@ fun path ->
+  let history = History.init path in
+  (* A command with a literal underscore, and one where any char sits in that
+     position. A LIKE wildcard '_' would match both; an escaped one only a_b. *)
+  History.add_to_history history [ us "a_b <- 1" ];
+  History.add_to_history history [ us "axb <- 2" ];
+  let inputs keyword =
+    History.search_interactions history ~keyword ~limit:20
+    |> List.map (fun it -> it.History.input)
+  in
+  Alcotest.(check (list string))
+    "underscore is literal, not a wildcard" [ "a_b <- 1" ] (inputs "a_b");
+  Alcotest.(check (list string))
+    "percent is literal, not a wildcard" [] (inputs "a%b");
+  close history
+
 let test_empty_submission_is_not_recorded () =
   with_temp_history @@ fun path ->
   let history = History.init path in
@@ -114,5 +131,7 @@ let () =
             test_recent_interactions_include_outputs;
           Alcotest.test_case "search interactions match input and output" `Quick
             test_search_interactions_matches_input_and_output;
+          Alcotest.test_case "search interactions escape LIKE wildcards" `Quick
+            test_search_interactions_escapes_like_wildcards;
         ] );
     ]

@@ -212,18 +212,23 @@ let search_history history ~keyword ~limit =
              Printf.sprintf "%d. %s" (i + 1) (format_interaction it))
       |> String.concat "\n\n"
 
-(* Pull the integer [limit] argument out of a tools/call request. *)
+(* Pull the integer [limit] argument out of a tools/call request. Clamped to
+   >= 0 so a model-supplied negative value can't trip the History assert (which
+   would propagate out of the handler and drop the connection). *)
 let call_limit json =
-  match field "params" json with
-  | Some params -> (
-      match field "arguments" params with
-      | Some args -> (
-          match field "limit" args with
-          | Some (`Int n) -> n
-          | Some (`Intlit s) -> int_of_string s
-          | _ -> default_limit)
-      | None -> default_limit)
-  | None -> default_limit
+  let raw =
+    match field "params" json with
+    | Some params -> (
+        match field "arguments" params with
+        | Some args -> (
+            match field "limit" args with
+            | Some (`Int n) -> n
+            | Some (`Intlit s) -> int_of_string s
+            | _ -> default_limit)
+        | None -> default_limit)
+    | None -> default_limit
+  in
+  max 0 raw
 
 (* Pull a required string argument [key] out of a tools/call request. *)
 let call_string_arg key json =
