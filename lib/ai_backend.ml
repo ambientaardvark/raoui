@@ -136,33 +136,59 @@ let assistant_chunks json =
       | None -> [])
   | _ -> []
 
-(* Parse one output line and push its chunks. Non-JSON lines (e.g. merged
-   stderr) and non-assistant events yield nothing. *)
-let handle_line chunks line =
+(* Parse one output line and push its chunks. Non-JSON lines are claude's merged
+   stderr (auth failures, rate limits, bad flags); collect the most recent few
+   in [diagnostics] (newest first, bounded) so a failed run can report them. *)
+let diagnostics_keep = 20
+
+let handle_line ~diagnostics chunks line =
   match Yojson.Safe.from_string line with
-  | exception _ -> ()
+  | exception _ ->
+      if String.trim line <> "" then
+        diagnostics :=
+          line :: List.filteri (fun i _ -> i < diagnostics_keep - 1) !diagnostics
   | json -> List.iter (Eio.Stream.add chunks) (assistant_chunks json)
 
+(* Run claude for one query, streaming its assistant chunks. Returns true iff
+   the subprocess exited cleanly (so the session was created/continued); on a
+   non-zero exit it surfaces the exit status plus any captured stderr as an
+   Ai_output and returns false, so failures are loud and the caller can avoid
+   resuming a session that was never created. *)
 let run_claude ~process_mgr ~chunks ~mcp_port ~session query =
   Eio.Switch.run @@ fun sw ->
   (* Merge the child's stdout and stderr into one pipe: stream-json lands on
-     stdout, diagnostics on stderr, and non-JSON lines are simply ignored. *)
+     stdout, diagnostics on stderr; non-JSON lines are kept for error reporting. *)
   let source, sink = Eio_unix.pipe sw in
-  let _child =
+  let child =
     Eio.Process.spawn ~sw process_mgr ~stdout:sink ~stderr:sink
       (claude_args ~mcp_port ~session query)
   in
   (* Close our copy of the write end so [source] sees EOF when the child exits. *)
   Eio.Flow.close sink;
   let buf = Eio.Buf_read.of_flow source ~max_size:(64 * 1024 * 1024) in
+  let diagnostics = ref [] in
   let rec read_lines () =
     match Eio.Buf_read.line buf with
     | line ->
-        handle_line chunks line;
+        handle_line ~diagnostics chunks line;
         read_lines ()
     | exception End_of_file -> ()
   in
-  read_lines ()
+  read_lines ();
+  match Eio.Process.await child with
+  | `Exited 0 -> true
+  | status ->
+      let what =
+        match status with
+        | `Exited n -> Printf.sprintf "claude exited with code %d" n
+        | `Signaled n -> Printf.sprintf "claude killed by signal %d" n
+      in
+      let tail = String.concat "\n" (List.rev !diagnostics) in
+      Eio.Stream.add chunks
+        (Ffi_backend.Ai_output
+           (if tail = "" then Printf.sprintf "[ai error] %s\n" what
+            else Printf.sprintf "[ai error] %s:\n%s\n" what tail));
+      false
 
 let create ~sw ~process_mgr ~mcp_port ~chunks () =
   Random.self_init ();
@@ -174,15 +200,21 @@ let create ~sw ~process_mgr ~mcp_port ~chunks () =
       if !started then [ "--resume"; !session_id ]
       else [ "--session-id"; !session_id ]
     in
-    started := true;
     Eio.Fiber.fork ~sw (fun () ->
         (* Subprocess boundary: surface any failure as AI output rather than
            letting the fiber's exception tear down the switch (and the REPL). *)
-        (try run_claude ~process_mgr ~chunks ~mcp_port ~session query
-         with exn ->
-           Eio.Stream.add chunks
-             (Ffi_backend.Ai_output
-                (Printf.sprintf "[ai error] %s\n" (Printexc.to_string exn))));
+        let ok =
+          try run_claude ~process_mgr ~chunks ~mcp_port ~session query
+          with exn ->
+            Eio.Stream.add chunks
+              (Ffi_backend.Ai_output
+                 (Printf.sprintf "[ai error] %s\n" (Printexc.to_string exn)));
+            false
+        in
+        (* Mark the session live only once a run actually succeeds, so a failed
+           first query retries with --session-id instead of --resume against a
+           session that was never created. *)
+        if ok then started := true;
         Eio.Stream.add chunks Ffi_backend.Ai_done)
   in
   { chunks; submit; session_id; started }
