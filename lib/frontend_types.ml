@@ -21,6 +21,17 @@ let default_prompt_top term_height = max 2 (term_height - min_prompt_height + 1)
 let clamp_prompt_top term_height row =
   max 2 (min row (default_prompt_top term_height))
 
+(* Place a prompt box of [height] rows whose top we would like at [anchor_row]
+   (the row just below the last output). Slide it up just enough that its
+   bottom stays on screen, scrolling the terminal — which preserves the output
+   above — by the returned amount. Returns [(prompt_top_row, scroll_amount)]
+   where [scroll_amount] is <= 0 (the number of rows to scroll up, emitted as
+   newlines at the bottom of the screen by the renderer). *)
+let fit_prompt_below ~term_height ~height ~anchor_row =
+  let bottom = anchor_row + height - 1 in
+  let scroll_amount = if bottom > term_height then term_height - bottom else 0 in
+  (anchor_row + scroll_amount, scroll_amount)
+
 type input_state = {
   lines : Unicode_string.t list;
   lex_cache : R_lex_cache.t;

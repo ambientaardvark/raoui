@@ -8,14 +8,14 @@ let submit_aligned_prompt_top model =
 let scroll_terminal_after_submit model =
   let prompt_top_row = submit_aligned_prompt_top model in
   let width = effective_width model in
-  let wrapped = wrap_lines width model.input.lines in
-  let total_rows = List.length wrapped in
+  let total_rows = wrap_lines width model.input.lines |> List.length in
+  (* The submitted lines stay on screen as scrollback; the next output lands on
+     [output_row] just below them, and the fresh (one-row) prompt sits below
+     that — scrolling up if the trio runs past the bottom of the screen. *)
   let output_row = prompt_top_row + total_rows in
-  let new_prompt_top = output_row + 1 in
-  let scroll_amount =
-    if new_prompt_top > model.layout.term_height then
-      model.layout.term_height - new_prompt_top
-    else 0
+  let new_prompt_top, scroll_amount =
+    fit_prompt_below ~term_height:model.layout.term_height ~height:1
+      ~anchor_row:(output_row + 1)
   in
   (output_row, scroll_amount, new_prompt_top)
 
@@ -34,9 +34,9 @@ let clear_model_for_submit ?(awaiting_response = true) model =
     layout =
       {
         model.layout with
-        prompt_top_row = new_prompt_top + scroll_amount;
-        previous_prompt_top_row = new_prompt_top + scroll_amount;
-        prompt_box_height = min_prompt_height;
+        prompt_top_row = new_prompt_top;
+        previous_prompt_top_row = new_prompt_top;
+        prompt_box_height = 1;
         scroll_amount;
       };
     input =

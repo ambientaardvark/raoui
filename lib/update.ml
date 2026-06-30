@@ -11,18 +11,23 @@ type msg =
     }
   | TermResize of int * int
 
+(* Rows the completion dropdown occupies below the cursor. It is drawn as an
+   overlay in view.ml, but it has to be counted here so the prompt scrolls up
+   far enough to keep it on screen. *)
+let dropdown_rows model =
+  match model.input.mode with
+  | Frontend_types.Normal -> (
+      match model.input.completion with
+      | Some cs -> List.length (Completion.visible_items cs)
+      | None -> 0)
+  | Readline _ | Shell | Ai | History_search _ -> 0
+
 let handle_vertical_cursor_movement model =
   let width = effective_width model in
-  (* Completions are rendered as an overlay in view.ml and should not
-     contribute to prompt box height or scrolling math. *)
-  let dropdown_rows = 0 in
-  let content_height =
-    model.input.lines |> wrap_lines width |> List.length |> ( + ) dropdown_rows
-  in
+  (* Reserve only what the input (plus any open dropdown) actually needs — no
+     fixed minimum height — so the box hugs the output above it. *)
   let new_height =
-    content_height
-    |> max model.layout.prompt_box_height
-    |> max min_prompt_height
+    (model.input.lines |> wrap_lines width |> List.length) + dropdown_rows model
   in
   let scrolls_from_expansion =
     if new_height > model.layout.prompt_box_height then
@@ -48,8 +53,8 @@ let handle_vertical_cursor_movement model =
       model.layout.prompt_top_row + scrolls_from_expansion
       + scrolls_from_cursor_movement
     in
-    if content_height <= model.layout.term_height then
-      min proposed (model.layout.term_height - content_height + 1) |> max 1
+    if new_height <= model.layout.term_height then
+      min proposed (model.layout.term_height - new_height + 1) |> max 1
     else proposed
   in
   {
@@ -59,7 +64,11 @@ let handle_vertical_cursor_movement model =
         model.layout with
         prompt_box_height = new_height;
         prompt_top_row = prompt_top;
-        scroll_amount = scrolls_from_expansion;
+        (* Add to any scroll already pending this update (e.g. one queued by
+           submit) rather than replacing it — this correction runs after every
+           key, and dropping a submitted scroll leaves the reserved output row
+           overlapping the last input line, clipping it. *)
+        scroll_amount = model.layout.scroll_amount + scrolls_from_expansion;
       };
   }
 
@@ -287,14 +296,17 @@ let update msg model =
                       input = { model.input with completion = Some completion };
                     }
                   in
-                  (Completion_controller.filter_completions m, []))
+                  (* Reflow so the just-arrived dropdown gets room on screen. *)
+                  ( Completion_controller.filter_completions m
+                    |> handle_vertical_cursor_movement,
+                    [] ))
         | Ffi_backend.Restarted _ ->
             let m =
               {
                 model with
                 repl = { model.repl with backend_response = Some response };
               }
-              |> process_response |> handle_vertical_cursor_movement
+              |> process_response
             in
             ( m,
               [
@@ -307,7 +319,7 @@ let update msg model =
                 model with
                 repl = { model.repl with backend_response = Some response };
               }
-              |> process_response |> handle_vertical_cursor_movement
+              |> process_response
             in
             (m, []))
     | Backslash_effect_result { token_start; original_token; inserted_text } ->

@@ -45,6 +45,46 @@ let image_output_spans ~terminal_capabilities (image : Ffi_backend.image) =
   [ (`Accent, "[image] "); (`Plain, basename); (`Comment, dims ^ mime ^ "\n") ]
   @ plot_banner_spans ~terminal_capabilities image.source_path
 
+let content_height model =
+  let width = Frontend_types.effective_width model in
+  model.input.lines |> Frontend_types.wrap_lines width |> List.length |> max 1
+
+(* Settle the input box once output has been printed and the terminal cursor is
+   at [out_row]/[out_col]. The box renders only its own content rows, but it is
+   kept in the bottom zone (reserving at least [min_prompt_height], more for a
+   tall box) so output scrolls up beneath it rather than letting the prompt
+   creep down the screen. Scrolls up immediately to make room, preserving the
+   output above. *)
+let settle_prompt_after_output model ~out_row ~out_col =
+  let content = content_height model in
+  let next_prompt_row = if out_col = 1 then out_row else out_row + 1 in
+  let natural = max model.layout.prompt_top_row next_prompt_row in
+  (* Pin the box so it sits in the bottom zone and always fits on screen. *)
+  let reserve = max content Frontend_types.min_prompt_height in
+  let pinned = max 2 (min natural (model.layout.term_height - reserve + 1)) in
+  let scroll_needed = natural - pinned in
+  if scroll_needed > 0 then begin
+    print_string
+      (Term.scroll_up ~term_height:model.layout.term_height scroll_needed);
+    flush stdout
+  end;
+  {
+    model with
+    repl =
+      {
+        model.repl with
+        repl_output = None;
+        repl_cursor = (out_row - scroll_needed, out_col);
+      };
+    layout =
+      {
+        model.layout with
+        prompt_top_row = pinned;
+        prompt_box_height = content;
+        scroll_amount = 0;
+      };
+  }
+
 (* NOTE: This clears from repl_cursor to end of screen before printing output,
    which erases any prompt the user typed while waiting. View then repaints.
    This may not work correctly with output that uses cursor movement (e.g.
@@ -54,32 +94,7 @@ let print_repl_output ~terminal_capabilities ~user_options model =
   | None -> model
   | Some (Output_text []) ->
       let new_row, new_col = Terminal_session.get_cursor_position () in
-      let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
-      let natural = max model.layout.prompt_top_row next_prompt_row in
-      let clamped =
-        Frontend_types.clamp_prompt_top model.layout.term_height natural
-      in
-      let scroll_needed = natural - clamped in
-      if scroll_needed > 0 then begin
-        print_string
-          (Term.scroll_up ~term_height:model.layout.term_height scroll_needed);
-        flush stdout
-      end;
-      {
-        model with
-        repl =
-          {
-            model.repl with
-            repl_output = None;
-            repl_cursor = (new_row - scroll_needed, new_col);
-          };
-        layout =
-          {
-            model.layout with
-            prompt_top_row = clamped;
-            prompt_box_height = Frontend_types.min_prompt_height;
-          };
-      }
+      settle_prompt_after_output model ~out_row:new_row ~out_col:new_col
   | Some ((Output_text _ | Output_image _ | Output_markdown _) as output) ->
       let row, col = model.repl.repl_cursor in
       let rendered_image =
@@ -117,6 +132,8 @@ let print_repl_output ~terminal_capabilities ~user_options model =
           try Sys.remove image.preview_path with Sys_error _ -> ())
       | _ -> ());
       let new_row, new_col = Terminal_session.get_cursor_position () in
+      (* Streaming output relies on the terminal's own scroll; just follow the
+         cursor down (never up) and keep the box sized to its content. *)
       let next_prompt_row = if new_col = 1 then new_row else new_row + 1 in
       {
         model with
@@ -130,5 +147,6 @@ let print_repl_output ~terminal_capabilities ~user_options model =
           {
             model.layout with
             prompt_top_row = max model.layout.prompt_top_row next_prompt_row;
+            prompt_box_height = content_height model;
           };
       }

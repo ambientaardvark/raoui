@@ -2358,7 +2358,8 @@ let test_prompt_capped_at_bottom_zone () =
   Alcotest.(check int) "capped at 21" 21 clamped
 
 let test_submit_prompt_box_height () =
-  (* After submit, prompt_box_height should be min_prompt_height *)
+  (* After submit the input is cleared, so the fresh prompt reserves a single
+     row — only what the (empty) content needs. *)
   let width = 20 in
   let model =
     initial_model width
@@ -2369,8 +2370,7 @@ let test_submit_prompt_box_height () =
   match submit model with
   | Submit (_, new_model) ->
       Alcotest.(check int)
-        "prompt_box_height is min_prompt_height"
-        Frontend_types.min_prompt_height new_model.layout.prompt_box_height
+        "prompt_box_height is one row" 1 new_model.layout.prompt_box_height
   | _ -> Alcotest.fail "Expected Submit"
 
 let test_vertical_movement_keeps_prompt_tail_visible_when_it_fits () =
@@ -2415,8 +2415,63 @@ let test_resize_preserves_prompt_in_zone () =
   (* No change: 5 <= 21, so stays at 5 *)
   Alcotest.(check int) "prompt stays at 5" 5 new_model.layout.prompt_top_row
 
-let test_min_prompt_height_enforced () =
-  (* handle_vertical_cursor_movement enforces min_prompt_height *)
+let test_pending_scroll_survives_correction () =
+  (* Regression for the multi-line clip: submit queues a scroll in scroll_amount,
+     then universal_corrections runs handle_vertical_cursor_movement after the
+     key — which must not discard that pending scroll, or the reserved output row
+     overwrites the last submitted line. *)
+  let model =
+    initial_model 20
+    |> with_layout (fun layout ->
+        {
+          layout with
+          prompt_top_row = 46;
+          term_height = 50;
+          prompt_box_height = 1;
+          scroll_amount = -1;
+        })
+  in
+  let new_model = Update.handle_vertical_cursor_movement model in
+  Alcotest.(check int)
+    "queued submit scroll is preserved" (-1) new_model.layout.scroll_amount
+
+let test_fit_prompt_below_reserves_only_needed () =
+  (* A one-row prompt anchored at the very bottom scrolls up exactly one row —
+     not a whole min-height worth. *)
+  let top, scroll =
+    Frontend_types.fit_prompt_below ~term_height:25 ~height:1 ~anchor_row:26
+  in
+  Alcotest.(check int) "scrolls one row only" (-1) scroll;
+  Alcotest.(check int) "prompt sits on the bottom row" 25 top;
+  (* When it already fits, nothing scrolls. *)
+  let top, scroll =
+    Frontend_types.fit_prompt_below ~term_height:25 ~height:1 ~anchor_row:20
+  in
+  Alcotest.(check int) "no scroll when it fits" 0 scroll;
+  Alcotest.(check int) "prompt stays at anchor" 20 top
+
+let test_no_rescroll_when_box_matches_content () =
+  (* Regression for the AI-suggestion ghost: once the box height already equals
+     the (multi-line) content, the next reflow must not treat it as a fresh
+     expansion and scroll again. *)
+  let width = 40 in
+  let lines = [ us "f <- function() {"; us "  1"; us "}" ] in
+  let model =
+    with_cursor_internal
+      (with_lines (initial_model width) lines
+      |> with_layout (fun layout ->
+          { layout with prompt_top_row = 5; term_height = 25; prompt_box_height = 3 }))
+      ~line:2 ~pos:1
+  in
+  let new_model = Update.handle_vertical_cursor_movement model in
+  Alcotest.(check int)
+    "no spurious scroll" 0 new_model.layout.scroll_amount;
+  Alcotest.(check int)
+    "box still matches content" 3 new_model.layout.prompt_box_height
+
+let test_box_height_tracks_content () =
+  (* handle_vertical_cursor_movement sizes the box to the wrapped input alone —
+     no fixed minimum — so a single empty line reserves a single row. *)
   let width = 20 in
   let model =
     initial_model width
@@ -2425,13 +2480,12 @@ let test_min_prompt_height_enforced () =
           layout with
           prompt_top_row = 5;
           term_height = 25;
-          prompt_box_height = 1;
+          prompt_box_height = 5;
         })
   in
   let new_model = Update.handle_vertical_cursor_movement model in
   Alcotest.(check int)
-    "prompt_box_height at least min" Frontend_types.min_prompt_height
-    new_model.layout.prompt_box_height
+    "prompt_box_height tracks content" 1 new_model.layout.prompt_box_height
 
 (* Readline mode tests *)
 
@@ -2847,8 +2901,14 @@ let () =
           test_case "Resize clamps prompt" `Quick test_resize_clamps_prompt;
           test_case "Resize preserves prompt in zone" `Quick
             test_resize_preserves_prompt_in_zone;
-          test_case "Min prompt height enforced" `Quick
-            test_min_prompt_height_enforced;
+          test_case "Box height tracks content" `Quick
+            test_box_height_tracks_content;
+          test_case "Pending submit scroll survives correction" `Quick
+            test_pending_scroll_survives_correction;
+          test_case "fit_prompt_below reserves only what's needed" `Quick
+            test_fit_prompt_below_reserves_only_needed;
+          test_case "No re-scroll when box matches content" `Quick
+            test_no_rescroll_when_box_matches_content;
         ] );
       ( "readline_mode",
         [
