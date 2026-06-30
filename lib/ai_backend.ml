@@ -16,9 +16,9 @@ let system_prompt =
   "You are an assistant embedded in raoui, an interactive R REPL. The user \
    asks about their R session, output, and data analysis. Answer concisely and \
    practically. Use the get_history tool to see the user's recent commands and \
-   output when that context would help, or the search_history tool to find past \
-   commands and output matching a keyword. Use the run_r tool to evaluate R \
-   against the user's live session in a read-only sandbox (changes do not \
+   output when that context would help, or the search_history tool to find \
+   past commands and output matching a keyword. Use the run_r tool to evaluate \
+   R against the user's live session in a read-only sandbox (changes do not \
    persist) to inspect data or compute. For code meant to change the session \
    (assignments to keep, writing files, plotting), do not run it — call \
    suggest_code to place it in the user's prompt for them to run themselves."
@@ -35,11 +35,12 @@ let random_uuid () =
   for i = 0 to 15 do
     Bytes.set_uint8 b i (Random.int 256)
   done;
-  Bytes.set_uint8 b 6 ((Bytes.get_uint8 b 6 land 0x0f) lor 0x40);
-  Bytes.set_uint8 b 8 ((Bytes.get_uint8 b 8 land 0x3f) lor 0x80);
+  Bytes.set_uint8 b 6 (Bytes.get_uint8 b 6 land 0x0f lor 0x40);
+  Bytes.set_uint8 b 8 (Bytes.get_uint8 b 8 land 0x3f lor 0x80);
   let h i = Printf.sprintf "%02x" (Bytes.get_uint8 b i) in
   Printf.sprintf "%s%s%s%s-%s%s-%s%s-%s%s-%s%s%s%s%s%s" (h 0) (h 1) (h 2) (h 3)
-    (h 4) (h 5) (h 6) (h 7) (h 8) (h 9) (h 10) (h 11) (h 12) (h 13) (h 14) (h 15)
+    (h 4) (h 5) (h 6) (h 7) (h 8) (h 9) (h 10) (h 11) (h 12) (h 13) (h 14)
+    (h 15)
 
 (* claude -p argv: built-ins off, only raoui's MCP tools, streaming. [session]
    carries the session flags (--session-id on the first query, --resume after),
@@ -63,6 +64,8 @@ let claude_args ~mcp_port ~session query =
       (* pre-approve our tools so the non-interactive -p run never blocks *)
       "--system-prompt";
       system_prompt;
+      "--model";
+      "sonnet";
     ]
 
 type t = {
@@ -108,21 +111,21 @@ let assistant_chunks json =
               let tool_calls =
                 blocks
                 |> List.filter_map (fun b ->
-                       if block_type b = Some "tool_use" then
-                         match field "name" b with
-                         | Some (`String n) ->
-                             Some (Ffi_backend.Ai_tool_call (short_tool_name n))
-                         | _ -> None
-                       else None)
+                    if block_type b = Some "tool_use" then
+                      match field "name" b with
+                      | Some (`String n) ->
+                          Some (Ffi_backend.Ai_tool_call (short_tool_name n))
+                      | _ -> None
+                    else None)
               in
               if tool_calls <> [] then tool_calls
               else
                 let text =
                   blocks
                   |> List.filter_map (fun b ->
-                         match (block_type b, field "text" b) with
-                         | Some "text", Some (`String t) -> Some t
-                         | _ -> None)
+                      match (block_type b, field "text" b) with
+                      | Some "text", Some (`String t) -> Some t
+                      | _ -> None)
                   |> String.concat ""
                 in
                 if String.trim text = "" then []
@@ -146,7 +149,8 @@ let handle_line ~diagnostics chunks line =
   | exception _ ->
       if String.trim line <> "" then
         diagnostics :=
-          line :: List.filteri (fun i _ -> i < diagnostics_keep - 1) !diagnostics
+          line
+          :: List.filteri (fun i _ -> i < diagnostics_keep - 1) !diagnostics
   | json -> List.iter (Eio.Stream.add chunks) (assistant_chunks json)
 
 (* Run claude for one query, streaming its assistant chunks. Returns true iff
