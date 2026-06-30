@@ -80,18 +80,23 @@ let print_repl_output ~terminal_capabilities ~user_options model =
             prompt_box_height = Frontend_types.min_prompt_height;
           };
       }
-  | Some ((Output_text _ | Output_image _) as output) ->
+  | Some ((Output_text _ | Output_image _ | Output_markdown _) as output) ->
       let row, col = model.repl.repl_cursor in
       let rendered_image =
         match output with
         | Output_image image ->
             Terminal_image.render ~terminal_capabilities ~config:user_options
               ~term_width:model.layout.term_width ~image
-        | Output_text _ -> None
+        | Output_text _ | Output_markdown _ -> None
       in
       let spans =
         match output with
         | Output_text spans -> spans
+        | Output_markdown md ->
+            (* Render at the live width; each wrapped line is terminated with a
+               newline so the terminal never re-wraps it. *)
+            Md_tty.render ~width:model.layout.term_width model.theme md
+            |> List.concat_map (fun line -> line @ [ (`Plain, "\n") ])
         | Output_image image -> (
             match rendered_image with
             | Some rendered ->

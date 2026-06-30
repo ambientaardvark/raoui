@@ -102,6 +102,8 @@ let apply_key key model =
   | Other "last word" -> (go_to_last_word model, [])
   | Char ";" when prompt_is_empty model ->
       ({ model with input = { model.input with mode = Shell } }, [])
+  | Char ":" when prompt_is_empty model ->
+      ({ model with input = { model.input with mode = Ai } }, [])
   | Char c -> (user_input_char model c, [])
   | Backspace -> (user_input_delete model, [])
   | Left -> (move_left model, [])

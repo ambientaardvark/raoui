@@ -21,3 +21,7 @@
 (test
  (name test_history)
  (libraries raoui alcotest))
+
+(test
+ (name test_md_layout)
+ (libraries raoui alcotest))

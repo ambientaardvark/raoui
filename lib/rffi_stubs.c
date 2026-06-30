@@ -26,6 +26,23 @@ CAMLprim value caml_rffi_submit(value v_code) {
     return Val_unit;
 }
 
+/* Blocking: runs R in a sandboxed fork and returns the captured output.
+   Copies the code out before releasing the runtime lock, blocks with the lock
+   released (the caller runs this on an Eio systhread, so the UI loop is free),
+   then copies the C result into an OCaml string. */
+CAMLprim value caml_rffi_run_r_sandboxed(value v_code) {
+    CAMLparam1(v_code);
+    CAMLlocal1(v_result);
+    char *code = strdup(String_val(v_code));
+    caml_release_runtime_system();
+    char *out = rffi_run_r_sandboxed(code);
+    free(code);
+    caml_acquire_runtime_system();
+    v_result = caml_copy_string(out ? out : "");
+    free(out);
+    CAMLreturn(v_result);
+}
+
 CAMLprim value caml_rffi_shutdown(value v_unit) {
     (void)v_unit;
     rffi_shutdown();

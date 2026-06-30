@@ -97,6 +97,7 @@ let submit model =
     match model.input.mode with
     | Readline _ -> Readline_mode.submit model
     | Shell -> Shell_mode.submit model
+    | Ai -> Ai_mode.submit model
     | Normal -> Normal_mode.submit model
     | History_search _ ->
         ({ model with input = { model.input with mode = Normal } }, [])
@@ -109,6 +110,7 @@ let apply_key key model =
   match model.input.mode with
   | Readline _ -> Readline_mode.apply_key key model
   | Shell -> Shell_mode.apply_key key model
+  | Ai -> Ai_mode.apply_key key model
   | Normal -> Normal_mode.apply_key key model
   | History_search _ -> History_search.apply_key key model
 
@@ -134,6 +136,34 @@ let handle_key_input key model =
   in
   (universal_corrections key new_model, effects)
 
+(* Drop AI-suggested R code into the input prompt as ordinary editable text.
+   If the user typed into the prompt while the response streamed, append the
+   code after their text rather than clobbering it. *)
+let place_suggestion code model =
+  let code_lines =
+    match
+      String.split_on_char '\n' code
+      |> List.map (fun s ->
+             match Unicode_string.of_string s with
+             | Ok u -> u
+             | Error _ -> Unicode_string.empty)
+    with
+    | [] -> [ Unicode_string.empty ]
+    | ls -> ls
+  in
+  let existing = model.input.lines in
+  let existing_blank =
+    List.for_all
+      (fun u -> String.trim (Unicode_string.to_string u) = "")
+      existing
+  in
+  let lines = if existing_blank then code_lines else existing @ code_lines in
+  {
+    model with
+    input = { model.input with lines; lex_cache = R_lex_cache.create lines };
+  }
+  |> move_cursor_to_end
+
 let process_response model =
   match model.repl.backend_response with
   | None -> failwith "process_response called with no backend_response"
@@ -148,6 +178,11 @@ let process_response model =
             Output_text [ (`Error, "Internal error: " ^ s) ]
         | Ffi_backend.Restarted s -> Output_text [ (`Error, s) ]
         | Ffi_backend.Image image -> Output_image image
+        | Ffi_backend.Ai_output s -> Output_markdown s
+        | Ffi_backend.Ai_tool_call name ->
+            Output_text [ (`Comment, "→ " ^ name ^ "\n") ]
+        | Ffi_backend.Ai_suggestion _ -> Output_text []  (* no output-area change *)
+        | Ffi_backend.Ai_done -> Output_text []
         | Ffi_backend.Done -> Output_text []
         | Ffi_backend.Shutdown -> Output_text []
         | Ffi_backend.Passthrough | Ffi_backend.Passthrough_end
@@ -158,12 +193,14 @@ let process_response model =
         match response with
         (* Keep waiting for more output until we get a terminal response *)
         | Ffi_backend.Stdout _ | Ffi_backend.Result _ | Ffi_backend.R_error _
-        | Ffi_backend.Readline _ | Ffi_backend.Image _ ->
+        | Ffi_backend.Readline _ | Ffi_backend.Image _ | Ffi_backend.Ai_output _
+        | Ffi_backend.Ai_tool_call _ | Ffi_backend.Ai_suggestion _ ->
             model.repl.awaiting_response
         (* Terminal responses *)
         | Ffi_backend.Done | Ffi_backend.Shutdown | Ffi_backend.Internal_error _
         | Ffi_backend.Restarted _ | Ffi_backend.Passthrough
-        | Ffi_backend.Passthrough_end | Ffi_backend.Completions _ ->
+        | Ffi_backend.Passthrough_end | Ffi_backend.Completions _
+        | Ffi_backend.Ai_done ->
             false
       in
       let mode =
@@ -174,18 +211,40 @@ let process_response model =
         | Ffi_backend.Done -> Frontend_types.Normal (* Reset on completion *)
         | _ -> model.input.mode (* Preserve current mode *)
       in
-      {
-        model with
-        repl =
-          {
-            model.repl with
-            backend_response = None;
-            repl_output = Some repl_output;
-            awaiting_response;
-          };
-        layout = { model.layout with scroll_amount = 0 };
-        input = { model.input with mode };
-      }
+      (* suggest_code stashes its code (no output-area change); Ai_done drops any
+         stashed code into the prompt as the response finalizes. Multiple
+         suggest_code calls in one turn accumulate (blank-line separated) so none
+         are lost; Ai_done is the AI stream's only terminal response, so the
+         stash can't survive into a later turn. *)
+      let pending_suggestion, repl_output_opt, to_place =
+        match response with
+        | Ffi_backend.Ai_suggestion code ->
+            let combined =
+              match model.repl.pending_suggestion with
+              | Some prev -> prev ^ "\n\n" ^ code
+              | None -> code
+            in
+            (Some combined, None, None)
+        | Ffi_backend.Ai_done ->
+            (None, Some repl_output, model.repl.pending_suggestion)
+        | _ -> (model.repl.pending_suggestion, Some repl_output, None)
+      in
+      let base =
+        {
+          model with
+          repl =
+            {
+              model.repl with
+              backend_response = None;
+              repl_output = repl_output_opt;
+              awaiting_response;
+              pending_suggestion;
+            };
+          layout = { model.layout with scroll_amount = 0 };
+          input = { model.input with mode };
+        }
+      in
+      (match to_place with Some code -> place_suggestion code base | None -> base)
 
 let update msg model =
   assert_model_invariants model;

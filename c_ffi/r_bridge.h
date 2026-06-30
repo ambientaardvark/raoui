@@ -13,6 +13,9 @@ int rffi_start(const char *r_home);
    Non-blocking: just posts to the command queue. */
 void rffi_submit(const char *code);
 
+/* Run R in a sandboxed fork; returns malloc'd captured output (caller frees). */
+char *rffi_run_r_sandboxed(const char *code);
+
 /* Request interruption of currently-running R evaluation. */
 int rffi_interrupt(void);
 

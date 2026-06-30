@@ -25,9 +25,13 @@ type color =
 val to_ansi256 : color -> int option
 
 type face = {
-  fg : color;
-  bg : color option;
-  bold : bool;
+  fg : color;                (* foreground color *)
+  bg : color option;         (* background color, None = terminal default *)
+  bold : bool;               (* SGR 1 *)
+  dim : bool;                (* SGR 2 (faint) *)
+  italic : bool;             (* SGR 3 *)
+  underline : bool;          (* SGR 4 *)
+  strike : bool;             (* SGR 9 (crossed out) *)
 }
 
 type t = {
@@ -47,6 +51,7 @@ type t = {
   completion : face;
   completion_selected : face;
   shell_prompt : face;
+  ai_prompt : face;
 }
 
 val default : t

@@ -13,7 +13,7 @@ let lexer_update start_line end_line model =
                 model.input.lex_cache;
           };
       }
-  | Shell | Readline _ ->
+  | Shell | Readline _ | Ai ->
       {
         model with
         input =

@@ -15,7 +15,7 @@ let make_init () =
 let print_repl_output =
   Output_renderer.print_repl_output ~terminal_capabilities ~user_options
 
-let execute_one backend = function
+let execute_one backend ai_backend = function
   | Repl_effect.Submit text -> Ffi_backend.submit backend text
   | Repl_effect.Cancel -> Ffi_backend.cancel backend
   | Repl_effect.RequestCompletions (text, cursor_pos) ->
@@ -24,17 +24,22 @@ let execute_one backend = function
       Ffi_backend.submit_readline_input text
   | Repl_effect.BackgroundSubmit text ->
       Ffi_backend.background_submit backend text
+  | Repl_effect.SubmitAiQuery query -> Ai_backend.submit_query ai_backend query
+  | Repl_effect.ResetAiSession -> Ai_backend.reset ai_backend
   | Repl_effect.Run_backslash_effect _ -> ()
   | Repl_effect.EnterPassthrough -> ()
   | Repl_effect.Quit -> ()
 
-let execute_effects backend effects = List.iter (execute_one backend) effects
+let execute_effects backend ai_backend effects =
+  List.iter (execute_one backend ai_backend) effects
 
 let render_submit_snapshot model effects =
   let should_render_snapshot =
     List.exists
       (function
-        | Repl_effect.Submit _ | Repl_effect.SubmitReadlineInput _ -> true
+        | Repl_effect.Submit _ | Repl_effect.SubmitReadlineInput _
+        | Repl_effect.SubmitAiQuery _ | Repl_effect.ResetAiSession ->
+            true
         | _ -> false)
       effects
   in
@@ -89,7 +94,7 @@ let enter_passthrough model backend orig_termios loop =
   in
   passthrough_loop ()
 
-let run env backend ~orig_termios =
+let run env backend ai_backend ~orig_termios =
   let clock = Eio.Stdenv.clock env and stdin = Eio.Stdenv.stdin env in
   let init_model = make_init () in
   let init_width = init_model.layout.term_width in
@@ -138,7 +143,7 @@ let run env backend ~orig_termios =
         match effects with
         | [ Repl_effect.Quit ] -> m
         | _ ->
-            execute_effects backend effects;
+            execute_effects backend ai_backend effects;
             m')
       init_model cached_keys
   in
@@ -159,6 +164,7 @@ let run env backend ~orig_termios =
                  ~prefetched:(Some Terminal_session.pending_input)
                  ~escape_timeout_sec ~clock ~stdin));
           (fun () -> Update.Response (Ffi_backend.await_response backend));
+          (fun () -> Update.Response (Ai_backend.await_response ai_backend));
           (fun () ->
             let w, h =
               Terminal_session.await_dim_change
@@ -172,20 +178,20 @@ let run env backend ~orig_termios =
     match effects with
     | [ Repl_effect.Quit ] -> ()
     | [ Repl_effect.Cancel ] ->
-        execute_effects backend effects;
+        execute_effects backend ai_backend effects;
         History.record_cancel model.input.history;
         loop (make_init ())
     | [ Repl_effect.Run_backslash_effect cmd ] ->
         let result_msg = Backslash_effect_runner.run ~orig_termios cmd in
         let effect_model, effect_effects = Update.update result_msg new_model in
-        execute_effects backend effect_effects;
+        execute_effects backend ai_backend effect_effects;
         loop (print_repl_output effect_model)
     | [ Repl_effect.EnterPassthrough ] ->
-        execute_effects backend effects;
+        execute_effects backend ai_backend effects;
         enter_passthrough new_model backend orig_termios loop
     | _ ->
         render_submit_snapshot model effects;
-        execute_effects backend effects;
+        execute_effects backend ai_backend effects;
         loop (print_repl_output new_model)
   in
   loop model_after_cached
@@ -202,11 +208,26 @@ let () =
     Eio.Switch.run @@ fun sw ->
     let clock = Eio.Stdenv.clock env in
     let backend = Ffi_backend.create ~sw ~clock () in
+    (* The AI subprocess's output and its suggest_code deposits share one
+       stream, which the event loop races via Ai_backend.await_response. *)
+    let ai_chunks = Eio.Stream.create 1024 in
+    let on_suggestion code =
+      Eio.Stream.add ai_chunks (Ffi_backend.Ai_suggestion code)
+    in
+    (* In-process MCP server exposing session tools to the AI subprocess. *)
+    let mcp_port =
+      Mcp_server.start ~sw ~net:(Eio.Stdenv.net env)
+        ~history:(Lazy.force history) ~on_suggestion
+    in
+    let ai_backend =
+      Ai_backend.create ~sw ~process_mgr:(Eio.Stdenv.process_mgr env) ~mcp_port
+        ~chunks:ai_chunks ()
+    in
     let orig = Terminal_session.set_raw_mode () in
     Terminal_session.set_solid_cursor ();
     Terminal_session.enable_bracketed_paste ();
     Fun.protect
-      (fun () -> run env backend ~orig_termios:orig)
+      (fun () -> run env backend ai_backend ~orig_termios:orig)
       ~finally:(fun () ->
         Terminal_session.disable_bracketed_paste ();
         print_endline "";

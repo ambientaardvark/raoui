@@ -23,6 +23,9 @@ depends: [
   "uucp"
   "ptime"
   "sedlex"
+  "cmarkit"
+  "cohttp-eio"
+  "yojson"
   "alcotest" {with-test}
   "odoc" {with-doc}
 ]

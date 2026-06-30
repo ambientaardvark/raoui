@@ -6,11 +6,14 @@ type mode =
   | Normal
   | Readline of string
   | Shell
+  | Ai
   | History_search of Unicode_string.t
 
 type repl_output =
-  | Output_text of Terminal_ops.span list
-  | Output_image of Ffi_backend.image
+  | Output_text of Terminal_ops.span list   (* pre-styled spans; terminal wraps *)
+  | Output_image of Ffi_backend.image        (* inline plot/image *)
+  | Output_markdown of string                (* AI markdown; rendered + wrapped
+                                                at display time (live width) *)
 
 let min_prompt_height = 5
 let default_prompt_top term_height = max 2 (term_height - min_prompt_height + 1)
@@ -46,6 +49,9 @@ type repl_state = {
   awaiting_response : bool;
   backend_response : Ffi_backend.response_chunk option;
   repl_output : repl_output option;
+  (* R code the AI suggested via suggest_code, stashed until the response
+     completes, then dropped into the input prompt. *)
+  pending_suggestion : string option;
   repl_cursor : int * int;
 }
 
@@ -149,5 +155,5 @@ let assert_model_invariants model =
   match model.input.mode with
   | History_search search ->
       assert (model.input.cursor_pos <= Unicode_string.length search)
-  | Normal | Readline _ | Shell ->
+  | Normal | Readline _ | Shell | Ai ->
       assert (model.input.cursor_pos <= Unicode_string.length line)

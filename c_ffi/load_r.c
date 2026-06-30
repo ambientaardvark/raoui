@@ -7,7 +7,13 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
+#include <poll.h>
+#include <time.h>
 #include <sys/time.h>
+#include <sys/wait.h>
+#include <sys/resource.h>
+#include <sandbox.h>
 
 #if defined(__APPLE__)
 #define LIBR_BASENAME "libR.dylib"
@@ -52,6 +58,20 @@ static char *pending_completion_line = NULL;
 static int   pending_completion_pos  = 0;
 static char *pending_column_object = NULL;
 static atomic_int shutdown_flag = 0;
+
+/* Sandboxed run_r request/response. Its own channel, separate from the REPL
+   ring buffer: the AI's sandboxed eval output goes back to the caller as a
+   string, never onto the user's screen. pending_runr/runr_result are guarded
+   by cmd_mutex; runr_call_mutex serializes concurrent callers (claude issues
+   tool calls one at a time, but be safe). */
+static char *pending_runr = NULL;   /* code awaiting sandboxed eval on worker */
+static char *runr_result = NULL;    /* malloc'd captured output for the caller */
+static int   runr_done = 0;         /* response-ready flag */
+static pthread_cond_t  runr_done_cond  = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t runr_call_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Child-only: fd that R console output is routed to during sandboxed eval. */
+static int g_runr_pipe_fd = -1;
 
 /* ---- Crash logging ---- */
 
@@ -245,6 +265,14 @@ typedef struct {
 static void safe_eval(void *data) {
     eval_data_t *d = (eval_data_t *)data;
     d->result = R_tryEval(d->expr, d->env, d->error);
+}
+
+/* Autoprint a value under R_ToplevelExec. An S3 print method can itself error
+   (e.g. print.ggplot opens a device then its stat aborts); without a live
+   top-level context here that error longjmps to the dangling jump buffer left
+   by setup_Rmainloop and crashes the process. */
+static void safe_print(void *data) {
+    Rf_PrintValue(*(SEXP *)data);
 }
 
 static void run_after_top_level_hook(void) {
@@ -558,7 +586,12 @@ static int eval_code(const char *code) {
 
         if (Rf_asLogical(visible)) {
             Rf_protect(value);
-            Rf_PrintValue(value);
+            if (!toplevel_exec(safe_print, &value)) {
+                error_occurred = 1;
+                Rf_unprotect(3);
+                rb_push(&g_rb, RB_MSG_R_ERROR, 0, "", 0);
+                break;
+            }
             Rf_unprotect(1);
         }
 
@@ -609,6 +642,280 @@ static char *eval_for_string(const char *code) {
 
     Rf_unprotect(4);
     return out;
+}
+
+/* ---- Sandboxed run_r (fork + seatbelt; runs on the R worker thread) ---- */
+
+/* Wall-clock watchdog: kill a child that *blocks* (deadlock, hung I/O) rather
+   than burning CPU — RLIMIT_CPU only catches busy loops, and a wedged child
+   would otherwise freeze the R worker thread. Set above the 10s CPU limit so a
+   CPU-bound loop dies on RLIMIT_CPU first and gets the more specific message. */
+#define RUNR_WALL_TIMEOUT_MS 30000
+/* R vector-heap ceiling: macOS rejects RLIMIT_AS, so cap allocations inside R
+   instead — an oversized alloc fails with a clean R error, not OS thrash. */
+#define RUNR_MAX_VSIZE_MB "4096"
+
+/* Console callback used only inside the forked child: route R's output to the
+   capture pipe instead of the ring buffer. The override is COW-private to the
+   child, so the parent's callback is untouched. */
+static void cb_runr_capture(const char *s, int len, int otype) {
+    (void)otype;
+    if (g_runr_pipe_fd >= 0)
+        (void)!write(g_runr_pipe_fd, s, (size_t)len);
+}
+
+/* Growable string buffer used to assemble the SBPL profile. */
+typedef struct {
+    char *buf;   /* heap buffer, always NUL-terminated */
+    size_t len;  /* bytes used, excluding the NUL */
+    size_t cap;  /* allocated capacity */
+} sbuf;
+
+/* Ensure room for [extra] more bytes plus the NUL. */
+static void sb_reserve(sbuf *s, size_t extra) {
+    if (s->len + extra + 1 > s->cap) {
+        s->cap = (s->len + extra + 1) * 2;
+        s->buf = realloc(s->buf, s->cap);
+    }
+}
+
+static void sb_puts(sbuf *s, const char *str) {
+    size_t l = strlen(str);
+    sb_reserve(s, l);
+    memcpy(s->buf + s->len, str, l);
+    s->len += l;
+    s->buf[s->len] = '\0';
+}
+
+/* Append a `  (subpath "<path>")` rule, escaping " and \ for SBPL. */
+static void sb_put_subpath(sbuf *s, const char *path) {
+    sb_puts(s, "  (subpath \"");
+    sb_reserve(s, 2 * strlen(path));
+    for (const char *p = path; *p; p++) {
+        if (*p == '"' || *p == '\\') s->buf[s->len++] = '\\';
+        s->buf[s->len++] = *p;
+    }
+    s->buf[s->len] = '\0';
+    sb_puts(s, "\")\n");
+}
+
+/* Build the seatbelt profile for one run_r call (malloc'd; caller frees).
+   Runs pre-fork on the worker thread with R live, so the read allow-list can be
+   pinned to R's own machinery + the working directory rather than hardcoded.
+
+   Posture (SBPL is last-match-wins, mirroring the existing write rule):
+     - allow default, then deny the effects AI code must not have:
+       file writes (bar a scratch dir + /dev/null), network, exec;
+     - deny file reads by default, then re-allow R's machinery and the cwd, so
+       the model can't read (and thus exfiltrate via its output) secrets like
+       ~/.ssh or ~/.aws that live elsewhere under $HOME; finally a trailing deny
+       re-closes well-known credential stores under $HOME even if an allowed
+       path (e.g. cwd == $HOME) would otherwise cover them.
+
+   The child forks an already-initialized R, so the base session is in memory
+   copy-on-write — these read paths only need to cover what AI code triggers
+   *after* the fork: lazy library() loads (.libPaths()), locale/timezone data
+   (/usr, /private/var), and data files (cwd). Anything else is a clean EPERM. */
+static char *build_runr_profile(void) {
+    /* Ask the live R where its machinery lives (newline-joined). */
+    char *dyn = eval_for_string(
+        "paste(unique(c(R.home(), .libPaths(), tempdir(), getwd())), "
+        "collapse=\"\\n\")");
+
+    /* System roots R/dyld touch lazily after the fork. */
+    static const char *roots[] = {
+        "/usr", "/System", "/Library", "/opt/homebrew",
+        "/private/var", "/etc", "/private/etc", "/dev",
+    };
+
+    sbuf s = { malloc(4096), 0, 4096 };
+    s.buf[0] = '\0';
+    sb_puts(&s, "(version 1)\n(allow default)\n");
+    /* writes: deny all but the scratch dir and /dev/null */
+    sb_puts(&s,
+        "(deny file-write*)\n"
+        "(allow file-write* (subpath \"/private/tmp/raoui-sandbox\") "
+        "(literal \"/dev/null\"))\n");
+    sb_puts(&s, "(deny network*)\n(deny process-exec*)\n");
+    /* reads: deny by default, then re-allow R's machinery + cwd */
+    sb_puts(&s, "(deny file-read*)\n(allow file-read*\n");
+    for (size_t i = 0; i < sizeof roots / sizeof roots[0]; i++)
+        sb_put_subpath(&s, roots[i]);
+    if (dyn) {
+        char *save = NULL;
+        for (char *tok = strtok_r(dyn, "\n", &save); tok;
+             tok = strtok_r(NULL, "\n", &save))
+            if (*tok) sb_put_subpath(&s, tok);
+    }
+    sb_puts(&s, ")\n");
+    /* Belt-and-suspenders secret deny: a path allowed above can still cover a
+       credential store — most importantly when raoui is launched from $HOME, so
+       getwd() == $HOME re-allows the whole home tree, but also a .libPaths()
+       entry sitting next to secrets. Trailing deny wins under last-match-wins,
+       so re-close the well-known credential locations under $HOME regardless. */
+    const char *home = getenv("HOME");
+    if (home && *home) {
+        static const char *secrets[] = {
+            "/.ssh", "/.aws", "/.gnupg", "/.config", "/.netrc",
+            "/.Renviron", "/.Rhistory", "/.bash_history", "/.zsh_history",
+            "/.docker", "/.kube", "/Library/Keychains",
+        };
+        sb_puts(&s, "(deny file-read*\n");
+        for (size_t i = 0; i < sizeof secrets / sizeof secrets[0]; i++) {
+            char path[4096];
+            snprintf(path, sizeof path, "%s%s", home, secrets[i]);
+            sb_put_subpath(&s, path);
+        }
+        sb_puts(&s, ")\n");
+    }
+    free(dyn);
+    return s.buf;
+}
+
+/* Parse + eval R in the child, autoprinting visible values, just like the REPL
+   but with output already routed to the capture pipe. R_tryEval prints any
+   error text through the (repointed) console callback, so errors land in the
+   captured output too; we just stop the loop. */
+static void eval_in_sandbox(const char *code) {
+    *R_interrupts_pending_ptr = 0;
+    SEXP code_sexp = Rf_protect(Rf_mkString(code));
+    ParseStatus ps = PARSE_ERROR;
+    parse_data_t pd = { code_sexp, -1, &ps, *R_NilValue_ptr, NULL };
+    toplevel_exec(safe_parse, &pd);
+    SEXP parsed = Rf_protect(pd.result ? pd.result : *R_NilValue_ptr);
+    if (ps != PARSE_OK) {
+        const char *msg = "Parse error\n";
+        if (g_runr_pipe_fd >= 0) (void)!write(g_runr_pipe_fd, msg, strlen(msg));
+        Rf_unprotect(2);
+        return;
+    }
+    int n = Rf_length_fn(parsed);
+    for (int i = 0; i < n; i++) {
+        SEXP wv_call = Rf_protect(Rf_lang2(withVisible_sym, VECTOR_ELT_fn(parsed, i)));
+        int err = 0;
+        eval_data_t ed = { wv_call, *R_GlobalEnv_ptr, &err, NULL };
+        if (!toplevel_exec(safe_eval, &ed)) err = 1;
+        SEXP wv_result = Rf_protect(ed.result ? ed.result : *R_NilValue_ptr);
+        if (err) { Rf_unprotect(2); break; }  /* error text already on the pipe */
+        SEXP value   = VECTOR_ELT_fn(wv_result, 0);
+        SEXP visible = VECTOR_ELT_fn(wv_result, 1);
+        if (Rf_asLogical(visible)) {
+            Rf_protect(value);
+            if (!toplevel_exec(safe_print, &value)) { Rf_unprotect(3); break; }
+            Rf_unprotect(1);
+        }
+        Rf_unprotect(2);
+    }
+    Rf_unprotect(2);
+}
+
+/* Fork the worker, sandbox + eval in the child, capture its output in the
+   parent, and return it malloc'd (caller frees). See issue #32: forking this
+   multithreaded process carries a low-probability allocator-lock hazard. */
+static char *run_r_on_worker(const char *code) {
+    /* Built pre-fork while R is live so the read allow-list tracks R's paths. */
+    char *profile = build_runr_profile();
+
+    int pipefd[2];
+    if (pipe(pipefd) != 0) { free(profile); return strdup("[run_r] pipe() failed\n"); }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(pipefd[0]); close(pipefd[1]);
+        free(profile);
+        return strdup("[run_r] fork() failed\n");
+    }
+
+    if (pid == 0) {
+        /* ---- Child: only the worker thread survives the fork ---- */
+        close(pipefd[0]);
+        /* Runaway guard: a CPU-bound infinite loop dies with SIGXCPU. */
+        struct rlimit rl = { 10, 10 };
+        setrlimit(RLIMIT_CPU, &rl);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        char *sberr = NULL;
+        if (sandbox_init(profile, 0, &sberr) != 0) {
+            const char *m = "[run_r] sandbox_init failed\n";
+            (void)!write(pipefd[1], m, strlen(m));
+            _exit(98);
+        }
+#pragma clang diagnostic pop
+        g_runr_pipe_fd = pipefd[1];
+        *ptr_R_WriteConsoleEx = cb_runr_capture;
+        *ptr_R_WriteConsole = NULL;
+        /* Cap R's vector heap (guarded for R < 4.2 where mem.maxVSize is absent);
+           an oversized allocation then fails with a clean R error. */
+        free(eval_for_string(
+            "if (exists('mem.maxVSize')) invisible(mem.maxVSize(" RUNR_MAX_VSIZE_MB "))"));
+        eval_in_sandbox(code);
+        close(pipefd[1]);
+        _exit(0);
+    }
+
+    /* ---- Parent (worker thread): drain with a wall-clock watchdog, reap ---- */
+    close(pipefd[1]);
+    size_t cap = 8192, len = 0;
+    char *buf = malloc(cap);
+    int timed_out = 0;
+    struct timespec t0;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (;;) {
+        struct timespec tn;
+        clock_gettime(CLOCK_MONOTONIC, &tn);
+        long elapsed_ms = (tn.tv_sec - t0.tv_sec) * 1000
+                        + (tn.tv_nsec - t0.tv_nsec) / 1000000;
+        long remaining = RUNR_WALL_TIMEOUT_MS - elapsed_ms;
+        if (remaining <= 0) { timed_out = 1; break; }
+        struct pollfd pfd = { pipefd[0], POLLIN, 0 };
+        int pr = poll(&pfd, 1, (int)remaining);
+        if (pr == 0) { timed_out = 1; break; }       /* watchdog fired */
+        if (pr < 0) { if (errno == EINTR) continue; break; }
+        char tmp[4096];
+        ssize_t n = read(pipefd[0], tmp, sizeof tmp);
+        if (n > 0) {
+            if (len + (size_t)n + 1 > cap) {
+                cap = (len + (size_t)n + 1) * 2;
+                buf = realloc(buf, cap);
+            }
+            memcpy(buf + len, tmp, (size_t)n);
+            len += (size_t)n;
+        } else if (n == 0) {
+            break;                                    /* child closed pipe (EOF) */
+        } else if (errno != EINTR) {
+            break;
+        }
+    }
+    close(pipefd[0]);
+
+    /* Watchdog fired: the child is wedged on something RLIMIT_CPU can't catch
+       (deadlock, blocked I/O, the #32 fork hazard) — kill it so the worker
+       thread doesn't hang. */
+    if (timed_out) kill(pid, SIGKILL);
+
+    free(profile);  /* parent's copy; the child has its own COW copy */
+
+    int st = 0;
+    waitpid(pid, &st, 0);
+
+    /* Annotate abnormal termination so the AI understands truncated output. */
+    char note[128];
+    int m = 0;
+    if (timed_out)
+        m = snprintf(note, sizeof note, "\n[run_r: timed out after %ds — killed]\n",
+                     RUNR_WALL_TIMEOUT_MS / 1000);
+    else if (WIFSIGNALED(st)) {
+        int sig = WTERMSIG(st);
+        m = snprintf(note, sizeof note, "\n[run_r: child killed by signal %d%s]\n",
+                     sig, sig == SIGXCPU ? " — CPU limit" : "");
+    }
+    if (m > 0) {
+        if (len + (size_t)m + 1 > cap) { cap = len + (size_t)m + 1; buf = realloc(buf, cap); }
+        memcpy(buf + len, note, (size_t)m);
+        len += (size_t)m;
+    }
+    buf[len] = '\0';
+    return buf;
 }
 
 /* ---- Completions ---- */
@@ -688,7 +995,7 @@ static void *r_thread_func(void *arg) {
     while (!atomic_load(&shutdown_flag)) {
         pthread_mutex_lock(&cmd_mutex);
         if (!pending_cmd && !pending_completion_line && !pending_column_object
-            && !atomic_load(&shutdown_flag)) {
+            && !pending_runr && !atomic_load(&shutdown_flag)) {
             struct timeval tv;
             gettimeofday(&tv, NULL);
             struct timespec ts;
@@ -713,6 +1020,17 @@ static void *r_thread_func(void *arg) {
             rb_reset(&g_rb);
             eval_code(code);
             free(code);
+        } else if (pending_runr) {
+            char *code = pending_runr;
+            pending_runr = NULL;
+            pthread_mutex_unlock(&cmd_mutex);
+            char *out = run_r_on_worker(code);  /* fork + sandbox + capture */
+            free(code);
+            pthread_mutex_lock(&cmd_mutex);
+            runr_result = out;
+            runr_done = 1;
+            pthread_cond_signal(&runr_done_cond);
+            pthread_mutex_unlock(&cmd_mutex);
         } else if (pending_completion_line) {
             char *line = pending_completion_line;
             int pos = pending_completion_pos;
@@ -744,7 +1062,20 @@ int rffi_start(const char *r_home) {
     if (rb_init(&g_rb, 1024 * 1024) != 0)
         return -1;
 
-    pthread_create(&r_thread, NULL, r_thread_func, strdup(r_home));
+    /* Run R on a large stack. macOS gives secondary threads only 512 KB by
+       default, far too little for R's deep recursion (e.g. rlang/cli error
+       backtraces), which overflows and crashes the process. */
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    /* Fail loudly if the size is rejected rather than silently falling back to
+       the 512 KB default (which would later resurface as a confusing SIGBUS). */
+    if (pthread_attr_setstacksize(&attr, 64 * 1024 * 1024) != 0) {
+        fprintf(stderr, "pthread_attr_setstacksize(64MB) failed\n");
+        pthread_attr_destroy(&attr);
+        return -1;
+    }
+    pthread_create(&r_thread, &attr, r_thread_func, strdup(r_home));
+    pthread_attr_destroy(&attr);
 
     /* Block until R initialization completes on the worker thread */
     pthread_mutex_lock(&init_mutex);
@@ -762,6 +1093,26 @@ void rffi_submit(const char *code) {
     pending_cmd = strdup(code);
     pthread_cond_signal(&cmd_cond);
     pthread_mutex_unlock(&cmd_mutex);
+}
+
+/* Synchronously run AI-supplied R in a sandboxed fork and return its captured
+   output (caller frees). Blocks until the worker thread has forked, evaluated,
+   and reaped the child — call from a systhread so the UI loop stays live. */
+char *rffi_run_r_sandboxed(const char *code) {
+    pthread_mutex_lock(&runr_call_mutex);   /* one sandboxed eval at a time */
+    pthread_mutex_lock(&cmd_mutex);
+    free(pending_runr);
+    pending_runr = strdup(code);
+    runr_done = 0;
+    runr_result = NULL;
+    pthread_cond_signal(&cmd_cond);
+    while (!runr_done)
+        pthread_cond_wait(&runr_done_cond, &cmd_mutex);
+    char *res = runr_result;
+    runr_result = NULL;
+    pthread_mutex_unlock(&cmd_mutex);
+    pthread_mutex_unlock(&runr_call_mutex);
+    return res;
 }
 
 void rffi_request_completions(const char *line, int cursor_pos) {

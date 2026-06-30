@@ -46,7 +46,15 @@ let to_ansi256 = function
   | Rgb (r, g, b) -> Some (16 + (36 * r) + (6 * g) + b)
   | Greyscale n -> Some (232 + n)
 
-type face = { fg : color; bg : color option; bold : bool }
+type face = {
+  fg : color;                (* foreground color *)
+  bg : color option;         (* background color, None = terminal default *)
+  bold : bool;               (* SGR 1 *)
+  dim : bool;                (* SGR 2 (faint) *)
+  italic : bool;             (* SGR 3 *)
+  underline : bool;          (* SGR 4 *)
+  strike : bool;             (* SGR 9 (crossed out) *)
+}
 
 type t = {
   name : string;
@@ -65,9 +73,12 @@ type t = {
   completion : face;
   completion_selected : face;
   shell_prompt : face;
+  ai_prompt : face;             (* the `ai>` mode prompt (magenta, distinct from shell) *)
 }
 
-let face ?bg ?(bold = false) fg = { fg; bg; bold }
+let face ?bg ?(bold = false) ?(dim = false) ?(italic = false)
+    ?(underline = false) ?(strike = false) fg =
+  { fg; bg; bold; dim; italic; underline; strike }
 
 let default =
   {
@@ -87,6 +98,7 @@ let default =
     completion = face ~bg:(Greyscale 4) Default;
     completion_selected = face ~bg:(Greyscale 8) ~bold:true Default;
     shell_prompt = face (Standard Red);
+    ai_prompt = face (Standard Bright_magenta);
   }
 
 let tokyo_night =
@@ -107,6 +119,7 @@ let tokyo_night =
     completion = face ~bg:(Greyscale 6) (Greyscale 20);
     completion_selected = face ~bg:(Rgb (1, 1, 2)) ~bold:true (Rgb (5, 5, 5));
     shell_prompt = face (Rgb (5, 1, 2));
+    ai_prompt = face (Rgb (5, 2, 5));
   }
 
 let gruvbox =
@@ -127,6 +140,7 @@ let gruvbox =
     completion = face ~bg:(Greyscale 5) (Rgb (5, 4, 3));
     completion_selected = face ~bg:(Rgb (4, 3, 1)) ~bold:true (Greyscale 3);
     shell_prompt = face (Rgb (5, 0, 0));
+    ai_prompt = face (Rgb (4, 2, 3));
   }
 
 let catppuccin =
@@ -147,6 +161,7 @@ let catppuccin =
     completion = face ~bg:(Greyscale 5) (Rgb (4, 4, 5));
     completion_selected = face ~bg:(Greyscale 9) ~bold:true (Rgb (4, 4, 5));
     shell_prompt = face (Rgb (3, 4, 3));
+    ai_prompt = face (Rgb (5, 3, 5));
   }
 
 let solarized =
@@ -167,6 +182,7 @@ let solarized =
     completion = face ~bg:(Rgb (0, 1, 1)) (Greyscale 13);
     completion_selected = face ~bg:(Rgb (2, 2, 2)) ~bold:true (Greyscale 23);
     shell_prompt = face (Rgb (3, 3, 0));
+    ai_prompt = face (Rgb (4, 1, 3));
   }
 
 let dracula =
@@ -187,6 +203,7 @@ let dracula =
     completion = face ~bg:(Greyscale 7) (Greyscale 23);
     completion_selected = face ~bg:(Rgb (2, 2, 3)) ~bold:true (Greyscale 23);
     shell_prompt = face (Rgb (2, 5, 2));
+    ai_prompt = face (Rgb (5, 2, 4));
   }
 
 let nord =
@@ -207,6 +224,7 @@ let nord =
     completion = face ~bg:(Greyscale 6) (Greyscale 21);
     completion_selected = face ~bg:(Greyscale 8) ~bold:true (Greyscale 22);
     shell_prompt = face (Rgb (3, 4, 3));
+    ai_prompt = face (Rgb (4, 2, 4));
   }
 
 let of_name = function

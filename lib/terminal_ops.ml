@@ -15,6 +15,10 @@ type style =
   | `Completion
   | `Completion_selected
   | `Shell_prompt
+  | `Ai_prompt
+  | `Face of Theme.face   (* a fully-resolved face; markdown uses this to
+                             express attribute combinations the named styles
+                             above cannot (e.g. bold inside a heading) *)
   ]
 type span = style * string
 type term_output = span list
@@ -54,7 +58,15 @@ let face_to_ansi face =
   | Some bg -> codes := !codes @ sgr_codes_of_color ~is_background:true bg
   | None -> codes := !codes @ [ "49" ]);
   if face.Theme.bold then codes := "1" :: !codes;
-  "\x1b[" ^ String.concat ";" !codes ^ "m"
+  if face.Theme.dim then codes := "2" :: !codes;
+  if face.Theme.italic then codes := "3" :: !codes;
+  if face.Theme.underline then codes := "4" :: !codes;
+  if face.Theme.strike then codes := "9" :: !codes;
+  (* Lead with a reset ("0") so each span fully specifies its own attributes.
+     Without it, an attribute turned on by one span (bold/italic/strike/...)
+     leaks into following spans, since we only ever emit "on" codes, never the
+     matching "off" ones. *)
+  "\x1b[0;" ^ String.concat ";" !codes ^ "m"
 
 let style_to_face theme = function
   | `Plain -> theme.Theme.plain
@@ -72,6 +84,8 @@ let style_to_face theme = function
   | `Completion -> theme.Theme.completion
   | `Completion_selected -> theme.Theme.completion_selected
   | `Shell_prompt -> theme.Theme.shell_prompt
+  | `Ai_prompt -> theme.Theme.ai_prompt
+  | `Face f -> f
   | `Raw -> theme.Theme.plain
 
 let style_to_ansi theme = function
