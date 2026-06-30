@@ -136,9 +136,11 @@ let handle_key_input key model =
   in
   (universal_corrections key new_model, effects)
 
-(* Drop AI-suggested R code into the input prompt as ordinary editable text. *)
+(* Drop AI-suggested R code into the input prompt as ordinary editable text.
+   If the user typed into the prompt while the response streamed, append the
+   code after their text rather than clobbering it. *)
 let place_suggestion code model =
-  let lines =
+  let code_lines =
     match
       String.split_on_char '\n' code
       |> List.map (fun s ->
@@ -149,6 +151,13 @@ let place_suggestion code model =
     | [] -> [ Unicode_string.empty ]
     | ls -> ls
   in
+  let existing = model.input.lines in
+  let existing_blank =
+    List.for_all
+      (fun u -> String.trim (Unicode_string.to_string u) = "")
+      existing
+  in
+  let lines = if existing_blank then code_lines else existing @ code_lines in
   {
     model with
     input = { model.input with lines; lex_cache = R_lex_cache.create lines };
@@ -203,10 +212,19 @@ let process_response model =
         | _ -> model.input.mode (* Preserve current mode *)
       in
       (* suggest_code stashes its code (no output-area change); Ai_done drops any
-         stashed code into the prompt as the response finalizes. *)
+         stashed code into the prompt as the response finalizes. Multiple
+         suggest_code calls in one turn accumulate (blank-line separated) so none
+         are lost; Ai_done is the AI stream's only terminal response, so the
+         stash can't survive into a later turn. *)
       let pending_suggestion, repl_output_opt, to_place =
         match response with
-        | Ffi_backend.Ai_suggestion code -> (Some code, None, None)
+        | Ffi_backend.Ai_suggestion code ->
+            let combined =
+              match model.repl.pending_suggestion with
+              | Some prev -> prev ^ "\n\n" ^ code
+              | None -> code
+            in
+            (Some combined, None, None)
         | Ffi_backend.Ai_done ->
             (None, Some repl_output, model.repl.pending_suggestion)
         | _ -> (model.repl.pending_suggestion, Some repl_output, None)
