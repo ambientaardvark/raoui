@@ -34,6 +34,7 @@
   cmarkit
   cohttp-eio
   yojson
+  otoml
   (alcotest :with-test))
  (tags
   ("r" "repl" "terminal" "ocaml")))

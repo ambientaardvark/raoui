@@ -1,3 +1,7 @@
+/* Expose POSIX/BSD functions (strdup, usleep, setenv, ...) under glibc, which
+   hides them with -std=c99 unless a feature-test macro is set. macOS exposes
+   them by default; this keeps the C99 build flag working on Linux too. */
+#define _GNU_SOURCE
 #include "r_bridge.h"
 #include <dlfcn.h>
 #include <stdio.h>
@@ -13,7 +17,10 @@
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <sys/resource.h>
+#if defined(__APPLE__)
 #include <sandbox.h>
+#endif
+#include "sandbox_linux.h"
 
 #if defined(__APPLE__)
 #define LIBR_BASENAME "libR.dylib"
@@ -200,6 +207,8 @@ static SEXP *R_GlobalEnv_ptr = NULL;
 static SEXP *R_NilValue_ptr  = NULL;
 static int  *R_SignalHandlers_ptr = NULL;
 static int  *R_interrupts_pending_ptr = NULL;
+static int  *R_Interactive_ptr = NULL;
+static uintptr_t *R_CStackLimit_ptr = NULL;
 
 /* ---- Callback function pointers (loaded via dlsym) ---- */
 
@@ -442,6 +451,8 @@ static int load_symbols(void) {
     LOAD_SYM(R_UnboundValue_ptr, "R_UnboundValue");
     LOAD_SYM(R_SignalHandlers_ptr, "R_SignalHandlers");
     LOAD_SYM(R_interrupts_pending_ptr, "R_interrupts_pending");
+    LOAD_SYM(R_Interactive_ptr, "R_Interactive");
+    LOAD_SYM(R_CStackLimit_ptr, "R_CStackLimit");
 
     /* Callback pointers */
     LOAD_SYM(ptr_R_ReadConsole, "ptr_R_ReadConsole");
@@ -507,6 +518,23 @@ static int init_r(const char *r_home) {
     *ptr_R_Suicide_ptr = cb_suicide;
     *R_Consolefile_ptr = NULL;
     *R_Outputfile_ptr = NULL;
+
+    /* Force interactive mode: we drive our own REPL via the console callbacks,
+       so R must not treat startup as a batch run. Rf_initialize_R derives this
+       from isatty(stdin), which is false whenever raoui's stdin isn't a TTY
+       (pipes, the test harness); without this, setup_Rmainloop reaches
+       check_session_exit on the first top-level jump and calls R_CleanUp,
+       exiting the process with status 1. */
+    *R_Interactive_ptr = 1;
+
+    /* Disable R's C-stack-overflow check. R computes the stack base/limit for
+       the main thread, but raoui runs R on a dedicated worker thread (with its
+       own 64MB stack), so the check would misfire — here it trips during
+       startup while the JIT/compiler namespace loads, surfacing as the
+       misleading "unable to initialize the JIT" suicide. Setting the limit to
+       (uintptr_t)-1 is the documented way to turn the check off when embedding
+       R off the main thread. */
+    *R_CStackLimit_ptr = (uintptr_t)-1;
 
     setup_Rmainloop();
 
@@ -664,6 +692,17 @@ static void cb_runr_capture(const char *s, int len, int otype) {
         (void)!write(g_runr_pipe_fd, s, (size_t)len);
 }
 
+/* Query the live R session (pre-fork) for the paths its machinery uses, so the
+   sandbox read allow-list tracks them rather than being hardcoded. Newline-
+   joined; caller frees. Shared by the macOS (Seatbelt) and Linux (Landlock)
+   sandboxes. */
+static char *gather_runr_read_paths(void) {
+    return eval_for_string(
+        "paste(unique(c(R.home(), .libPaths(), tempdir(), getwd())), "
+        "collapse=\"\\n\")");
+}
+
+#if defined(__APPLE__)
 /* Growable string buffer used to assemble the SBPL profile. */
 typedef struct {
     char *buf;   /* heap buffer, always NUL-terminated */
@@ -716,11 +755,9 @@ static void sb_put_subpath(sbuf *s, const char *path) {
    copy-on-write — these read paths only need to cover what AI code triggers
    *after* the fork: lazy library() loads (.libPaths()), locale/timezone data
    (/usr, /private/var), and data files (cwd). Anything else is a clean EPERM. */
-static char *build_runr_profile(void) {
-    /* Ask the live R where its machinery lives (newline-joined). */
-    char *dyn = eval_for_string(
-        "paste(unique(c(R.home(), .libPaths(), tempdir(), getwd())), "
-        "collapse=\"\\n\")");
+static char *build_runr_profile(const char *dyn_in) {
+    /* Mutable copy of the pre-fork path list (strtok_r below mutates it). */
+    char *dyn = dyn_in ? strdup(dyn_in) : NULL;
 
     /* System roots R/dyld touch lazily after the fork. */
     static const char *roots[] = {
@@ -771,6 +808,7 @@ static char *build_runr_profile(void) {
     free(dyn);
     return s.buf;
 }
+#endif /* __APPLE__ */
 
 /* Parse + eval R in the child, autoprinting visible values, just like the REPL
    but with output already routed to the capture pipe. R_tryEval prints any
@@ -813,16 +851,28 @@ static void eval_in_sandbox(const char *code) {
    parent, and return it malloc'd (caller frees). See issue #32: forking this
    multithreaded process carries a low-probability allocator-lock hazard. */
 static char *run_r_on_worker(const char *code) {
-    /* Built pre-fork while R is live so the read allow-list tracks R's paths. */
-    char *profile = build_runr_profile();
+    /* Gathered pre-fork while R is live so the read allow-list tracks R's paths. */
+    char *dyn = gather_runr_read_paths();
+#if defined(__APPLE__)
+    char *profile = build_runr_profile(dyn);
+#endif
 
     int pipefd[2];
-    if (pipe(pipefd) != 0) { free(profile); return strdup("[run_r] pipe() failed\n"); }
+    if (pipe(pipefd) != 0) {
+        free(dyn);
+#if defined(__APPLE__)
+        free(profile);
+#endif
+        return strdup("[run_r] pipe() failed\n");
+    }
 
     pid_t pid = fork();
     if (pid < 0) {
         close(pipefd[0]); close(pipefd[1]);
+        free(dyn);
+#if defined(__APPLE__)
         free(profile);
+#endif
         return strdup("[run_r] fork() failed\n");
     }
 
@@ -832,6 +882,7 @@ static char *run_r_on_worker(const char *code) {
         /* Runaway guard: a CPU-bound infinite loop dies with SIGXCPU. */
         struct rlimit rl = { 10, 10 };
         setrlimit(RLIMIT_CPU, &rl);
+#if defined(__APPLE__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
         char *sberr = NULL;
@@ -841,6 +892,20 @@ static char *run_r_on_worker(const char *code) {
             _exit(98);
         }
 #pragma clang diagnostic pop
+#elif defined(__linux__)
+        const char *sberr = NULL;
+        if (raoui_sandbox_apply(dyn, getenv("HOME"), &sberr) != 0) {
+            char m[256];
+            int mn = snprintf(m, sizeof m, "[run_r] sandbox setup failed: %s\n",
+                              sberr ? sberr : "unknown");
+            if (mn > 0) (void)!write(pipefd[1], m, (size_t)mn);
+            _exit(98);
+        }
+#else
+        const char *m = "[run_r] no sandbox available on this platform\n";
+        (void)!write(pipefd[1], m, strlen(m));
+        _exit(98);
+#endif
         g_runr_pipe_fd = pipefd[1];
         *ptr_R_WriteConsoleEx = cb_runr_capture;
         *ptr_R_WriteConsole = NULL;
@@ -893,7 +958,10 @@ static char *run_r_on_worker(const char *code) {
        thread doesn't hang. */
     if (timed_out) kill(pid, SIGKILL);
 
+#if defined(__APPLE__)
     free(profile);  /* parent's copy; the child has its own COW copy */
+#endif
+    free(dyn);      /* parent's copy; the child has its own COW copy */
 
     int st = 0;
     waitpid(pid, &st, 0);

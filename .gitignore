@@ -10,4 +10,5 @@ Rplots.pdf
 /c_ffi/test_load
 /c_ffi/test_r_bridge
 /c_ffi/test_ring_buffer
+/c_ffi/test_sandbox_linux
 /c_ffi/*.dSYM/

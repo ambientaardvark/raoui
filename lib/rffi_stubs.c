@@ -1,3 +1,6 @@
+/* glibc hides strdup under -std=c99 without a feature-test macro (macOS does
+   not); define it before any include so the C99 build flag works on Linux. */
+#define _GNU_SOURCE
 #include <caml/mlvalues.h>
 #include <caml/memory.h>
 #include <caml/alloc.h>

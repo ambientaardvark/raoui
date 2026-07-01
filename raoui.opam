@@ -26,6 +26,7 @@ depends: [
   "cmarkit"
   "cohttp-eio"
   "yojson"
+  "otoml"
   "alcotest" {with-test}
   "odoc" {with-doc}
 ]

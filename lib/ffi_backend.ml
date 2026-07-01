@@ -72,7 +72,9 @@ let r_home () =
         [
           "/Library/Frameworks/R.framework/Resources";
           "/usr/lib/R";
+          "/usr/lib64/R";
           "/usr/local/lib/R";
+          "/usr/local/lib64/R";
         ]
       in
       match List.find_opt has_libr candidates with
