@@ -33,20 +33,6 @@ let submit model =
   | R_enter.Expand_braces { inner_indent; outer_indent } ->
       (expand_braces ~inner_indent ~outer_indent model, [])
 
-let enter_history_search model =
-  {
-    model with
-    input =
-      {
-        model.input with
-        mode = History_search Unicode_string.empty;
-        lines = [ Unicode_string.empty ];
-        lex_cache = R_lex_cache.create [ Unicode_string.empty ];
-        cursor_pos = 0;
-        cursor_line = 0;
-        completion = None;
-      };
-  }
 
 let apply_key key model =
   let open Tty_listener in
@@ -72,7 +58,7 @@ let apply_key key model =
   | Ctrl 'u' -> (delete_before_cursor model, [])
   | Ctrl '\r' -> (insert_newline model, [])
   | Ctrl 'p' -> (Mode_common.shift_history model ~amount:1, [])
-  | Ctrl 'r' -> (enter_history_search model, [])
+  | Ctrl 'r' -> (History_search.enter model, [])
   | Ctrl 'a' -> (go_to_line_start model, [])
   | Ctrl 'e' -> (go_to_line_end model, [])
   | Other "next word" -> (go_to_next_word model, [])

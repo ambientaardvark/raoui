@@ -135,38 +135,34 @@ let rec go_forwards t ?current_prompt () =
 let get_all t =
   Array.init (Dynarray.length t.history) (fun i -> (nth_newest t i).entry_text)
 
-let search_history t pattern =
-  let pattern = String.lowercase_ascii pattern in
-  let needle =
-    let p =
-      if String.length pattern > 0 && String.get pattern 0 = '%' then
-        String.sub pattern 1 (String.length pattern - 1)
-      else pattern
+let search_matches t needle ~limit =
+  let needle = String.lowercase_ascii needle in
+  let nlen = String.length needle in
+  let matches text =
+    let lower = String.lowercase_ascii text in
+    let elen = String.length lower in
+    let rec check j =
+      if j + nlen > elen then false
+      else if String.sub lower j nlen = needle then true
+      else check (j + 1)
     in
-    if String.length p > 0 && String.get p (String.length p - 1) = '%' then
-      String.sub p 0 (String.length p - 1)
-    else p
+    check 0
   in
-  if String.length needle = 0 then None
-  else
-    let found = ref None in
-    let i = ref 0 in
-    while !found = None && !i < Dynarray.length t.history do
-      let entry = nth_newest t !i in
-      if
-        let lower = String.lowercase_ascii entry.entry_text in
-        let nlen = String.length needle in
-        let elen = String.length lower in
-        let rec check j =
-          if j + nlen > elen then false
-          else if String.sub lower j nlen = needle then true
-          else check (j + 1)
-        in
-        check 0
-      then found := Some (entry.entry_mode, entry.entry_text);
-      incr i
-    done;
-    !found
+  let seen = Hashtbl.create 64 in
+  let found = ref [] in
+  let count = ref 0 in
+  let i = ref 0 in
+  while !count < limit && !i < Dynarray.length t.history do
+    let entry = nth_newest t !i in
+    let key = (entry.entry_mode, entry.entry_text) in
+    if (not (Hashtbl.mem seen key)) && matches entry.entry_text then begin
+      Hashtbl.add seen key ();
+      found := key :: !found;
+      incr count
+    end;
+    incr i
+  done;
+  List.rev !found
 
 let create_schema db =
   exec db "PRAGMA foreign_keys = ON";

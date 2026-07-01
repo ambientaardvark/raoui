@@ -29,10 +29,18 @@ let test_history_search_matches_existing_behavior () =
   let history = History.init path in
   History.add_to_history history [ us "alpha <- 1" ];
   History.add_to_history history [ us "beta <- alpha + 1" ];
-  Alcotest.(check (option (pair string string)))
+  Alcotest.(check (list (pair string string)))
     "case insensitive substring"
-    (Some ("r", "beta <- alpha + 1"))
-    (History.search_history history "%ALPHA +%");
+    [ ("r", "beta <- alpha + 1") ]
+    (History.search_matches history "ALPHA +" ~limit:10);
+  Alcotest.(check (list (pair string string)))
+    "empty needle matches everything, newest first"
+    [ ("r", "beta <- alpha + 1"); ("r", "alpha <- 1") ]
+    (History.search_matches history "" ~limit:10);
+  Alcotest.(check (list (pair string string)))
+    "limit caps results"
+    [ ("r", "beta <- alpha + 1") ]
+    (History.search_matches history "" ~limit:1);
   close history
 
 let test_recent_interactions_include_outputs () =

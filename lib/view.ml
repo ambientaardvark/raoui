@@ -7,7 +7,6 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
   let shell_prompt = "shell> "
   let ai_prompt = "ai> "
   let search_prompt_prefix = "r-search: "
-  let search_prompt_suffix = "| >"
 
   let rendered_readline_prompt rl_prompt =
     if rl_prompt = "" || rl_prompt = "input" then input_prompt
@@ -22,8 +21,7 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
     | Normal -> String.length prompt
     | History_search s ->
         String.length search_prompt_prefix
-        + Unicode_string.display_width s
-        + String.length search_prompt_suffix
+        + Unicode_string.display_width s.search
 
   let absolute_cursor_pos model ~cursor_row ~cursor_col =
     let prompt_width = prompt_width_for_mode model.input.mode in
@@ -160,6 +158,100 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
             in
             loop start_row 0 visible
 
+  (* Syntax-highlight a single already-truncated R line into styled spans. *)
+  let r_line_spans line ~width =
+    match R_lex_cache.create [ line ] with
+    | [ entry ] -> (
+        let ranges = R_highlight.ranges_for_entry entry in
+        match wrap_styled_line width line ranges with
+        | first :: _ -> spans_of_segments line first
+        | [] -> [])
+    | [] | _ :: _ :: _ -> [ (`Plain, Unicode_string.to_string line) ]
+
+  (* Render the history-search match list under the query row. Each row leads
+     with the prompt badge of the mode Enter would switch to; the selected
+     entry is drawn as a highlighted bar and expanded up to the row budget
+     (see Search_pager). *)
+  let view_search_pager model ops =
+    let add op = Queue.add op ops in
+    match model.input.mode with
+    | Normal | Readline _ | Shell | Ai -> ()
+    | History_search s ->
+        let term_width = model.layout.term_width in
+        let max_rows =
+          Search_pager.max_rows ~term_height:model.layout.term_height
+        in
+        let rows =
+          Search_pager.view_rows ~max_rows ~selected:s.selected s.matches
+        in
+        let start_row = model.layout.prompt_top_row + 1 in
+        List.iteri
+          (fun i (row : Search_pager.row) ->
+            let abs_row = start_row + i in
+            if abs_row >= 1 && abs_row <= model.layout.term_height then begin
+              let mode_string, _ = List.nth s.matches row.entry_index in
+              let badge, badge_style =
+                if not row.first then (continued_prompt, `Accent)
+                else
+                  match mode_string with
+                  | "shell" -> (shell_prompt, `Shell_prompt)
+                  | "ai" -> (ai_prompt, `Ai_prompt)
+                  | _ -> (prompt, `Accent)
+              in
+              let marker =
+                if row.hidden_lines > 0 then
+                  Printf.sprintf " …+%d" row.hidden_lines
+                else ""
+              in
+              (* The ellipsis is 3 bytes but 1 column wide. *)
+              let marker_width =
+                if marker = "" then 0 else String.length marker - 2
+              in
+              let content_width =
+                max 1 (term_width - String.length badge - marker_width)
+              in
+              let line_us =
+                Unicode_string.of_string row.line |> Result.get_ok
+              in
+              let truncated =
+                match Frontend_types.wrap_line content_width line_us with
+                | [] -> Unicode_string.empty
+                | first :: _ -> first
+              in
+              add (Terminal_ops.Cursor_to (abs_row, 1));
+              if row.entry_index = s.selected then begin
+                let pad =
+                  max 0
+                    (term_width
+                    - (String.length badge
+                      + Unicode_string.display_width truncated + marker_width))
+                in
+                add
+                  (Terminal_ops.Print
+                     [
+                       ( `Completion_selected,
+                         badge
+                         ^ Unicode_string.to_string truncated
+                         ^ marker ^ String.make pad ' ' );
+                     ])
+              end
+              else begin
+                let content_spans =
+                  match mode_string with
+                  | "shell" | "ai" ->
+                      [ (`Plain, Unicode_string.to_string truncated) ]
+                  | _ -> r_line_spans truncated ~width:content_width
+                in
+                let marker_spans =
+                  if marker = "" then [] else [ (`Comment, marker) ]
+                in
+                add
+                  (Terminal_ops.Print
+                     (((badge_style, badge) :: content_spans) @ marker_spans))
+              end
+            end)
+          rows
+
   let view_ops model =
     let open Terminal_ops in
     let ops = Queue.create () in
@@ -221,9 +313,8 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
             | Readline _, _, _ | Frontend_types.Shell, _, _
             | Frontend_types.Ai, _, _ ->
                 assert false
-            | History_search search_input, 0, _ ->
-                let search_str = Unicode_string.to_string search_input in
-                search_prompt_prefix ^ search_str ^ search_prompt_suffix
+            | History_search s, 0, _ ->
+                search_prompt_prefix ^ Unicode_string.to_string s.search
             | History_search s, _, _ ->
                 let pad_width = prompt_width_for_mode (History_search s) in
                 String.make pad_width ' '
@@ -265,6 +356,7 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
 
     (* Render completion dropdown as an overlay after base prompt cleanup. *)
     view_completions model ops ~cursor_abs_row ~cursor_abs_col;
+    view_search_pager model ops;
 
     (* Position cursor: in output area during eval, in prompt otherwise.
      Exception: during readline/search mode, always position in prompt area. *)

@@ -25,3 +25,7 @@
 (test
  (name test_md_layout)
  (libraries raoui alcotest))
+
+(test
+ (name test_search_pager)
+ (libraries raoui alcotest))

@@ -43,9 +43,10 @@ val go_forwards :
 
 val get_all : t -> string array
 
-val search_history : t -> string -> (string * string) option
-(** Newest entry whose text contains the pattern (case-insensitive; optional
-    leading/trailing '%' are stripped), as [(mode, text)]. *)
+val search_matches : t -> string -> limit:int -> (string * string) list
+(** Up to [limit] distinct entries whose text contains the needle
+    (case-insensitive substring; an empty needle matches everything),
+    newest-first, as [(mode, text)]. *)
 
 val recent_interactions : t -> limit:int -> interaction list
 

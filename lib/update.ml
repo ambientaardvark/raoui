@@ -11,16 +11,22 @@ type msg =
     }
   | TermResize of int * int
 
-(* Rows the completion dropdown occupies below the cursor. It is drawn as an
-   overlay in view.ml, but it has to be counted here so the prompt scrolls up
-   far enough to keep it on screen. *)
+(* Rows the completion dropdown or history-search pager occupies below the
+   input. Both are drawn as overlays in view.ml, but they have to be counted
+   here so the prompt scrolls up far enough to keep them on screen. *)
 let dropdown_rows model =
   match model.input.mode with
   | Frontend_types.Normal -> (
       match model.input.completion with
       | Some cs -> List.length (Completion.visible_items cs)
       | None -> 0)
-  | Readline _ | Shell | Ai | History_search _ -> 0
+  | History_search s ->
+      List.length
+        (Search_pager.view_rows
+           ~max_rows:
+             (Search_pager.max_rows ~term_height:model.layout.term_height)
+           ~selected:s.selected s.matches)
+  | Readline _ | Shell | Ai -> 0
 
 let handle_vertical_cursor_movement model =
   let width = effective_width model in

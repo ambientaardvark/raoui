@@ -2,12 +2,22 @@ let prompt = "> "
 let continued_prompt = ". "
 let pending_prompt = "  "
 
+(* Live state of the Ctrl-R history search pager. The input buffer stays blank
+   while searching: the query lives here and the matches render in a list under
+   the query row (fish-style). *)
+type search_state = {
+  search : Unicode_string.t;  (* the query the user has typed *)
+  matches : (string * string) list;
+      (* newest-first (mode, text) history entries matching [search] *)
+  selected : int;  (* index into [matches] of the highlighted entry *)
+}
+
 type mode =
   | Normal
   | Readline of string
   | Shell
   | Ai
-  | History_search of Unicode_string.t
+  | History_search of search_state
 
 type repl_output =
   | Output_text of Terminal_ops.span list   (* pre-styled spans; terminal wraps *)
@@ -150,8 +160,8 @@ let effective_width model = model.layout.term_width - String.length prompt
 
 let cursor_terminal_pos model =
   match model.input.mode with
-  | History_search search ->
-      (0, Unicode_string.prefix_width search model.input.cursor_pos)
+  | History_search s ->
+      (0, Unicode_string.prefix_width s.search model.input.cursor_pos)
   | _ ->
       internal_to_terminal (effective_width model) model.input.lines
         (model.input.cursor_line, model.input.cursor_pos)
@@ -164,7 +174,7 @@ let assert_model_invariants model =
   let line = List.nth lines model.input.cursor_line in
   assert (model.input.cursor_pos >= 0);
   match model.input.mode with
-  | History_search search ->
-      assert (model.input.cursor_pos <= Unicode_string.length search)
+  | History_search s ->
+      assert (model.input.cursor_pos <= Unicode_string.length s.search)
   | Normal | Readline _ | Shell | Ai ->
       assert (model.input.cursor_pos <= Unicode_string.length line)

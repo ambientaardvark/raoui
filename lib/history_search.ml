@@ -1,31 +1,73 @@
 open Frontend_types
 
-(* Design:
-   - History_search s stores the search input (what the user types)
-   - model.input.lines stores the search result from history
-   - cursor_pos tracks position within the search input
-   - The view renders "r-search: {input}> " as the prompt, result as content *)
+(* Design (fish-style pager):
+   - History_search carries the query, the matching entries, and the selection.
+   - model.input.lines stays blank while searching; matches render in a list
+     under the query row (see view_search_pager in view.ml).
+   - cursor_pos tracks position within the query.
+   - Up/Down move the selection; Enter inserts the selected entry into the
+     prompt and switches to the mode it was submitted from. *)
 
-let get_input model =
+let max_matches = 50
+
+let get_state model =
   match model.input.mode with History_search s -> s | _ -> assert false
 
-let find_match model =
-  let input_str = get_input model |> Unicode_string.to_string in
-  if String.length input_str = 0 then None
-  else History.search_history model.input.history ("%" ^ input_str ^ "%")
+let get_input model = (get_state model).search
 
-let search_and_update model =
-  let lines =
-    match find_match model with
-    | None -> [ Unicode_string.empty ]
-    | Some (_mode, text) ->
-        text |> String.split_on_char '\n'
-        |> List.map (fun s -> Unicode_string.of_string s |> Result.get_ok)
-  in
+let fresh_state history search =
+  let query = Unicode_string.to_string search in
+  {
+    search;
+    matches = History.search_matches history query ~limit:max_matches;
+    selected = 0;
+  }
+
+(* Enter search mode from any input mode. The input buffer goes blank: the
+   query lives in the mode's search_state, and an empty query matches
+   everything so the pager opens showing the most recent entries. *)
+let enter model =
   {
     model with
-    input = { model.input with lines; lex_cache = R_lex_cache.create lines };
+    input =
+      {
+        model.input with
+        mode =
+          History_search (fresh_state model.input.history Unicode_string.empty);
+        lines = [ Unicode_string.empty ];
+        lex_cache = R_lex_cache.create [ Unicode_string.empty ];
+        cursor_pos = 0;
+        cursor_line = 0;
+        completion = None;
+      };
   }
+
+(* Re-run the search for the current query; any edit resets the selection. *)
+let search_and_update model =
+  let state = fresh_state model.input.history (get_input model) in
+  { model with input = { model.input with mode = History_search state } }
+
+let set_search model new_search =
+  {
+    model with
+    input =
+      {
+        model.input with
+        mode = History_search { (get_state model) with search = new_search };
+      };
+  }
+
+let move_selection model ~amount =
+  let state = get_state model in
+  let n = List.length state.matches in
+  if n = 0 then model
+  else
+    let selected = max 0 (min (n - 1) (state.selected + amount)) in
+    {
+      model with
+      input =
+        { model.input with mode = History_search { state with selected } };
+    }
 
 let cancel model =
   {
@@ -41,41 +83,41 @@ let cancel model =
       };
   }
 
+(* Insert the selected entry into the prompt, adopting the input mode it was
+   submitted from (r/shell/ai), like arrow-key recall. *)
 let submit model =
-  (* Adopt the matched entry's input mode (r/shell/ai), like arrow-key recall. *)
-  let mode =
-    match find_match model with
-    | Some (mode_string, _text) -> Mode_common.mode_of_history_string mode_string
-    | None -> Normal
-  in
-  let last_line_idx = List.length model.input.lines - 1 in
-  let last_line = List.nth model.input.lines last_line_idx in
-  let new_pos = Unicode_string.length last_line in
-  {
-    model with
-    input =
+  let state = get_state model in
+  match List.nth_opt state.matches state.selected with
+  | None -> cancel model
+  | Some (mode_string, text) ->
+      let lines =
+        String.split_on_char '\n' text
+        |> List.map (fun s -> Unicode_string.of_string s |> Result.get_ok)
+      in
+      let last_line_idx = List.length lines - 1 in
+      let last_line = List.nth lines last_line_idx in
       {
-        model.input with
-        mode;
-        lex_cache = R_lex_cache.create model.input.lines;
-        cursor_line = last_line_idx;
-        cursor_pos = new_pos;
-      };
-  }
+        model with
+        input =
+          {
+            model.input with
+            mode = Mode_common.mode_of_history_string mode_string;
+            lines;
+            lex_cache = R_lex_cache.create lines;
+            cursor_line = last_line_idx;
+            cursor_pos = Unicode_string.length last_line;
+          };
+      }
 
 let insert_char model c =
   let search = get_input model in
   match Unicode_string.insert_string search ~pos:model.input.cursor_pos c with
   | Error _ -> model
   | Ok new_search ->
+      let model = set_search model new_search in
       {
         model with
-        input =
-          {
-            model.input with
-            mode = History_search new_search;
-            cursor_pos = model.input.cursor_pos + 1;
-          };
+        input = { model.input with cursor_pos = model.input.cursor_pos + 1 };
       }
 
 let delete_char model =
@@ -85,33 +127,24 @@ let delete_char model =
     let new_search =
       Unicode_string.delete search (model.input.cursor_pos - 1)
     in
+    let model = set_search model new_search in
     {
       model with
-      input =
-        {
-          model.input with
-          mode = History_search new_search;
-          cursor_pos = model.input.cursor_pos - 1;
-        };
+      input = { model.input with cursor_pos = model.input.cursor_pos - 1 };
     }
 
 let delete_char_after model =
   let search = get_input model in
   if model.input.cursor_pos >= Unicode_string.length search then model
-  else
-    let new_search = Unicode_string.delete search model.input.cursor_pos in
-    { model with input = { model.input with mode = History_search new_search } }
+  else set_search model (Unicode_string.delete search model.input.cursor_pos)
 
 let delete_before_cursor model =
   let search = get_input model in
   let new_search =
     Unicode_string.delete_range search ~start:0 ~len:model.input.cursor_pos
   in
-  {
-    model with
-    input =
-      { model.input with mode = History_search new_search; cursor_pos = 0 };
-  }
+  let model = set_search model new_search in
+  { model with input = { model.input with cursor_pos = 0 } }
 
 let move_left model =
   if model.input.cursor_pos > 0 then
@@ -186,14 +219,11 @@ let insert_paste model text =
       let added =
         Unicode_string.length new_search - Unicode_string.length search
       in
+      let model' = set_search model new_search in
       {
-        model with
+        model' with
         input =
-          {
-            model.input with
-            mode = History_search new_search;
-            cursor_pos = model.input.cursor_pos + added;
-          };
+          { model'.input with cursor_pos = model.input.cursor_pos + added };
       }
 
 let apply_key key model =
@@ -202,7 +232,8 @@ let apply_key key model =
     match key with
     | Ctrl 'c' | Escape -> cancel model
     | Enter -> submit model
-    | Up | Down | Ctrl 'p' -> model
+    | Up | Ctrl 'p' -> move_selection model ~amount:(-1)
+    | Down | Ctrl 'r' -> move_selection model ~amount:1
     | Ctrl 'd' ->
         let search = get_input model in
         if Unicode_string.is_empty search then cancel model

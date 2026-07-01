@@ -971,7 +971,14 @@ let test_view_clears_below_prompt_box_to_bottom () =
 let test_history_search_hides_cursor () =
   let model =
     initial_model 20 |> fun model ->
-    { model with input = { model.input with mode = History_search (us "as") } }
+    {
+      model with
+      input =
+        {
+          model.input with
+          mode = History_search { search = us "as"; matches = []; selected = 0 };
+        };
+    }
   in
   let ops = view_ops_list model in
   Alcotest.(check bool)
@@ -2029,10 +2036,10 @@ let test_history_search_typing_ignores_completions () =
   in
   Alcotest.(check int) "ctrl-r has no effects" 0 (List.length effects);
   (match model.input.mode with
-  | History_search search ->
+  | History_search s ->
       Alcotest.(check string)
         "starts with empty search" ""
-        (Unicode_string.to_string search)
+        (Unicode_string.to_string s.search)
   | _ -> Alcotest.fail "Expected history search mode");
   Alcotest.(check bool)
     "stale completion cleared on entry" true
@@ -2043,10 +2050,10 @@ let test_history_search_typing_ignores_completions () =
   Alcotest.(check int)
     "typing in history search has no completion effect" 0 (List.length effects);
   (match model.input.mode with
-  | History_search search ->
+  | History_search s ->
       Alcotest.(check string)
         "search stores first char" "a"
-        (Unicode_string.to_string search)
+        (Unicode_string.to_string s.search)
   | _ -> Alcotest.fail "Expected history search mode after first char");
   Alcotest.(check string)
     "no history match leaves empty result" "" (first_line_str model);
@@ -2059,10 +2066,10 @@ let test_history_search_typing_ignores_completions () =
   Alcotest.(check int)
     "second char also has no completion effect" 0 (List.length effects);
   (match model.input.mode with
-  | History_search search ->
+  | History_search s ->
       Alcotest.(check string)
         "search stores typed prefix" "as"
-        (Unicode_string.to_string search)
+        (Unicode_string.to_string s.search)
   | _ -> Alcotest.fail "Expected history search mode after second char");
   Alcotest.(check string) "result stays empty" "" (first_line_str model);
   Alcotest.(check bool)

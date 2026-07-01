@@ -23,6 +23,7 @@ let apply_key key model =
   | Ctrl 'c' -> (Mode_common.set_mode_normal_blank model, [])
   | Ctrl 'p' | Up -> (Mode_common.shift_history model ~amount:1, [])
   | Down -> (Mode_common.shift_history model ~amount:(-1), [])
+  | Ctrl 'r' -> (History_search.enter model, [])
   | Enter -> submit model
   | Ctrl 'd' ->
       if is_empty_input model then (Mode_common.set_mode_normal_blank model, [])
