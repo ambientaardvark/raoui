@@ -16,6 +16,11 @@ void rffi_submit(const char *code);
 /* Run R in a sandboxed fork; returns malloc'd captured output (caller frees). */
 char *rffi_run_r_sandboxed(const char *code);
 
+/* Take the console output captured during R init (.Rprofile, .First, site
+   profile), transferring ownership to the caller (frees it). Returns NULL if
+   nothing was captured. Call once, after rffi_start returns. */
+char *rffi_take_init_output(void);
+
 /* Request interruption of currently-running R evaluation. */
 int rffi_interrupt(void);
 

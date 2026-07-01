@@ -34,6 +34,10 @@ type t = {
   mutable suppressing : bool;
   pending : [ `User of string | `Background of string ] Queue.t;
   mutable stashed : (int * int * string) option;
+  (* Console output captured during R init (.Rprofile etc.), awaiting delivery to
+     the frontend as a single Stdout chunk above the first prompt. None once
+     drained. *)
+  mutable pending_startup_output : string option;
 }
 
 let log_snippet s =
@@ -103,11 +107,15 @@ let create ~sw ~clock () =
   Logs.info (fun m -> m "using R home %s" home);
   let sleep = Eio.Time.sleep clock in
   let t = { sleep; ready = false; busy = false; suppressing = false;
-            pending = Queue.create (); stashed = None } in
+            pending = Queue.create (); stashed = None;
+            pending_startup_output = None } in
   Eio.Fiber.fork_daemon ~sw (fun () ->
     let rc = Eio_unix.run_in_systhread (fun () -> Rffi.init home) in
     if rc <> 0 then failwith "Failed to initialize R runtime";
     t.ready <- true;
+    (match Rffi.take_init_output () with
+     | "" -> ()
+     | output -> t.pending_startup_output <- Some output);
     Logs.info (fun m -> m "R runtime initialized");
     flush_pending t;
     `Stop_daemon);
@@ -225,6 +233,13 @@ let await_response t =
       Stdout (Buffer.contents buf)
   in
   let rec loop () =
+    match t.pending_startup_output with
+    | Some output ->
+      (* Deliver init output (.Rprofile etc.) once, before anything from the ring
+         buffer, so it renders above the first prompt. *)
+      t.pending_startup_output <- None;
+      Stdout output
+    | None ->
     match pop () with
     | None -> t.sleep 0.01; loop ()
     | Some (kind, _flags, payload) ->

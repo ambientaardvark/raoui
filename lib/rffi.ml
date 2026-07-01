@@ -1,6 +1,7 @@
 external init : string -> int = "caml_rffi_init"
 external submit : string -> unit = "caml_rffi_submit"
 external run_r_sandboxed : string -> string = "caml_rffi_run_r_sandboxed"
+external take_init_output : unit -> string = "caml_rffi_take_init_output"
 external shutdown : unit -> unit = "caml_rffi_shutdown"
 external interrupt : unit -> int = "caml_rffi_interrupt"
 external rb_has_data : unit -> bool = "caml_rffi_rb_has_data"

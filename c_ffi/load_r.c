@@ -80,6 +80,15 @@ static pthread_mutex_t runr_call_mutex = PTHREAD_MUTEX_INITIALIZER;
 /* Child-only: fd that R console output is routed to during sandboxed eval. */
 static int g_runr_pipe_fd = -1;
 
+/* Console output produced while R initializes (.Rprofile, .First, site profile)
+   is captured here rather than pushed to the ring buffer. That output is not
+   bracketed by an eval cycle (no rb_reset before, no RB_MSG_DONE after), so
+   letting it race onto the frontend glitches the TUI. The frontend drains it
+   once via rffi_take_init_output and renders it above the first prompt. */
+static char  *init_output_buf = NULL;  /* NUL-terminated captured init output */
+static size_t init_output_len = 0;     /* bytes used, excluding the NUL */
+static size_t init_output_cap = 0;     /* allocated capacity */
+
 /* ---- Crash logging ---- */
 
 static void append_literal(int fd, const char *s) {
@@ -328,6 +337,21 @@ static void cb_write_console_ex(const char *s, int len, int otype) {
     rb_push(&g_rb, kind, 0, s, (uint32_t)len);
 }
 
+/* Init-phase console callback: append to init_output_buf instead of the ring
+   buffer. Installed only around setup_Rmainloop(), then swapped back out. */
+static void cb_init_capture(const char *s, int len, int otype) {
+    (void)otype;
+    if (len <= 0)
+        return;
+    if (init_output_len + (size_t)len + 1 > init_output_cap) {
+        init_output_cap = (init_output_len + (size_t)len + 1) * 2;
+        init_output_buf = realloc(init_output_buf, init_output_cap);
+    }
+    memcpy(init_output_buf + init_output_len, s, (size_t)len);
+    init_output_len += (size_t)len;
+    init_output_buf[init_output_len] = '\0';
+}
+
 static void cb_flush_console(void) {
     /* No-op for now. The OCaml polling loop drains frequently.
        Could push a flush signal here later for tighter progress bar timing. */
@@ -512,7 +536,8 @@ static int init_r(const char *r_home) {
 
     *ptr_R_ReadConsole = cb_read_console;
     *ptr_R_WriteConsole = NULL;
-    *ptr_R_WriteConsoleEx = cb_write_console_ex;
+    /* Capture, don't ring-buffer, whatever .Rprofile/.First print during startup. */
+    *ptr_R_WriteConsoleEx = cb_init_capture;
     *ptr_R_FlushConsole = cb_flush_console;
     *ptr_R_ShowMessage = cb_show_message;
     *ptr_R_Suicide_ptr = cb_suicide;
@@ -537,6 +562,9 @@ static int init_r(const char *r_home) {
     *R_CStackLimit_ptr = (uintptr_t)-1;
 
     setup_Rmainloop();
+
+    /* Startup done: route console output to the ring buffer from here on. */
+    *ptr_R_WriteConsoleEx = cb_write_console_ex;
 
     withVisible_sym = Rf_install("withVisible");
     raoui_after_top_level_sym = Rf_install("raoui_after_top_level");
@@ -1153,6 +1181,16 @@ int rffi_start(const char *r_home) {
     pthread_mutex_unlock(&init_mutex);
 
     return rc;
+}
+
+/* Hand the captured init output to the frontend exactly once; ownership transfers
+   to the caller. Returns NULL if nothing was captured. */
+char *rffi_take_init_output(void) {
+    char *out = init_output_buf;
+    init_output_buf = NULL;
+    init_output_len = 0;
+    init_output_cap = 0;
+    return out;
 }
 
 void rffi_submit(const char *code) {

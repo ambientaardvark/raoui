@@ -61,7 +61,7 @@ let make ~history ~user_options ~terminal_capabilities () : Frontend_types.model
         backend_response = None;
         repl_output = None;
         pending_suggestion = None;
-        repl_cursor = (row, 1);
+        repl_cursor = (clamped, 1);
       };
     theme = initial_theme user_options;
   }

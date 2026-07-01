@@ -46,6 +46,16 @@ CAMLprim value caml_rffi_run_r_sandboxed(value v_code) {
     CAMLreturn(v_result);
 }
 
+/* Returns the init-phase console output as an OCaml string ("" if none). */
+CAMLprim value caml_rffi_take_init_output(value v_unit) {
+    CAMLparam1(v_unit);
+    CAMLlocal1(v_result);
+    char *out = rffi_take_init_output();
+    v_result = caml_copy_string(out ? out : "");
+    free(out);
+    CAMLreturn(v_result);
+}
+
 CAMLprim value caml_rffi_shutdown(value v_unit) {
     (void)v_unit;
     rffi_shutdown();
