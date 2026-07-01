@@ -23,7 +23,8 @@ let apply_key key model =
   let open Tty_listener in
   match key with
   | Ctrl 'c' -> (Mode_common.set_mode_normal_blank model, [])
-  | Ctrl 'p' | Up | Down -> (model, [])
+  | Ctrl 'p' | Up -> (Mode_common.shift_history model ~amount:1, [])
+  | Down -> (Mode_common.shift_history model ~amount:(-1), [])
   | Enter -> submit model
   | _ -> (
       let model =

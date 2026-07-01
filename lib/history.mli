@@ -27,20 +27,26 @@ val record_cancel : t -> unit
 
 val go_back :
   t ->
-  ?current_prompt:Unicode_string.t list ->
+  ?current_prompt:string * Unicode_string.t list ->
   unit ->
-  Unicode_string.t list option
-(** older message. if at end return None *)
+  (string * Unicode_string.t list) option
+(** older entry as [(mode, lines)] where mode is "r", "shell", or "ai".
+    [current_prompt] is the in-progress [(mode, lines)] draft, saved so
+    navigating forwards past the newest entry restores it. None at end. *)
 
 val go_forwards :
   t ->
-  ?current_prompt:Unicode_string.t list ->
+  ?current_prompt:string * Unicode_string.t list ->
   unit ->
-  Unicode_string.t list option
-(** newer message. if at start return None *)
+  (string * Unicode_string.t list) option
+(** newer entry as [(mode, lines)]. if at start return None *)
 
 val get_all : t -> string array
-val search_history : t -> string -> string
+
+val search_history : t -> string -> (string * string) option
+(** Newest entry whose text contains the pattern (case-insensitive; optional
+    leading/trailing '%' are stripped), as [(mode, text)]. *)
+
 val recent_interactions : t -> limit:int -> interaction list
 
 val search_interactions : t -> keyword:string -> limit:int -> interaction list

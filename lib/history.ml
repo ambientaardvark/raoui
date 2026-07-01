@@ -13,13 +13,19 @@ type interaction = {
   outputs : output list;
 }
 
+(* One recallable history item. *)
+type entry = {
+  entry_mode : string;  (* input mode at submission: "r", "shell", or "ai" *)
+  entry_text : string;  (* the submitted input, lines joined with '\n' *)
+}
+
 type t = {
   file_path : string;
   db : S.db;
   session_id : string;
-  history : string Dynarray.t;
+  history : entry Dynarray.t;
   mutable current_index : int;
-  mutable saved_prompt : Unicode_string.t list option;
+  mutable saved_prompt : (string * Unicode_string.t list) option;
   mutable search_needle : Unicode_string.t list option;
   mutable active_command_id : int64 option;
   mutable active_command_had_error : bool;
@@ -81,7 +87,7 @@ let nth_newest t i = Dynarray.get t.history (Dynarray.length t.history - 1 - i)
 let prompt_matches_entry t prompt idx =
   idx > 0
   && idx - 1 < Dynarray.length t.history
-  && prompt_to_string prompt = nth_newest t (idx - 1)
+  && prompt_to_string prompt = (nth_newest t (idx - 1)).entry_text
 
 let update_search_needle t current_prompt =
   if not (prompt_matches_entry t current_prompt t.current_index) then
@@ -92,22 +98,26 @@ let is_duplicate_of_previous t idx =
 
 let rec go_back t ?current_prompt () =
   (match current_prompt with
-  | Some p ->
-      if t.current_index = 0 then t.saved_prompt <- Some p;
-      update_search_needle t p
+  | Some (mode, lines) ->
+      if t.current_index = 0 then t.saved_prompt <- Some (mode, lines);
+      update_search_needle t lines
   | None -> ());
   let idx = t.current_index in
   if idx < Dynarray.length t.history then begin
     t.current_index <- idx + 1;
     if is_duplicate_of_previous t idx then go_back t ()
-    else if matches_prompt t.search_needle (nth_newest t idx) then
-      Some (to_us (nth_newest t idx))
-    else go_back t ()
+    else
+      let entry = nth_newest t idx in
+      if matches_prompt t.search_needle entry.entry_text then
+        Some (entry.entry_mode, to_us entry.entry_text)
+      else go_back t ()
   end
   else None
 
 let rec go_forwards t ?current_prompt () =
-  (match current_prompt with Some p -> update_search_needle t p | None -> ());
+  (match current_prompt with
+  | Some (_, lines) -> update_search_needle t lines
+  | None -> ());
   if t.current_index <= 0 then None
   else begin
     t.current_index <- t.current_index - 1;
@@ -115,13 +125,15 @@ let rec go_forwards t ?current_prompt () =
     else
       let idx = t.current_index - 1 in
       if is_duplicate_of_previous t idx then go_forwards t ()
-      else if matches_prompt t.search_needle (nth_newest t idx) then
-        Some (to_us (nth_newest t idx))
-      else go_forwards t ()
+      else
+        let entry = nth_newest t idx in
+        if matches_prompt t.search_needle entry.entry_text then
+          Some (entry.entry_mode, to_us entry.entry_text)
+        else go_forwards t ()
   end
 
 let get_all t =
-  Array.init (Dynarray.length t.history) (fun i -> nth_newest t i)
+  Array.init (Dynarray.length t.history) (fun i -> (nth_newest t i).entry_text)
 
 let search_history t pattern =
   let pattern = String.lowercase_ascii pattern in
@@ -135,14 +147,14 @@ let search_history t pattern =
       String.sub p 0 (String.length p - 1)
     else p
   in
-  if String.length needle = 0 then ""
+  if String.length needle = 0 then None
   else
-    let found = ref "" in
+    let found = ref None in
     let i = ref 0 in
-    while !found = "" && !i < Dynarray.length t.history do
+    while !found = None && !i < Dynarray.length t.history do
       let entry = nth_newest t !i in
       if
-        let lower = String.lowercase_ascii entry in
+        let lower = String.lowercase_ascii entry.entry_text in
         let nlen = String.length needle in
         let elen = String.length lower in
         let rec check j =
@@ -151,7 +163,7 @@ let search_history t pattern =
           else check (j + 1)
         in
         check 0
-      then found := entry;
+      then found := Some (entry.entry_mode, entry.entry_text);
       incr i
     done;
     !found
@@ -205,13 +217,14 @@ let add_session db session_id =
 
 let command_history_from_db db =
   with_stmt db
-    "SELECT input FROM commands WHERE mode IN ('r', 'shell') ORDER BY id DESC \
-     LIMIT ?" (fun stmt ->
+    "SELECT mode, input FROM commands WHERE mode IN ('r', 'shell', 'ai') ORDER \
+     BY id DESC LIMIT ?" (fun stmt ->
       bind_values db stmt [ S.Data.INT (Int64.of_int max_history) ];
       let rc, rows =
         S.fold stmt ~init:[] ~f:(fun acc row ->
-            match row.(0) with
-            | S.Data.TEXT input -> input :: acc
+            match (row.(0), row.(1)) with
+            | S.Data.TEXT mode, S.Data.TEXT input ->
+                { entry_mode = mode; entry_text = input } :: acc
             | _ -> assert false)
       in
       check db rc;
@@ -242,7 +255,7 @@ let add_to_history ?(mode = "r") t lines =
     t.current_index <- 0;
     t.saved_prompt <- None;
     t.search_needle <- None;
-    Dynarray.add_last t.history command;
+    Dynarray.add_last t.history { entry_mode = mode; entry_text = command };
     with_stmt t.db
       "INSERT INTO commands(session_id, submitted_at, mode, input, status) \
        VALUES(?, ?, ?, ?, 'running')" (fun stmt ->

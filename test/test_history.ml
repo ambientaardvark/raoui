@@ -29,8 +29,9 @@ let test_history_search_matches_existing_behavior () =
   let history = History.init path in
   History.add_to_history history [ us "alpha <- 1" ];
   History.add_to_history history [ us "beta <- alpha + 1" ];
-  Alcotest.(check string)
-    "case insensitive substring" "beta <- alpha + 1"
+  Alcotest.(check (option (pair string string)))
+    "case insensitive substring"
+    (Some ("r", "beta <- alpha + 1"))
     (History.search_history history "%ALPHA +%");
   close history
 

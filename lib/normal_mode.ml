@@ -1,29 +1,6 @@
 open Frontend_types
 open Text_editor
 
-let shift_history model ~amount =
-  let result =
-    if amount > 0 then
-      History.go_back model.input.history ~current_prompt:model.input.lines ()
-    else
-      History.go_forwards model.input.history ~current_prompt:model.input.lines
-        ()
-  in
-  match result with
-  | Some lines ->
-      {
-        model with
-        input =
-          {
-            model.input with
-            lines;
-            lex_cache = R_lex_cache.create lines;
-            flipping_through_history = Some 2;
-          };
-      }
-      |> move_cursor_to_end
-  | None -> model
-
 let insert_spaces count model =
   let rec loop m n = if n <= 0 then m else loop (insert_char m " ") (n - 1) in
   loop model count
@@ -94,7 +71,7 @@ let apply_key key model =
       | None -> submit model)
   | Ctrl 'u' -> (delete_before_cursor model, [])
   | Ctrl '\r' -> (insert_newline model, [])
-  | Ctrl 'p' -> (shift_history model ~amount:1, [])
+  | Ctrl 'p' -> (Mode_common.shift_history model ~amount:1, [])
   | Ctrl 'r' -> (enter_history_search model, [])
   | Ctrl 'a' -> (go_to_line_start model, [])
   | Ctrl 'e' -> (go_to_line_end model, [])
@@ -112,13 +89,13 @@ let apply_key key model =
       if
         at_first_line model
         || Option.is_some model.input.flipping_through_history
-      then (shift_history model ~amount:1, [])
+      then (Mode_common.shift_history model ~amount:1, [])
       else (move_up model, [])
   | Down ->
       if
         at_last_line model
         || Option.is_some model.input.flipping_through_history
-      then (shift_history model ~amount:(-1), [])
+      then (Mode_common.shift_history model ~amount:(-1), [])
       else (move_down model, [])
   | Paste text -> (insert_paste model text, [])
   | Tab -> (Completion_controller.handle_tab model, [])

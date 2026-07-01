@@ -2615,6 +2615,85 @@ let test_readline_submit_preserves_line_on_screen () =
   | [ Repl_effect.SubmitReadlineInput "Alice" ] -> ()
   | _ -> Alcotest.fail "Expected SubmitReadlineInput effect"
 
+(* Cross-mode history recall: navigating history swaps the input mode to the
+   one each entry was submitted from, and flipping back down past the newest
+   entry restores the draft and the mode it was typed in. *)
+let test_history_recall_swaps_modes () =
+  let model = initial_model 40 in
+  let history = model.input.history in
+  History.add_to_history ~mode:"r" history [ us "1+1" ];
+  History.add_to_history ~mode:"shell" history [ us "ls" ];
+  History.add_to_history ~mode:"ai" history [ us "what is a factor" ];
+  let step key m =
+    match update (Update.Key key) m with
+    | Continue m -> m
+    | _ -> Alcotest.fail "Expected Continue"
+  in
+  let check_mode msg expected m =
+    Alcotest.(check bool) msg true (m.input.mode = expected)
+  in
+  let m1 = step Tty_listener.Up model in
+  check_mode "first up swaps to ai mode" Frontend_types.Ai m1;
+  Alcotest.(check string)
+    "first up recalls ai entry" "what is a factor" (first_line_str m1);
+  let m2 = step Tty_listener.Up m1 in
+  check_mode "second up swaps to shell mode" Frontend_types.Shell m2;
+  Alcotest.(check string) "second up recalls shell entry" "ls"
+    (first_line_str m2);
+  let m3 = step Tty_listener.Up m2 in
+  check_mode "third up swaps to normal mode" Frontend_types.Normal m3;
+  Alcotest.(check string) "third up recalls r entry" "1+1" (first_line_str m3);
+  let m4 = step Tty_listener.Down m3 in
+  check_mode "down swaps back to shell mode" Frontend_types.Shell m4;
+  let m5 = step Tty_listener.Down m4 in
+  check_mode "down swaps back to ai mode" Frontend_types.Ai m5;
+  let m6 = step Tty_listener.Down m5 in
+  check_mode "down past newest restores draft mode" Frontend_types.Normal m6;
+  Alcotest.(check string)
+    "down past newest restores blank draft" "" (first_line_str m6)
+
+let test_history_recall_restores_shell_draft () =
+  let model = initial_model 40 in
+  let history = model.input.history in
+  History.add_to_history ~mode:"ai" history [ us "explain lm" ];
+  (* The draft filters recall to entries containing it, so it must be a
+     substring of the ai entry for Up to land there. *)
+  let shell_model =
+    with_lines
+      { model with input = { model.input with mode = Frontend_types.Shell } }
+      [ us "lm" ]
+  in
+  let step key m =
+    match update (Update.Key key) m with
+    | Continue m -> m
+    | _ -> Alcotest.fail "Expected Continue"
+  in
+  let m1 = step Tty_listener.Up shell_model in
+  Alcotest.(check bool)
+    "up from shell draft swaps to ai mode" true
+    (m1.input.mode = Frontend_types.Ai);
+  let m2 = step Tty_listener.Down m1 in
+  Alcotest.(check bool)
+    "down restores shell mode" true
+    (m2.input.mode = Frontend_types.Shell);
+  Alcotest.(check string) "down restores shell draft" "lm" (first_line_str m2)
+
+let test_history_search_adopts_mode () =
+  let model = initial_model 40 in
+  History.add_to_history ~mode:"shell" model.input.history [ us "echo hi" ];
+  let step key m =
+    match update (Update.Key key) m with
+    | Continue m -> m
+    | _ -> Alcotest.fail "Expected Continue"
+  in
+  let m1 = step (Tty_listener.Ctrl 'r') model in
+  let m2 = step (Tty_listener.Char "e") m1 in
+  let m3 = step Tty_listener.Enter m2 in
+  Alcotest.(check bool)
+    "search submit adopts shell mode" true
+    (m3.input.mode = Frontend_types.Shell);
+  Alcotest.(check string) "search result placed" "echo hi" (first_line_str m3)
+
 let () =
   let open Alcotest in
   run "Raoui"
@@ -2929,6 +3008,15 @@ let () =
             test_readline_down_blocked;
           test_case "Submit preserves line on screen" `Quick
             test_readline_submit_preserves_line_on_screen;
+        ] );
+      ( "history_modes",
+        [
+          test_case "Recall swaps modes across entries" `Quick
+            test_history_recall_swaps_modes;
+          test_case "Draft mode restored after recall" `Quick
+            test_history_recall_restores_shell_draft;
+          test_case "R-search submit adopts entry mode" `Quick
+            test_history_search_adopts_mode;
         ] );
       ( "matched_brackets",
         [

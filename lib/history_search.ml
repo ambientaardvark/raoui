@@ -9,40 +9,23 @@ open Frontend_types
 let get_input model =
   match model.input.mode with History_search s -> s | _ -> assert false
 
-let search_and_update model =
+let find_match model =
   let input_str = get_input model |> Unicode_string.to_string in
-  if String.length input_str = 0 then
-    {
-      model with
-      input =
-        {
-          model.input with
-          lines = [ Unicode_string.empty ];
-          lex_cache = R_lex_cache.create [ Unicode_string.empty ];
-        };
-    }
-  else
-    let pattern = "%" ^ input_str ^ "%" in
-    let search_result = History.search_history model.input.history pattern in
-    if String.length search_result = 0 then
-      {
-        model with
-        input =
-          {
-            model.input with
-            lines = [ Unicode_string.empty ];
-            lex_cache = R_lex_cache.create [ Unicode_string.empty ];
-          };
-      }
-    else
-      let lines =
-        search_result |> String.split_on_char '\n'
+  if String.length input_str = 0 then None
+  else History.search_history model.input.history ("%" ^ input_str ^ "%")
+
+let search_and_update model =
+  let lines =
+    match find_match model with
+    | None -> [ Unicode_string.empty ]
+    | Some (_mode, text) ->
+        text |> String.split_on_char '\n'
         |> List.map (fun s -> Unicode_string.of_string s |> Result.get_ok)
-      in
-      {
-        model with
-        input = { model.input with lines; lex_cache = R_lex_cache.create lines };
-      }
+  in
+  {
+    model with
+    input = { model.input with lines; lex_cache = R_lex_cache.create lines };
+  }
 
 let cancel model =
   {
@@ -59,6 +42,12 @@ let cancel model =
   }
 
 let submit model =
+  (* Adopt the matched entry's input mode (r/shell/ai), like arrow-key recall. *)
+  let mode =
+    match find_match model with
+    | Some (mode_string, _text) -> Mode_common.mode_of_history_string mode_string
+    | None -> Normal
+  in
   let last_line_idx = List.length model.input.lines - 1 in
   let last_line = List.nth model.input.lines last_line_idx in
   let new_pos = Unicode_string.length last_line in
@@ -67,7 +56,7 @@ let submit model =
     input =
       {
         model.input with
-        mode = Normal;
+        mode;
         lex_cache = R_lex_cache.create model.input.lines;
         cursor_line = last_line_idx;
         cursor_pos = new_pos;

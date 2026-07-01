@@ -50,6 +50,47 @@ let clear_model_for_submit ?(awaiting_response = true) model =
       };
   }
 
+(* History entries record the input mode they were submitted from as a string
+   (the commands.mode column). Readline/History_search never submit through
+   the recallable history, so they have no string form. *)
+let history_mode_string = function
+  | Frontend_types.Normal -> "r"
+  | Frontend_types.Shell -> "shell"
+  | Frontend_types.Ai -> "ai"
+  | Frontend_types.Readline _ | Frontend_types.History_search _ -> assert false
+
+let mode_of_history_string = function
+  | "r" -> Frontend_types.Normal
+  | "shell" -> Frontend_types.Shell
+  | "ai" -> Frontend_types.Ai
+  | other -> failwith ("unknown history mode: " ^ other)
+
+(* Recall a history entry into the prompt, switching the input mode to the one
+   the entry was submitted from (r/shell/ai). *)
+let shift_history model ~amount =
+  let current_prompt =
+    (history_mode_string model.input.mode, model.input.lines)
+  in
+  let result =
+    if amount > 0 then History.go_back model.input.history ~current_prompt ()
+    else History.go_forwards model.input.history ~current_prompt ()
+  in
+  match result with
+  | Some (mode_string, lines) ->
+      {
+        model with
+        input =
+          {
+            model.input with
+            mode = mode_of_history_string mode_string;
+            lines;
+            lex_cache = R_lex_cache.create lines;
+            flipping_through_history = Some 2;
+          };
+      }
+      |> Text_editor.move_cursor_to_end
+  | None -> model
+
 let set_mode_normal_blank model =
   {
     model with
