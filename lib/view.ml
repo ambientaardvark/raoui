@@ -153,7 +153,6 @@ module Make (Term : Terminal_ops.TERMINAL) = struct
               | _ when row > model.layout.term_height -> ()
               | item :: rest ->
                   add (Terminal_ops.Cursor_to (row, col_offset));
-                  add Terminal_ops.Clear_to_eol;
                   add
                     (print_completion_line (Completion.label item)
                        ~selected:(selected = Some idx) ~max_width);
