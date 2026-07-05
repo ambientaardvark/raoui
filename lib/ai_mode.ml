@@ -33,11 +33,11 @@ let apply_key key model =
   | Ctrl 'e' -> (go_to_line_end model, [])
   | Other "next word" -> (go_to_next_word model, [])
   | Other "last word" -> (go_to_last_word model, [])
-  | Char c -> (user_input_char model c, [])
+  | Char c -> (insert_char model c, [])
   (* Backspace on empty input returns to normal mode (Julia-style). *)
   | Backspace when prompt_is_empty model ->
       (Mode_common.set_mode_normal_blank model, [])
-  | Backspace -> (user_input_delete model, [])
+  | Backspace -> (delete_char model, [])
   | Left -> (move_left model, [])
   | Right -> (move_right model, [])
   | Paste text -> (insert_paste model text, [])
